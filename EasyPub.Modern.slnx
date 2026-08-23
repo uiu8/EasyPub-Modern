@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EasyPub.Cli/EasyPub.Cli.csproj" />
+    <Project Path="src/EasyPub.Core/EasyPub.Core.csproj" />
+    <Project Path="src/EasyPub.Desktop/EasyPub.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EasyPub.Core.Tests/EasyPub.Core.Tests.csproj" />
+  </Folder>
+</Solution>

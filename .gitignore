@@ -1,0 +1,18 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.vscode/
+
+# Local compatibility captures, generated smoke files, screenshots and releases.
+work/
+outputs/
+
+# User-local state and projects.
+*.easypubproj
+*.user
+*.suo
+
+# Build artifacts.
+*.zip
+*.pdb

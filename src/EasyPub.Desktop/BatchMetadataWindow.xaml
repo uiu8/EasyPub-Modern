@@ -1,0 +1,31 @@
+<Window x:Class="EasyPub.Desktop.BatchMetadataWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="批量元数据 · EasyPub Modern v0.9.1" Width="900" Height="570" MinWidth="720" MinHeight="440"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel><TextBlock Text="批量元数据" FontSize="25" FontWeight="SemiBold" Foreground="#172033"/><TextBlock Text="标题留空时使用 TXT 文件名；作者留空时使用主窗口的统一作者。" Margin="0,4,0,0" Foreground="#667085"/></StackPanel>
+        <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="10" Padding="12">
+            <DockPanel>
+                <Button Content="应用到全部" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="14,7" Click="ApplyAuthorToAll_Click"/>
+                <TextBlock Text="批量作者" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,10,0"/>
+                <TextBox x:Name="BatchAuthorText" MinWidth="260" Padding="8,6"/>
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="4" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="10">
+            <DataGrid x:Name="MetadataGrid" AutoGenerateColumns="False" CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderThickness="0">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="TXT 文件" Binding="{Binding FileName}" IsReadOnly="True" Width="190"/>
+                    <DataGridTextColumn Header="电子书标题（可选）" Binding="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                    <DataGridTextColumn Header="作者（可选）" Binding="{Binding Author, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
+                    <DataGridTextColumn Header="封面" Binding="{Binding CoverState}" IsReadOnly="True" Width="90"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="取消" Padding="18,8" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button Content="保存元数据" Padding="20,8" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" Click="Save_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
