@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private string? _currentProjectPath;
     private CancellationTokenSource? _operationCancellation;
     private IReadOnlyList<FolderMetadataRule> _metadataMappings = [];
+    private EasyPubProjectDocument? _pendingRecovery;
 
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
@@ -56,6 +57,7 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         _recoveryTimer.Tick += RecoveryTimer_Tick;
+        UpdateContextualControls();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -627,24 +629,9 @@ public partial class MainWindow : Window
         {
             var recovery = await _recoveryStore.LoadAsync();
             if (recovery.Books.Count == 0) { _recoveryStore.Delete(); return; }
-            var answer = MessageBox.Show(
-                this,
-                $"发现自动恢复内容（{recovery.Books.Count} 本书，保存于 {recovery.UpdatedAt.LocalDateTime:g}）。是否恢复？",
-                "恢复上次工作",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-            if (answer == MessageBoxResult.Yes)
-            {
-                ApplyProjectDocument(recovery);
-                _currentProjectPath = recovery.ProjectPathHint;
-                _lastRecoveryFingerprint = EasyPubProjectStore.Fingerprint(recovery);
-                UpdateProjectTitle();
-                StatusText.Text = $"已恢复上次工作：{recovery.Books.Count} 本小说";
-            }
-            else
-            {
-                _recoveryStore.Delete();
-            }
+            _pendingRecovery = recovery;
+            RecoveryBannerText.Text = $"{recovery.Books.Count} 本书，保存于 {recovery.UpdatedAt.LocalDateTime:g}。暂不恢复不会删除快照。";
+            RecoveryBanner.Visibility = Visibility.Visible;
         }
         catch
         {
@@ -652,9 +639,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RestoreRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingRecovery is not { } recovery) return;
+        ApplyProjectDocument(recovery);
+        _currentProjectPath = recovery.ProjectPathHint;
+        _lastRecoveryFingerprint = EasyPubProjectStore.Fingerprint(recovery);
+        UpdateProjectTitle();
+        RecoveryBanner.Visibility = Visibility.Collapsed;
+        _pendingRecovery = null;
+        StatusText.Text = $"已恢复上次工作：{recovery.Books.Count} 本小说";
+    }
+
+    private void IgnoreRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        RecoveryBanner.Visibility = Visibility.Collapsed;
+        StatusText.Text = "已暂不恢复；快照仍保留，可在下次启动时继续恢复";
+    }
+
+    private void DeleteRecovery_Click(object sender, RoutedEventArgs e)
+    {
+        _recoveryStore.Delete();
+        _pendingRecovery = null;
+        RecoveryBanner.Visibility = Visibility.Collapsed;
+        StatusText.Text = "已删除自动恢复快照";
+    }
+
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.17.2"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.17.2";
+        ? "EasyPub Modern v0.18.0"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.18.0";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -820,17 +833,6 @@ public partial class MainWindow : Window
                 string.Equals(folder, Path.TrimEndingDirectorySeparator(Path.GetFullPath(selectedPath)), StringComparison.OrdinalIgnoreCase));
     }
 
-    private void EditTocHierarchy_Click(object sender, RoutedEventArgs e)
-    {
-        var editor = new TocHierarchyWindow(_tocHierarchy) { Owner = this };
-        if (editor.ShowDialog() != true || editor.Result is null) return;
-        _tocHierarchy = editor.Result;
-        UpdateTocHierarchySummary();
-        StatusText.Text = _tocHierarchy.Enabled
-            ? "已启用三级层级目录；转换时会生成嵌套目录"
-            : "已关闭层级目录；章节将使用原版单层目录";
-    }
-
     private void UpdateTocHierarchySummary()
     {
         if (TocHierarchyStatusText is null) return;
@@ -891,10 +893,13 @@ public partial class MainWindow : Window
                     _tocHierarchy,
                     encoding));
             }
-            var editor = new ChapterEditorWindow(document) { Owner = this };
+            var editor = new ChapterEditorWindow(document, _tocHierarchy, chapterPattern, encoding) { Owner = this };
             if (editor.ShowDialog() == true && editor.ResultPlan is not null)
             {
                 book.SetChapterTree(editor.ResultPlan);
+                if (editor.ResultHierarchyOptions is not null) _tocHierarchy = editor.ResultHierarchyOptions;
+                ChapterRegexText.Text = editor.ResultChapterPattern ?? string.Empty;
+                UpdateTocHierarchySummary();
                 StatusText.Text = $"已保存《{book.DisplayName}》的章节树，共 {editor.ResultPlan.Entries.Count} 章";
             }
             else
@@ -1063,6 +1068,7 @@ public partial class MainWindow : Window
 
     private async void FilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        UpdateContextualControls();
         UpdateMetadataMappingSummary();
         await RefreshCoverPreviewAsync();
     }
@@ -1598,10 +1604,47 @@ public partial class MainWindow : Window
         var count = InputBooks.Count;
         FileCountText.Text = $"{count} 本";
         EmptyFilesHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ConvertButton.IsEnabled = count > 0;
+        UpdateContextualControls();
         StatusText.Text = count == 0
             ? "准备就绪，可添加或拖入多个 TXT / EPUB 文件"
             : $"已添加 {count} 本 · TXT {InputBooks.Count(book => !book.IsEpub)} · EPUB {InputBooks.Count(book => book.IsEpub)} · {InputBooks.Count(book => book.ChapterTree is not null)} 本有章节树";
+    }
+
+    private void UpdateContextualControls()
+    {
+        if (FilesList is null) return;
+        var count = InputBooks.Count;
+        var selectedCount = FilesList.SelectedItems.Count;
+        var singleBook = selectedCount == 1 ? FilesList.SelectedItem as InputBookItem : null;
+        SelectAllFilesButton.IsEnabled = count > 0 && selectedCount < count;
+        RemoveSelectedButton.IsEnabled = selectedCount > 0;
+        ClearFilesButton.IsEnabled = count > 0;
+        RunPreflightButton.IsEnabled = count > 0;
+        ConvertButton.IsEnabled = count > 0 && !CancelButton.IsEnabled;
+        PreviewBookButton.IsEnabled = singleBook is { IsEpub: false };
+        var showCover = singleBook is not null;
+        CoverDropPanel.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
+        CoverGapColumn.Width = new GridLength(showCover ? 14 : 0);
+        CoverColumn.Width = new GridLength(showCover ? 278 : 0);
+        UpdatePresetButtons();
+    }
+
+    private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PresetCombo.SelectedItem is NamedConversionPreset preset && string.IsNullOrWhiteSpace(PresetNameText.Text))
+            PresetNameText.Text = preset.Name;
+        UpdatePresetButtons();
+    }
+
+    private void PresetNameText_TextChanged(object sender, TextChangedEventArgs e) => UpdatePresetButtons();
+
+    private void UpdatePresetButtons()
+    {
+        if (PresetCombo is null) return;
+        var hasPreset = PresetCombo.SelectedItem is NamedConversionPreset;
+        ApplyPresetButton.IsEnabled = hasPreset;
+        DeletePresetButton.IsEnabled = hasPreset;
+        SavePresetButton.IsEnabled = !string.IsNullOrWhiteSpace(PresetNameText.Text);
     }
 
     private static bool IsSupportedInput(string path) => Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".epub";

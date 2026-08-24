@@ -138,6 +138,70 @@ public sealed class ChapterEditorWindowTests
         }
     }
 
+    [Fact]
+    public async Task Chapter_workspace_can_undo_and_redo_a_hierarchy_change()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-undo-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(path, "第1章 开始\n正文\n第2章 继续\n正文");
+        try
+        {
+            var document = await ChapterTreeDocument.LoadAsync(
+                path,
+                hierarchy: new TocHierarchyOptions { Enabled = true });
+            Exception? failure = null;
+            var thread = new Thread(() =>
+            {
+                ChapterEditorWindow? window = null;
+                try
+                {
+                    window = new ChapterEditorWindow(document)
+                    {
+                        ShowInTaskbar = false,
+                        WindowStyle = WindowStyle.None,
+                        Opacity = 0,
+                    };
+                    window.Show();
+                    window.UpdateLayout();
+
+                    var tree = Assert.IsType<TreeView>(window.FindName("ChapterTree"));
+                    var firstChapter = Assert.Single(window.Roots, node => node.Title == "第1章 开始");
+                    var secondChapter = Assert.Single(window.Roots, node => node.Title == "第2章 继续");
+                    Assert.IsType<TreeViewItem>(tree.ItemContainerGenerator.ContainerFromItem(secondChapter)).IsSelected = true;
+                    Assert.IsType<Button>(window.FindName("DemoteButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.Same(secondChapter, Assert.Single(firstChapter.Children));
+
+                    var undo = Assert.IsType<Button>(window.FindName("UndoButton"));
+                    Assert.True(undo.IsEnabled);
+                    undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.Equal(2, window.Roots.Count(node => !node.IsFrontMatter));
+                    Assert.Empty(Assert.Single(window.Roots, node => node.Title == "第1章 开始").Children);
+
+                    var redo = Assert.IsType<Button>(window.FindName("RedoButton"));
+                    Assert.True(redo.IsEnabled);
+                    redo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    var restoredFirst = Assert.Single(window.Roots, node => node.Title == "第1章 开始");
+                    Assert.Equal("第2章 继续", Assert.Single(restoredFirst.Children).Title);
+                }
+                catch (Exception exception)
+                {
+                    failure = exception;
+                }
+                finally
+                {
+                    window?.Close();
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "章节工作台撤销测试超时。");
+            if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static IEnumerable<ChapterTreeNode> Flatten(IEnumerable<ChapterTreeNode> roots)
     {
         foreach (var node in roots)

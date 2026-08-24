@@ -5,31 +5,58 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using EasyPub.Core;
 
 namespace EasyPub.Desktop;
 
 public partial class ChapterEditorWindow : Window
 {
-    private readonly ChapterTreeDocument _document;
+    private ChapterTreeDocument _document;
+    private readonly TextEncodingMode _encodingMode;
+    private readonly Stack<ChapterEditorSnapshot> _undo = [];
+    private readonly Stack<ChapterEditorSnapshot> _redo = [];
+    private readonly HashSet<ChapterTreeNode> _trackedNodes = new(ReferenceEqualityComparer.Instance);
+    private ChapterEditorSnapshot _currentSnapshot = null!;
+    private bool _trackingPaused;
     private Point _dragStart;
     private ChapterTreeNode? _draggedNode;
     private ChapterTreeNode? _selectedNode;
 
     public ChapterEditorWindow(ChapterTreeDocument document)
+        : this(document, new TocHierarchyOptions(), null, TextEncodingMode.Auto)
+    {
+    }
+
+    public ChapterEditorWindow(
+        ChapterTreeDocument document,
+        TocHierarchyOptions hierarchy,
+        string? chapterPattern,
+        TextEncodingMode encodingMode)
     {
         InitializeComponent();
         _document = document;
+        _encodingMode = encodingMode;
         Roots = BuildTree(document.Entries);
         DataContext = this;
         SourceText.Text = document.SourcePath;
         SourceText.ToolTip = document.SourcePath;
+        ChapterPatternText.Text = chapterPattern ?? string.Empty;
+        HierarchyEnabledCheck.IsChecked = hierarchy.Enabled;
+        Level1PatternText.Text = hierarchy.Level1Pattern;
+        Level2PatternText.Text = hierarchy.Level2Pattern;
+        Level3PatternText.Text = hierarchy.Level3Pattern;
+        SubscribeToNodes(Roots);
+        _currentSnapshot = CaptureSnapshot();
         UpdateSummary();
+        UpdateUndoRedoButtons();
     }
 
     public ObservableCollection<ChapterTreeNode> Roots { get; }
     public ObservableCollection<ChapterTreeSourceLine> SelectedLines { get; } = [];
     public ChapterTreePlan? ResultPlan { get; private set; }
+    public TocHierarchyOptions? ResultHierarchyOptions { get; private set; }
+    public string? ResultChapterPattern { get; private set; }
 
     private void ChapterTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
@@ -47,7 +74,7 @@ public partial class ChapterEditorWindow : Window
         var index = siblings.IndexOf(_selectedNode);
         var target = index + direction;
         if (target < 0 || target >= siblings.Count) return;
-        siblings.Move(index, target);
+        Mutate(() => siblings.Move(index, target));
         UpdateSummary();
         UpdateActionButtons();
     }
@@ -58,18 +85,21 @@ public partial class ChapterEditorWindow : Window
         if (selected?.Parent is not { } parent) return;
         var selectedIndex = parent.Children.IndexOf(selected);
         if (selectedIndex < 0) return;
-        var followingSiblings = parent.Children.Skip(selectedIndex + 1).ToArray();
-        foreach (var sibling in followingSiblings) parent.Children.Remove(sibling);
-        parent.Children.Remove(selected);
-        var newSiblings = parent.Parent?.Children ?? Roots;
-        newSiblings.Insert(newSiblings.IndexOf(parent) + 1, selected);
-        selected.Parent = parent.Parent;
-        SetLevelRecursive(selected, parent.Level);
-        foreach (var sibling in followingSiblings)
+        Mutate(() =>
         {
-            sibling.Parent = selected;
-            selected.Children.Add(sibling);
-        }
+            var followingSiblings = parent.Children.Skip(selectedIndex + 1).ToArray();
+            foreach (var sibling in followingSiblings) parent.Children.Remove(sibling);
+            parent.Children.Remove(selected);
+            var newSiblings = parent.Parent?.Children ?? Roots;
+            newSiblings.Insert(newSiblings.IndexOf(parent) + 1, selected);
+            selected.Parent = parent.Parent;
+            SetLevelRecursive(selected, parent.Level);
+            foreach (var sibling in followingSiblings)
+            {
+                sibling.Parent = selected;
+                selected.Children.Add(sibling);
+            }
+        });
         _selectedNode = selected;
         RefreshSelectedLines();
         UpdateSummary();
@@ -99,10 +129,13 @@ public partial class ChapterEditorWindow : Window
             ShowInfo("降级后会超过四级目录。", "无法降级");
             return;
         }
-        siblings.Remove(selected);
-        newParent.Children.Add(selected);
-        selected.Parent = newParent;
-        SetLevelRecursive(selected, newParent.Level + 1);
+        Mutate(() =>
+        {
+            siblings.Remove(selected);
+            newParent.Children.Add(selected);
+            selected.Parent = newParent;
+            SetLevelRecursive(selected, newParent.Level + 1);
+        });
         _selectedNode = selected;
         RefreshSelectedLines();
         UpdateSummary();
@@ -125,9 +158,12 @@ public partial class ChapterEditorWindow : Window
             ShowInfo("含有子章节的节点不能直接合并。请先调整子章节层级，避免正文顺序发生歧义。", "无法合并");
             return;
         }
-        previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
-        siblings.Remove(_selectedNode);
-        previous.NotifyLineCount();
+        Mutate(() =>
+        {
+            previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
+            siblings.Remove(_selectedNode);
+            previous.NotifyLineCount();
+        });
         _selectedNode = previous;
         RefreshSelectedLines();
         UpdateSummary();
@@ -155,17 +191,20 @@ public partial class ChapterEditorWindow : Window
             ShowInfo("请在本章正文中间选择拆分位置。", "无法拆分");
             return;
         }
-        _selectedNode.ContentRanges = before;
-        _selectedNode.NotifyLineCount();
-        var newNode = new ChapterTreeNode(new ChapterTreeEntry(
-            Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after))
+        Mutate(() =>
         {
-            Parent = _selectedNode.Parent,
-            IsFrontMatter = _selectedNode.IsFrontMatter,
-            HeadingLevel = _selectedNode.HeadingLevel,
-        };
-        var siblings = Siblings(_selectedNode);
-        siblings.Insert(siblings.IndexOf(_selectedNode) + 1, newNode);
+            _selectedNode.ContentRanges = before;
+            _selectedNode.NotifyLineCount();
+            var newNode = new ChapterTreeNode(new ChapterTreeEntry(
+                Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after))
+            {
+                Parent = _selectedNode.Parent,
+                IsFrontMatter = _selectedNode.IsFrontMatter,
+                HeadingLevel = _selectedNode.HeadingLevel,
+            };
+            var siblings = Siblings(_selectedNode);
+            siblings.Insert(siblings.IndexOf(_selectedNode) + 1, newNode);
+        });
         RefreshSelectedLines();
         UpdateSummary();
         UpdateActionButtons();
@@ -173,18 +212,21 @@ public partial class ChapterEditorWindow : Window
 
     private void NormalizeAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var node in Flatten())
-            if (ChapterTitleNormalizer.TryNormalizeNumericTitle(node.Title, out var normalized)) node.Title = normalized;
+        Mutate(() =>
+        {
+            foreach (var node in Flatten())
+                if (ChapterTitleNormalizer.TryNormalizeNumericTitle(node.Title, out var normalized)) node.Title = normalized;
+        });
     }
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var node in Flatten()) node.IncludeInToc = true;
+        Mutate(() => { foreach (var node in Flatten()) node.IncludeInToc = true; });
         UpdateSummary();
         UpdateActionButtons();
     }
     private void ClearAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var node in Flatten()) node.IncludeInToc = false;
+        Mutate(() => { foreach (var node in Flatten()) node.IncludeInToc = false; });
         UpdateSummary();
         UpdateActionButtons();
     }
@@ -193,6 +235,8 @@ public partial class ChapterEditorWindow : Window
         try
         {
             ResultPlan = _document.CreatePlan(Flatten().Select(node => node.ToEntry()));
+            ResultHierarchyOptions = ReadHierarchyOptions();
+            ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
             DialogResult = true;
         }
         catch (Exception exception)
@@ -231,27 +275,229 @@ public partial class ChapterEditorWindow : Window
             ShowInfo("拖放后会超过四级目录。", "无法移动");
             return;
         }
-        Siblings(dragged).Remove(dragged);
-        if (target is null)
+        Mutate(() =>
         {
-            Roots.Add(dragged);
-            dragged.Parent = null;
-            SetLevelRecursive(dragged, dragged.IsFrontMatter ? 2 : 1);
-        }
-        else
-        {
-            target.Children.Add(dragged);
-            dragged.Parent = target;
-            SetLevelRecursive(dragged, target.Level + 1);
-        }
+            Siblings(dragged).Remove(dragged);
+            if (target is null)
+            {
+                Roots.Add(dragged);
+                dragged.Parent = null;
+                SetLevelRecursive(dragged, dragged.IsFrontMatter ? 2 : 1);
+            }
+            else
+            {
+                target.Children.Add(dragged);
+                dragged.Parent = target;
+                SetLevelRecursive(dragged, target.Level + 1);
+            }
+        });
         UpdateSummary();
         UpdateActionButtons();
     }
 
+    private async void RebuildFromRules_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = MessageBox.Show(
+            this,
+            "重新识别会用当前规则重建章节树。你可以使用“撤销”恢复当前结构。是否继续？",
+            "重新识别章节",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+        try
+        {
+            var replacement = await ChapterTreeDocument.LoadAsync(
+                _document.SourcePath,
+                NormalizePattern(ChapterPatternText.Text),
+                ReadHierarchyOptions(),
+                _encodingMode);
+            Mutate(() =>
+            {
+                _document = replacement;
+                Roots.Clear();
+                foreach (var root in BuildTree(replacement.Entries)) Roots.Add(root);
+                _selectedNode = null;
+            });
+            RefreshSelectedLines();
+            UpdateSummary();
+            UpdateActionButtons();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ResetRules_Click(object sender, RoutedEventArgs e)
+    {
+        HierarchyEnabledCheck.IsChecked = true;
+        Level1PatternText.Text = TocHierarchyOptions.DefaultLevel1Pattern;
+        Level2PatternText.Text = TocHierarchyOptions.DefaultLevel2Pattern;
+        Level3PatternText.Text = TocHierarchyOptions.DefaultLevel3Pattern;
+    }
+
+    private TocHierarchyOptions ReadHierarchyOptions() => new()
+    {
+        Enabled = HierarchyEnabledCheck.IsChecked == true,
+        Level1Pattern = NormalizePattern(Level1PatternText.Text) ?? TocHierarchyOptions.DefaultLevel1Pattern,
+        Level2Pattern = NormalizePattern(Level2PatternText.Text) ?? TocHierarchyOptions.DefaultLevel2Pattern,
+        Level3Pattern = NormalizePattern(Level3PatternText.Text) ?? TocHierarchyOptions.DefaultLevel3Pattern,
+    };
+
+    private static string? NormalizePattern(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private void Undo_Click(object sender, RoutedEventArgs e) => Undo();
+    private void Redo_Click(object sender, RoutedEventArgs e) => Redo();
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.Control) return;
+        if (e.Key == Key.Z)
+        {
+            Undo();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Y)
+        {
+            Redo();
+            e.Handled = true;
+        }
+    }
+
+    private void Undo()
+    {
+        if (_undo.Count == 0) return;
+        _redo.Push(CaptureSnapshot());
+        RestoreSnapshot(_undo.Pop());
+    }
+
+    private void Redo()
+    {
+        if (_redo.Count == 0) return;
+        _undo.Push(CaptureSnapshot());
+        RestoreSnapshot(_redo.Pop());
+    }
+
+    private void Mutate(Action change)
+    {
+        var before = CaptureSnapshot();
+        _trackingPaused = true;
+        try { change(); }
+        finally { _trackingPaused = false; }
+        SubscribeToNodes(Roots);
+        var after = CaptureSnapshot();
+        if (!SnapshotsEqual(before, after))
+        {
+            _undo.Push(before);
+            _redo.Clear();
+        }
+        _currentSnapshot = after;
+        UpdateUndoRedoButtons();
+    }
+
+    private void Node_Changed(object? sender, EventArgs e)
+    {
+        if (_trackingPaused) return;
+        var after = CaptureSnapshot();
+        if (!SnapshotsEqual(_currentSnapshot, after))
+        {
+            _undo.Push(_currentSnapshot);
+            _redo.Clear();
+            _currentSnapshot = after;
+            UpdateUndoRedoButtons();
+            UpdateSummary();
+        }
+    }
+
+    private void SubscribeToNodes(IEnumerable<ChapterTreeNode> roots)
+    {
+        foreach (var node in roots)
+        {
+            if (_trackedNodes.Add(node)) node.Changed += Node_Changed;
+            SubscribeToNodes(node.Children);
+        }
+    }
+
+    private ChapterEditorSnapshot CaptureSnapshot() => new(
+        Flatten().Select(node => node.ToEntry() with { ContentRanges = node.ContentRanges.ToArray() }).ToArray(),
+        _selectedNode?.Id);
+
+    private void RestoreSnapshot(ChapterEditorSnapshot snapshot)
+    {
+        _trackingPaused = true;
+        try
+        {
+            Roots.Clear();
+            foreach (var root in BuildTree(snapshot.Entries)) Roots.Add(root);
+            SubscribeToNodes(Roots);
+            _selectedNode = Flatten().FirstOrDefault(node => node.Id == snapshot.SelectedId);
+        }
+        finally
+        {
+            _trackingPaused = false;
+        }
+        _currentSnapshot = CaptureSnapshot();
+        RefreshSelectedLines();
+        UpdateSummary();
+        UpdateActionButtons();
+        UpdateUndoRedoButtons();
+        Dispatcher.BeginInvoke(SelectRestoredNode, DispatcherPriority.Loaded);
+    }
+
+    private void SelectRestoredNode()
+    {
+        if (_selectedNode is null) return;
+        var path = new Stack<ChapterTreeNode>();
+        for (var node = _selectedNode; node is not null; node = node.Parent) path.Push(node);
+        ItemsControl parent = ChapterTree;
+        while (path.Count > 0)
+        {
+            parent.UpdateLayout();
+            var node = path.Pop();
+            if (parent.ItemContainerGenerator.ContainerFromItem(node) is not TreeViewItem container) return;
+            if (path.Count == 0)
+            {
+                container.IsSelected = true;
+                container.BringIntoView();
+                return;
+            }
+            container.IsExpanded = true;
+            parent = container;
+        }
+    }
+
+    private static bool SnapshotsEqual(ChapterEditorSnapshot left, ChapterEditorSnapshot right)
+    {
+        if (left.Entries.Count != right.Entries.Count) return false;
+        for (var index = 0; index < left.Entries.Count; index++)
+        {
+            var a = left.Entries[index];
+            var b = right.Entries[index];
+            if (a.Id != b.Id || a.Title != b.Title || a.Level != b.Level || a.IncludeInToc != b.IncludeInToc
+                || a.TitleLineNumber != b.TitleLineNumber || a.IsFrontMatter != b.IsFrontMatter
+                || a.HeadingLevel != b.HeadingLevel || !a.ContentRanges.SequenceEqual(b.ContentRanges)) return false;
+        }
+        return true;
+    }
+
+    private void UpdateUndoRedoButtons()
+    {
+        UndoButton.IsEnabled = _undo.Count > 0;
+        RedoButton.IsEnabled = _redo.Count > 0;
+    }
+
+    private void SourceLinesList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        SplitButton.IsEnabled = _selectedNode is not null && SourceLinesList.SelectedItem is not null;
+
     private void RefreshSelectedLines()
     {
         SelectedLines.Clear();
-        if (_selectedNode is null) return;
+        SplitButton.IsEnabled = false;
+        if (_selectedNode is null)
+        {
+            SelectionHint.Text = "请选择章节";
+            return;
+        }
         foreach (var line in _document.GetSourceLines(_selectedNode.ToEntry())) SelectedLines.Add(line);
         SelectionHint.Text = $"{SelectedLines.Count} 行";
     }
@@ -273,6 +519,8 @@ public partial class ChapterEditorWindow : Window
             MoveDownButton.IsEnabled = false;
             PromoteButton.IsEnabled = false;
             DemoteButton.IsEnabled = false;
+            MergeButton.IsEnabled = false;
+            SplitButton.IsEnabled = false;
             return;
         }
 
@@ -285,6 +533,10 @@ public partial class ChapterEditorWindow : Window
             && index > 0
             && !siblings[index - 1].IsFrontMatter
             && MaxRelativeDepth(_selectedNode) + siblings[index - 1].Level <= 4;
+        MergeButton.IsEnabled = index > 0
+            && siblings[index - 1].Children.Count == 0
+            && _selectedNode.Children.Count == 0;
+        SplitButton.IsEnabled = SourceLinesList.SelectedItem is not null;
     }
     private IEnumerable<ChapterTreeNode> Flatten()
     {
@@ -348,6 +600,10 @@ public partial class ChapterEditorWindow : Window
         MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
 }
 
+internal sealed record ChapterEditorSnapshot(
+    IReadOnlyList<ChapterTreeEntry> Entries,
+    string? SelectedId);
+
 public sealed class ChapterTreeNode : INotifyPropertyChanged
 {
     private string _title;
@@ -370,7 +626,17 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     public string Title { get => _title; set => SetField(ref _title, value); }
     public int Level { get => _level; set { if (SetField(ref _level, value)) OnPropertyChanged(nameof(LevelLabel)); } }
     public bool IncludeInToc { get => _includeInToc; set => SetField(ref _includeInToc, value); }
-    public IReadOnlyList<ChapterSourceRange> ContentRanges { get => _contentRanges; set => _contentRanges = value; }
+    public IReadOnlyList<ChapterSourceRange> ContentRanges
+    {
+        get => _contentRanges;
+        set
+        {
+            if (_contentRanges.SequenceEqual(value)) return;
+            _contentRanges = value;
+            OnPropertyChanged(nameof(LineCountLabel));
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
     public string LevelLabel => IsFrontMatter ? "前置" : $"L{Level}";
     public string LineCountLabel => $"{ContentRanges.Sum(range => range.EndLine - range.StartLine + 1)} 行";
     public ChapterTreeEntry ToEntry() => new(Id, Title, Level, IncludeInToc, TitleLineNumber, ContentRanges)
@@ -379,11 +645,15 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
         HeadingLevel = HeadingLevel,
     };
     public void NotifyLineCount() => OnPropertyChanged(nameof(LineCountLabel));
+    public event EventHandler? Changed;
     public event PropertyChangedEventHandler? PropertyChanged;
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        field = value; OnPropertyChanged(propertyName); return true;
+        field = value;
+        OnPropertyChanged(propertyName);
+        Changed?.Invoke(this, EventArgs.Empty);
+        return true;
     }
     private void OnPropertyChanged(string? propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
