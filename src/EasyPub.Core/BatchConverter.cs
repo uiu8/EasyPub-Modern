@@ -71,13 +71,16 @@ public sealed class BatchConverter(EasyPubConverter converter)
             {
                 await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                 entered = true;
+                var validationEnabled = (job.Options?.ArtifactValidation ?? new ArtifactValidationOptions()).Enabled;
                 fractions[index] = 0.02;
                 Report(index, job.InputPath, "正在检查", BookTaskStage.Checking);
                 var itemProgress = new InlineProgress<ConversionProgress>(value =>
                 {
                     lock (sync)
                     {
-                        fractions[index] = Math.Clamp(value.Fraction, 0, 1);
+                        fractions[index] = validationEnabled
+                            ? Math.Clamp(value.Fraction * 0.9, 0, 0.9)
+                            : Math.Clamp(value.Fraction, 0, 1);
                         stages[index] = value.Stage;
                     }
                     var convertingStage = string.Equals(Path.GetExtension(job.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase)
@@ -88,20 +91,29 @@ public sealed class BatchConverter(EasyPubConverter converter)
                 var result = await Task.Run(
                     () => converter.ConvertAsync(job, itemProgress, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
-                lock (sync) fractions[index] = 0.94;
-                Report(index, job.InputPath, "正在验收成品", BookTaskStage.Validating);
-                var validation = await new ArtifactValidationService()
-                    .ValidateAndSaveAsync(job, cancellationToken).ConfigureAwait(false);
+                ArtifactValidationReport? validation = null;
+                if (validationEnabled)
+                {
+                    lock (sync) fractions[index] = 0.94;
+                    Report(index, job.InputPath, "正在验收成品", BookTaskStage.Validating);
+                    validation = await new ArtifactValidationService()
+                        .ValidateAndSaveAsync(job, cancellationToken).ConfigureAwait(false);
+                }
                 outcomes[index] = new BatchJobOutcome(job, result, null, false, validation);
                 lock (sync)
                 {
                     fractions[index] = 1;
                     completed++;
                 }
-                var finalStage = validation.StructurePassed && validation.WarningCount == 0
+                var finalStage = validation is null || validation.StructurePassed && validation.WarningCount == 0
                     ? BookTaskStage.Completed
                     : BookTaskStage.Warning;
-                Report(index, job.InputPath, validation.ResultLabel, finalStage, validation);
+                Report(
+                    index,
+                    job.InputPath,
+                    validation?.ResultLabel ?? "转换完成（未启用结构验收）",
+                    finalStage,
+                    validation);
             }
             catch (OperationCanceledException)
             {

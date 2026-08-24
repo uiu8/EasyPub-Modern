@@ -127,6 +127,13 @@ public sealed class BookTaskViewModel : INotifyPropertyChanged
             foreach (var issue in validation.Issues)
                 Issues.Add($"{SeverityLabel(issue.Severity)}  {issue.Message}");
         }
+        else if (stage == BookTaskStage.Completed)
+        {
+            ValidationText = "未启用（可在高级中开启）";
+            ReportPath = null;
+            RequiresHardwareConfirmation = false;
+            Issues.Clear();
+        }
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanRetry)));
     }
 

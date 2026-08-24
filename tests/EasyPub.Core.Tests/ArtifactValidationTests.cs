@@ -22,6 +22,10 @@ public sealed class ArtifactValidationTests
             Assert.Equal("EPUB", report.Format);
             Assert.False(report.RequiresKindleHardwareConfirmation);
             Assert.True(File.Exists(report.ReportPath));
+            Assert.Equal(
+                Path.Combine(directory, ArtifactValidationService.ReportDirectoryName),
+                Path.GetDirectoryName(report.ReportPath));
+            Assert.False(File.Exists(output + ".easypub-report.json"));
         }
         finally
         {
@@ -41,7 +45,13 @@ public sealed class ArtifactValidationTests
         try
         {
             var outcomes = await new BatchConverter(new EasyPubConverter()).ConvertWithReportAsync(
-                [new ConversionRequest(input, output)],
+                [new ConversionRequest(input, output)
+                {
+                    Options = new ConversionOptions
+                    {
+                        ArtifactValidation = new ArtifactValidationOptions { Enabled = true },
+                    },
+                }],
                 progress: new ImmediateProgress<BatchConversionProgress>(events.Add));
 
             Assert.True(outcomes[0].Succeeded);
@@ -52,6 +62,58 @@ public sealed class ArtifactValidationTests
             Assert.Contains(events, item => item.ItemStage == BookTaskStage.GeneratingEpub);
             Assert.Contains(events, item => item.ItemStage == BookTaskStage.Validating);
             Assert.Contains(events, item => item.ItemStage == BookTaskStage.Completed);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Batch_skips_structural_validation_by_default()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-validation-off-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "book.txt");
+        var output = Path.Combine(directory, "book.epub");
+        await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
+        var events = new List<BatchConversionProgress>();
+        try
+        {
+            var outcomes = await new BatchConverter(new EasyPubConverter()).ConvertWithReportAsync(
+                [new ConversionRequest(input, output)],
+                progress: new ImmediateProgress<BatchConversionProgress>(events.Add));
+
+            Assert.True(outcomes[0].Succeeded);
+            Assert.Null(outcomes[0].Validation);
+            Assert.DoesNotContain(events, item => item.ItemStage == BookTaskStage.Validating);
+            Assert.Contains(events, item => item.ItemStage == BookTaskStage.Completed && item.Stage.Contains("未启用结构验收"));
+            Assert.False(Directory.Exists(ArtifactValidationService.GetReportDirectory(output)));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Report_directory_keeps_only_the_latest_ten_reports_by_default()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-report-retention-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "book.txt");
+        var output = Path.Combine(directory, "book.epub");
+        await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
+        var request = new ConversionRequest(input, output);
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(request);
+            for (var index = 0; index < 12; index++)
+                await new ArtifactValidationService().ValidateAndSaveAsync(request);
+
+            var reportDirectory = ArtifactValidationService.GetReportDirectory(output);
+            Assert.Equal(10, Directory.GetFiles(reportDirectory, "*.easypub-report.json").Length);
+            Assert.Empty(Directory.GetFiles(directory, "*.easypub-report.json", SearchOption.TopDirectoryOnly));
         }
         finally
         {

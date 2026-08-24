@@ -35,6 +35,13 @@ public sealed record ConversionOptions
     public EmbeddedFontOptions Font { get; init; } = new();
     public MobiOptions Mobi { get; init; } = new();
     public TextCleanupOptions TextCleanup { get; init; } = new();
+    public ArtifactValidationOptions ArtifactValidation { get; init; } = new();
+}
+
+public sealed record ArtifactValidationOptions
+{
+    public bool Enabled { get; init; }
+    public int MaxReportCount { get; init; } = 10;
 }
 
 public sealed record TextCleanupOptions

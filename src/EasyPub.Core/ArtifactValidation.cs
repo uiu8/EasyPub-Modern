@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -35,6 +36,9 @@ public sealed record ArtifactValidationReport(
 
 public sealed class ArtifactValidationService
 {
+    public const string ReportDirectoryName = "EasyPub-验收报告";
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ReportGates = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<ArtifactValidationReport> ValidateAndSaveAsync(
         ConversionRequest request,
         CancellationToken cancellationToken = default)
@@ -47,12 +51,30 @@ public sealed class ArtifactValidationService
             ".mobi" => await ValidateMobiAsync(request, cancellationToken).ConfigureAwait(false),
             _ => throw new NotSupportedException("只能验收 EPUB 或 MOBI 成品。"),
         };
-        var reportPath = request.OutputPath + ".easypub-report.json";
+        var validationOptions = request.Options?.ArtifactValidation ?? new ArtifactValidationOptions();
+        var reportDirectory = GetReportDirectory(request.OutputPath);
+        var reportPath = Path.Combine(reportDirectory, CreateReportFileName(request.OutputPath, report.CheckedAt));
         var saved = report with { ReportPath = Path.GetFullPath(reportPath) };
+        var gate = ReportGates.GetOrAdd(reportDirectory, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Directory.CreateDirectory(reportDirectory);
             await SaveReportAsync(saved, reportPath, cancellationToken).ConfigureAwait(false);
-            return saved;
+            try
+            {
+                PruneReports(reportDirectory, Math.Clamp(validationOptions.MaxReportCount, 1, 1000));
+                return saved;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return saved with
+                {
+                    Issues = saved.Issues.Concat([
+                        new ArtifactValidationIssue(ArtifactValidationSeverity.Warning, "report_cleanup_failed", $"报告已保存，但旧报告清理失败：{exception.Message}")
+                    ]).ToArray(),
+                };
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -63,6 +85,35 @@ public sealed class ArtifactValidationService
                 ]).ToArray(),
             };
         }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public static string GetReportDirectory(string outputPath) => Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(outputPath))!,
+        ReportDirectoryName);
+
+    private static string CreateReportFileName(string outputPath, DateTimeOffset checkedAt)
+    {
+        var stem = Path.GetFileNameWithoutExtension(outputPath);
+        var safeStem = new string(stem.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character).ToArray());
+        var format = Path.GetExtension(outputPath).TrimStart('.').ToLowerInvariant();
+        var prefix = $"{safeStem}-{format}-{checkedAt:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}";
+        if (prefix.Length > 120) prefix = prefix[..120];
+        return prefix + ".easypub-report.json";
+    }
+
+    private static void PruneReports(string reportDirectory, int maxReportCount)
+    {
+        var reports = new DirectoryInfo(reportDirectory)
+            .EnumerateFiles("*.easypub-report.json", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .ThenByDescending(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .Skip(maxReportCount)
+            .ToArray();
+        foreach (var report in reports) report.Delete();
     }
 
     public ArtifactValidationReport ValidateEpub(string outputPath)

@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyPub Modern v0.19.1" Width="1180" Height="860" MinWidth="840" MinHeight="640"
+        Title="EasyPub Modern v0.19.2" Width="1180" Height="860" MinWidth="840" MinHeight="640"
         WindowStartupLocation="CenterScreen" Background="#F5F7FB" AllowDrop="True"
         FontFamily="Microsoft YaHei UI" TextOptions.TextFormattingMode="Display"
         Drop="Window_Drop" DragOver="Window_DragOver">
@@ -374,6 +374,13 @@
                                         <StackPanel><TextBlock Style="{StaticResource FieldLabel}" Text="章节标题正则（留空使用原版默认）"/><TextBox x:Name="ChapterRegexText"/></StackPanel>
                                         <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource FieldLabel}" Text="固定 ASIN（可选）"/><TextBox x:Name="MobiAsinText" MaxLength="10"/></StackPanel>
                                         <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource FieldLabel}" Text="额外 KindleGen 参数"/><TextBox x:Name="KindleGenArgsText"/></StackPanel>
+                                    </Grid>
+                                    <Separator Margin="0,12"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="18"/><ColumnDefinition Width="160"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="ArtifactValidationCheck" Content="转换后执行结构验收（较慢）" IsChecked="False" Click="ArtifactValidationCheck_Click" VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource FieldLabel}" Text="最多保留报告"/><ComboBox x:Name="ValidationRetentionCombo" SelectedIndex="1" IsEnabled="False"><ComboBoxItem Content="5 条" Tag="5"/><ComboBoxItem Content="10 条（默认）" Tag="10"/><ComboBoxItem Content="20 条" Tag="20"/><ComboBoxItem Content="50 条" Tag="50"/></ComboBox></StackPanel>
+                                        <TextBlock Grid.Column="4" Text="默认关闭。开启后才检查 EPUB/MOBI 结构；报告保存到输出目录下独立的“EasyPub-验收报告”文件夹。" Foreground="#667085" TextWrapping="Wrap" VerticalAlignment="Center"/>
                                     </Grid>
                                 </StackPanel>
                             </Border>

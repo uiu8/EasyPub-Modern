@@ -349,6 +349,10 @@ public partial class MainWindow : Window
         MobiAsinText.Text = options.Mobi.Asin ?? string.Empty;
         KindleGenArgsText.Text = options.Mobi.ExtraArguments ?? string.Empty;
         SelectComboItemByTag(EpubModeCombo, options.Mobi.EpubInputMode.ToString());
+        var artifactValidation = options.ArtifactValidation ?? new ArtifactValidationOptions();
+        ArtifactValidationCheck.IsChecked = artifactValidation.Enabled;
+        SelectComboItemByTag(ValidationRetentionCombo, Math.Clamp(artifactValidation.MaxReportCount, 1, 1000).ToString(CultureInfo.InvariantCulture));
+        ValidationRetentionCombo.IsEnabled = artifactValidation.Enabled;
         _applyingProfile = false;
     }
 
@@ -401,6 +405,11 @@ public partial class MainWindow : Window
                 EpubInputMode = Enum.Parse<EpubInputMode>(((ComboBoxItem)EpubModeCombo.SelectedItem).Tag.ToString()!),
             },
             TextCleanup = _textCleanupOptions,
+            ArtifactValidation = new ArtifactValidationOptions
+            {
+                Enabled = ArtifactValidationCheck.IsChecked == true,
+                MaxReportCount = int.Parse(((ComboBoxItem)ValidationRetentionCombo.SelectedItem).Tag!.ToString()!, CultureInfo.InvariantCulture),
+            },
         };
         return new ConversionProfile(
             FormatCombo.SelectedIndex == 1 ? "mobi" : "epub",
@@ -436,6 +445,14 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, exception.Message, "无法管理预设", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void ArtifactValidationCheck_Click(object sender, RoutedEventArgs e)
+    {
+        ValidationRetentionCombo.IsEnabled = ArtifactValidationCheck.IsChecked == true;
+        StatusText.Text = ArtifactValidationCheck.IsChecked == true
+            ? "已开启转换后结构验收；报告将保存到独立目录，默认保留最新 10 条"
+            : "已关闭转换后结构验收；转换速度更快，可在出问题时重新开启";
     }
 
     private async void NewProject_Click(object sender, RoutedEventArgs e)
@@ -653,8 +670,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.19.1"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.19.1";
+        ? "EasyPub Modern v0.19.2"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.19.2";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -1588,6 +1605,8 @@ public partial class MainWindow : Window
                 if (!outcome.Succeeded) task.SetFailure(outcome.ErrorMessage ?? (outcome.Cancelled ? "已取消" : "转换失败"), outcome.Cancelled);
                 else if (outcome.Validation is { } validation)
                     task.Update(validation.StructurePassed && validation.WarningCount == 0 ? BookTaskStage.Completed : BookTaskStage.Warning, 1, validation.ResultLabel, validation);
+                else
+                    task.Update(BookTaskStage.Completed, 1, "转换完成（未启用结构验收）");
             }
             _taskCenterWindow?.RefreshSummary();
             StatusText.Text = $"已完成：成功 {successes.Length} 本，失败 {failures.Length - cancelled} 本，取消 {cancelled} 本，合计 {totalBytes / 1024d:F1} KB";
@@ -1599,8 +1618,11 @@ public partial class MainWindow : Window
             }
             else
             {
+                var validated = outcomes.Count(outcome => outcome.Validation is not null);
                 MessageBox.Show(this,
-                    $"批量转换与逐书验收完成。\n每本书旁已生成 .easypub-report.json 报告。\n输出目录：{OutputDirectoryText.Text.Trim()}",
+                    validated == 0
+                        ? $"批量转换完成。结构验收未启用。\n输出目录：{OutputDirectoryText.Text.Trim()}"
+                        : $"批量转换与结构验收完成（{validated} 本）。\n报告目录：{Path.Combine(OutputDirectoryText.Text.Trim(), ArtifactValidationService.ReportDirectoryName)}",
                     "EasyPub Modern");
             }
         }

@@ -65,4 +65,16 @@ public sealed class TaskCenterViewModelTests
         Assert.Single(task.Issues);
         Assert.Contains("封面需要检查", task.Issues[0]);
     }
+
+    [Fact]
+    public void Completed_task_without_validation_is_labeled_as_skipped()
+    {
+        var task = new BookTaskViewModel(@"C:\books\demo.txt", @"C:\out\demo.mobi");
+
+        task.Update(BookTaskStage.Completed, 1, "转换完成（未启用结构验收）");
+
+        Assert.Equal("完成", task.StatusText);
+        Assert.Equal("未启用（可在高级中开启）", task.ValidationText);
+        Assert.Empty(task.Issues);
+    }
 }

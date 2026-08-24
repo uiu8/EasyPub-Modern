@@ -19,6 +19,7 @@ public sealed class AppSettingsStoreTests
                 FontSizePercent = 125,
                 LineHeightPercent = 150,
                 Mobi = new MobiOptions { Compression = MobiCompression.High },
+                ArtifactValidation = new ArtifactValidationOptions { Enabled = true, MaxReportCount = 20 },
             });
         var settings = new EasyPubAppSettings(
             @"D:\电子书",
@@ -37,6 +38,8 @@ public sealed class AppSettingsStoreTests
             Assert.Equal(@"D:\电子书", restored.OutputDirectory);
             Assert.Equal(125, restored.LastProfile.FontSizePercent);
             Assert.Equal(MobiCompression.High, restored.LastProfile.MobiCompression);
+            Assert.True(restored.LastProfile.Options.ArtifactValidation.Enabled);
+            Assert.Equal(20, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
             Assert.Equal("Kindle 大字版", Assert.Single(restored.Presets).Name);
             Assert.False(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
@@ -74,6 +77,8 @@ public sealed class AppSettingsStoreTests
 
             Assert.True(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
+            Assert.False(restored.LastProfile.Options.ArtifactValidation.Enabled);
+            Assert.Equal(10, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
         }
         finally
         {
