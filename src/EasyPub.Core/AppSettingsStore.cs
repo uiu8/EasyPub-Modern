@@ -33,6 +33,7 @@ public sealed record EasyPubAppSettings(
 {
     public bool UseLegacyConfig { get; init; } = true;
     public string? LegacyConfigPath { get; init; }
+    public bool AutoOpenTaskCenter { get; init; }
 
     public static EasyPubAppSettings Default { get; } = new(null, ConversionProfile.Default, []);
 }

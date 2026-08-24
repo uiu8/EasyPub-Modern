@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using EasyPub.Desktop;
@@ -14,6 +15,7 @@ public sealed class MainWindowLayoutTests
         Exception? failure = null;
         var settingsPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-settings-{Guid.NewGuid():N}.json");
         var recoveryPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-recovery-{Guid.NewGuid():N}.json");
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-book-{Guid.NewGuid():N}.txt");
         var previousSettingsPath = Environment.GetEnvironmentVariable("EASYPUB_APP_SETTINGS_PATH");
         var previousRecoveryPath = Environment.GetEnvironmentVariable("EASYPUB_RECOVERY_PATH");
         var previousDisableSave = Environment.GetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE");
@@ -23,6 +25,7 @@ public sealed class MainWindowLayoutTests
             Environment.SetEnvironmentVariable("EASYPUB_APP_SETTINGS_PATH", settingsPath);
             Environment.SetEnvironmentVariable("EASYPUB_RECOVERY_PATH", recoveryPath);
             Environment.SetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE", "1");
+            File.WriteAllText(inputPath, "第一章 雨夜\n正文");
 
             var thread = new Thread(() =>
             {
@@ -47,6 +50,9 @@ public sealed class MainWindowLayoutTests
                     var scrollViewer = Assert.IsType<ScrollViewer>(window.FindName("MainContentScrollViewer"));
                     var advancedContent = Assert.IsType<Border>(window.FindName("AdvancedOptionsContent"));
                     var validationPanel = Assert.IsType<Grid>(window.FindName("ValidationOptionsPanel"));
+                    var taskCenterButton = Assert.IsType<Button>(window.FindName("TaskCenterButton"));
+                    var autoOpenTaskCenter = Assert.IsType<CheckBox>(window.FindName("AutoOpenTaskCenterCheck"));
+                    Assert.False(autoOpenTaskCenter.IsChecked);
                     foreach (var width in new[] { 840d, 1180d, 1750d })
                     {
                         window.Width = width;
@@ -68,7 +74,35 @@ public sealed class MainWindowLayoutTests
                         Assert.True(
                             validationBounds.Bottom <= advancedBounds.Bottom + 1,
                             $"窗口宽度 {width:F0} 时结构验收行超出高级页：ValidationBottom={validationBounds.Bottom:F1}, ContentBottom={advancedBounds.Bottom:F1}");
+                        Assert.Equal(width < 980 ? "任务" : "任务与验收", taskCenterButton.Content);
                     }
+
+                    var modernMode = Assert.IsType<RadioButton>(window.FindName("ModernModeRadio"));
+                    var customMode = Assert.IsType<RadioButton>(window.FindName("CustomModeRadio"));
+                    var fontSize = Assert.IsType<TextBox>(window.FindName("FontSizeText"));
+                    var lineHeight = Assert.IsType<TextBox>(window.FindName("LineHeightText"));
+                    var layoutTab = Assert.IsType<TabItem>(window.FindName("LayoutTab"));
+                    modernMode.IsChecked = true;
+                    Assert.Equal("105", fontSize.Text);
+                    Assert.Equal("165", lineHeight.Text);
+
+                    typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
+                    tabs.SelectedItem = layoutTab;
+                    window.UpdateLayout();
+                    fontSize.Text = "106";
+                    Assert.True(customMode.IsChecked);
+                    Assert.Contains("●", layoutTab.Header?.ToString());
+
+                    var filesList = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                    Assert.Equal(ScrollBarVisibility.Disabled, ScrollViewer.GetHorizontalScrollBarVisibility(filesList));
+                    var selectedSummary = Assert.IsType<TextBlock>(window.FindName("SelectedBookSummaryText"));
+                    var book = new InputBookItem(inputPath);
+                    window.InputBooks.Add(book);
+                    filesList.SelectedItem = book;
+                    window.UpdateLayout();
+                    Assert.Contains("封面：无", selectedSummary.Text);
+                    var item = Assert.IsType<ListBoxItem>(filesList.ItemContainerGenerator.ContainerFromItem(book));
+                    Assert.Contains(Path.GetFileNameWithoutExtension(inputPath), System.Windows.Automation.AutomationProperties.GetName(item));
                 }
                 catch (Exception exception)
                 {
@@ -91,6 +125,7 @@ public sealed class MainWindowLayoutTests
             Environment.SetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE", previousDisableSave);
             if (File.Exists(settingsPath)) File.Delete(settingsPath);
             if (File.Exists(recoveryPath)) File.Delete(recoveryPath);
+            if (File.Exists(inputPath)) File.Delete(inputPath);
         }
     }
 }

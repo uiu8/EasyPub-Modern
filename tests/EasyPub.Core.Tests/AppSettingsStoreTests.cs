@@ -28,6 +28,7 @@ public sealed class AppSettingsStoreTests
         {
             UseLegacyConfig = false,
             LegacyConfigPath = null,
+            AutoOpenTaskCenter = true,
         };
 
         try
@@ -43,6 +44,7 @@ public sealed class AppSettingsStoreTests
             Assert.Equal("Kindle 大字版", Assert.Single(restored.Presets).Name);
             Assert.False(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
+            Assert.True(restored.AutoOpenTaskCenter);
         }
         finally
         {
@@ -79,6 +81,7 @@ public sealed class AppSettingsStoreTests
             Assert.Null(restored.LegacyConfigPath);
             Assert.False(restored.LastProfile.Options.ArtifactValidation.Enabled);
             Assert.Equal(10, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
+            Assert.False(restored.AutoOpenTaskCenter);
         }
         finally
         {
