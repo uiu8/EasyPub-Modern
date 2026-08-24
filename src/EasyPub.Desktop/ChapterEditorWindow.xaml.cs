@@ -54,34 +54,39 @@ public partial class ChapterEditorWindow : Window
 
     private void Promote_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedNode?.Parent is not { } parent) return;
-        var selectedIndex = parent.Children.IndexOf(_selectedNode);
+        var selected = _selectedNode;
+        if (selected?.Parent is not { } parent) return;
+        var selectedIndex = parent.Children.IndexOf(selected);
+        if (selectedIndex < 0) return;
         var followingSiblings = parent.Children.Skip(selectedIndex + 1).ToArray();
         foreach (var sibling in followingSiblings) parent.Children.Remove(sibling);
-        parent.Children.Remove(_selectedNode);
+        parent.Children.Remove(selected);
         var newSiblings = parent.Parent?.Children ?? Roots;
-        newSiblings.Insert(newSiblings.IndexOf(parent) + 1, _selectedNode);
-        _selectedNode.Parent = parent.Parent;
-        SetLevelRecursive(_selectedNode, parent.Level);
+        newSiblings.Insert(newSiblings.IndexOf(parent) + 1, selected);
+        selected.Parent = parent.Parent;
+        SetLevelRecursive(selected, parent.Level);
         foreach (var sibling in followingSiblings)
         {
-            sibling.Parent = _selectedNode;
-            _selectedNode.Children.Add(sibling);
+            sibling.Parent = selected;
+            selected.Children.Add(sibling);
         }
+        _selectedNode = selected;
+        RefreshSelectedLines();
         UpdateSummary();
         UpdateActionButtons();
     }
 
     private void Demote_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedNode is null) return;
-        if (_selectedNode.IsFrontMatter)
+        var selected = _selectedNode;
+        if (selected is null) return;
+        if (selected.IsFrontMatter)
         {
             ShowInfo("前置章节不参与卷、章、节层级，不能降为其他章节的子项。", "前置章节");
             return;
         }
-        var siblings = Siblings(_selectedNode);
-        var index = siblings.IndexOf(_selectedNode);
+        var siblings = Siblings(selected);
+        var index = siblings.IndexOf(selected);
         if (index <= 0) return;
         var newParent = siblings[index - 1];
         if (newParent.IsFrontMatter)
@@ -89,15 +94,17 @@ public partial class ChapterEditorWindow : Window
             ShowInfo("前置章节不能包含普通章节。", "无法降级");
             return;
         }
-        if (MaxRelativeDepth(_selectedNode) + newParent.Level > 4)
+        if (MaxRelativeDepth(selected) + newParent.Level > 4)
         {
             ShowInfo("降级后会超过四级目录。", "无法降级");
             return;
         }
-        siblings.Remove(_selectedNode);
-        newParent.Children.Add(_selectedNode);
-        _selectedNode.Parent = newParent;
-        SetLevelRecursive(_selectedNode, newParent.Level + 1);
+        siblings.Remove(selected);
+        newParent.Children.Add(selected);
+        selected.Parent = newParent;
+        SetLevelRecursive(selected, newParent.Level + 1);
+        _selectedNode = selected;
+        RefreshSelectedLines();
         UpdateSummary();
         UpdateActionButtons();
     }
