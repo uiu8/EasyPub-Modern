@@ -15,16 +15,16 @@
         </Grid>
 
         <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="8">
-            <DataGrid x:Name="TasksGrid" ItemsSource="{Binding}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+            <DataGrid x:Name="TasksGrid" ItemsSource="{Binding Mode=OneWay}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
                       HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0" SelectionChanged="TasksGrid_SelectionChanged">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="书名" Binding="{Binding DisplayName}" Width="2*"/>
-                    <DataGridTextColumn Header="状态" Binding="{Binding StatusText}" Width="150"/>
+                    <DataGridTextColumn Header="书名" Binding="{Binding DisplayName, Mode=OneWay}" Width="2*"/>
+                    <DataGridTextColumn Header="状态" Binding="{Binding StatusText, Mode=OneWay}" Width="150"/>
                     <DataGridTemplateColumn Header="进度" Width="180">
-                        <DataGridTemplateColumn.CellTemplate><DataTemplate><ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="8" Margin="8" Foreground="#2563EB"/></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        <DataGridTemplateColumn.CellTemplate><DataTemplate><ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay}" Height="8" Margin="8" Foreground="#2563EB"/></DataTemplate></DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
-                    <DataGridTextColumn Header="验收结果" Binding="{Binding ValidationText}" Width="210"/>
-                    <DataGridTextColumn Header="输出" Binding="{Binding OutputName}" Width="170"/>
+                    <DataGridTextColumn Header="验收结果" Binding="{Binding ValidationText, Mode=OneWay}" Width="210"/>
+                    <DataGridTextColumn Header="输出" Binding="{Binding OutputName, Mode=OneWay}" Width="170"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Border>
