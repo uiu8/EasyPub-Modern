@@ -2,6 +2,8 @@
 
 以 EasyPub v1.50 为兼容基准的 Windows 批量电子书转换器，现已支持 TXT → EPUB、TXT → MOBI 与 EPUB → MOBI。
 
+v0.17.2 按用户决定取消 Kindle Previewer 外部联动：移除主界面与整书预览入口、外部程序发现/启动器、专用缓存接口及相关测试；保留本地整书 EPUB 预览，TXT/EPUB → MOBI 转换不受影响。
+
 v0.17.1 修复 Kindle Previewer 只启动后台转换服务、没有显示预览窗口的问题：交互预览改为使用 Windows 安装器实际注册的“直接打开 EPUB”方式，不再向图形主程序附加 `-showpreview/-output/-locale`；已用中文书名真实验证出现可见 Kindle Previewer 窗口。
 
 v0.17.0 新增 Kindle 格式预览：主界面可把 TXT 按当前设置生成同源 EPUB，或直接使用选中的 EPUB，并通过 Amazon Kindle Previewer 公开的 `-showpreview` 接口打开 Kindle E-reader、平板和手机模拟预览。整书窗口保留快速 EPUB 预览并提供官方预览按钮；自动发现本机 Previewer，未安装时提供官方下载入口，亦可手工选择其他 EPUB 阅读器。官方预览缓存独立保存七天，不覆盖原稿或正式输出。
