@@ -1,153 +1,311 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using EasyPub.Core;
-using Microsoft.Win32;
 
 namespace EasyPub.Desktop;
 
 public partial class ChapterEditorWindow : Window
 {
-    private readonly ChapterEditingDocument _document;
+    private readonly ChapterTreeDocument _document;
+    private Point _dragStart;
+    private ChapterTreeNode? _draggedNode;
+    private ChapterTreeNode? _selectedNode;
 
-    public ChapterEditorWindow(ChapterEditingDocument document)
+    public ChapterEditorWindow(ChapterTreeDocument document)
     {
         InitializeComponent();
         _document = document;
-        Rows = new ObservableCollection<ChapterEditorRow>(
-            document.Candidates.Select(candidate => new ChapterEditorRow(candidate)));
+        Roots = BuildTree(document.Entries);
         DataContext = this;
-
         SourceText.Text = document.SourcePath;
         SourceText.ToolTip = document.SourcePath;
-        var recognized = Rows.Count(row => row.Kind == ChapterCandidateKind.Recognized);
-        var numeric = Rows.Count - recognized;
-        SummaryText.Text = $"已识别 {recognized} 章 · 待规范化 {numeric} 章";
-        if (Rows.Count > 0) CandidatesGrid.SelectedIndex = 0;
+        UpdateSummary();
     }
 
-    public ObservableCollection<ChapterEditorRow> Rows { get; }
+    public ObservableCollection<ChapterTreeNode> Roots { get; }
+    public ObservableCollection<ChapterTreeSourceLine> SelectedLines { get; } = [];
+    public ChapterTreePlan? ResultPlan { get; private set; }
 
-    public string? SavedPath { get; private set; }
-
-    private void CandidatesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ChapterTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        if (CandidatesGrid.SelectedItem is ChapterEditorRow row)
-            PreviewText.Text = _document.GetPreview(row.LineNumber, 6);
-        else
-            PreviewText.Clear();
+        _selectedNode = e.NewValue as ChapterTreeNode;
+        RefreshSelectedLines();
     }
 
-    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    private void MoveUp_Click(object sender, RoutedEventArgs e) => MoveSelected(-1);
+    private void MoveDown_Click(object sender, RoutedEventArgs e) => MoveSelected(1);
+    private void MoveSelected(int direction)
     {
-        var allLines = _document.CreateAllSuggestedEdits()
-            .Select(edit => edit.LineNumber)
-            .ToHashSet();
-        foreach (var row in Rows.Where(row => allLines.Contains(row.LineNumber)))
-            row.IsApplied = true;
+        if (_selectedNode is null) return;
+        var siblings = Siblings(_selectedNode);
+        var index = siblings.IndexOf(_selectedNode);
+        var target = index + direction;
+        if (target < 0 || target >= siblings.Count) return;
+        siblings.Move(index, target);
+        UpdateSummary();
+    }
+
+    private void Promote_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedNode?.Parent is not { } parent) return;
+        parent.Children.Remove(_selectedNode);
+        var newSiblings = parent.Parent?.Children ?? Roots;
+        newSiblings.Insert(newSiblings.IndexOf(parent) + 1, _selectedNode);
+        _selectedNode.Parent = parent.Parent;
+        SetLevelRecursive(_selectedNode, parent.Level);
+        UpdateSummary();
+    }
+
+    private void Demote_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedNode is null) return;
+        var siblings = Siblings(_selectedNode);
+        var index = siblings.IndexOf(_selectedNode);
+        if (index <= 0) return;
+        var newParent = siblings[index - 1];
+        if (MaxRelativeDepth(_selectedNode) + newParent.Level > 4)
+        {
+            ShowInfo("降级后会超过四级目录。", "无法降级");
+            return;
+        }
+        siblings.Remove(_selectedNode);
+        newParent.Children.Add(_selectedNode);
+        _selectedNode.Parent = newParent;
+        SetLevelRecursive(_selectedNode, newParent.Level + 1);
+        UpdateSummary();
+    }
+
+    private void Merge_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedNode is null) return;
+        var siblings = Siblings(_selectedNode);
+        var index = siblings.IndexOf(_selectedNode);
+        if (index <= 0)
+        {
+            ShowInfo("当前章节没有可合并的上一章。", "无法合并");
+            return;
+        }
+        var previous = siblings[index - 1];
+        previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
+        foreach (var child in _selectedNode.Children.ToArray())
+        {
+            _selectedNode.Children.Remove(child);
+            child.Parent = previous;
+            previous.Children.Add(child);
+            SetLevelRecursive(child, Math.Min(4, previous.Level + 1));
+        }
+        siblings.Remove(_selectedNode);
+        previous.NotifyLineCount();
+        _selectedNode = previous;
+        RefreshSelectedLines();
+        UpdateSummary();
+    }
+
+    private void Split_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedNode is null || SourceLinesList.SelectedItem is not ChapterTreeSourceLine selectedLine) return;
+        var before = new List<ChapterSourceRange>();
+        var after = new List<ChapterSourceRange>();
+        foreach (var range in _selectedNode.ContentRanges)
+        {
+            if (selectedLine.LineNumber <= range.StartLine) after.Add(range);
+            else if (selectedLine.LineNumber > range.EndLine) before.Add(range);
+            else
+            {
+                if (range.StartLine <= selectedLine.LineNumber - 1)
+                    before.Add(new ChapterSourceRange(range.StartLine, selectedLine.LineNumber - 1));
+                after.Add(new ChapterSourceRange(selectedLine.LineNumber, range.EndLine));
+            }
+        }
+        if (before.Count == 0 || after.Count == 0)
+        {
+            ShowInfo("请在本章正文中间选择拆分位置。", "无法拆分");
+            return;
+        }
+        _selectedNode.ContentRanges = before;
+        _selectedNode.NotifyLineCount();
+        var newNode = new ChapterTreeNode(new ChapterTreeEntry(
+            Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after))
+        {
+            Parent = _selectedNode.Parent,
+        };
+        var siblings = Siblings(_selectedNode);
+        siblings.Insert(siblings.IndexOf(_selectedNode) + 1, newNode);
+        RefreshSelectedLines();
+        UpdateSummary();
     }
 
     private void NormalizeAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var row in Rows.Where(row => row.Kind == ChapterCandidateKind.NumericTitle))
-        {
-            row.TargetTitle = row.SuggestedTitle;
-            row.IsApplied = true;
-        }
-        CandidatesGrid.Items.Refresh();
+        foreach (var node in Flatten())
+            if (ChapterTitleNormalizer.TryNormalizeNumericTitle(node.Title, out var normalized)) node.Title = normalized;
     }
-
+    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var node in Flatten()) node.IncludeInToc = true;
+        UpdateSummary();
+    }
     private void ClearAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var row in Rows) row.IsApplied = false;
+        foreach (var node in Flatten()) node.IncludeInToc = false;
+        UpdateSummary();
     }
-
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
-
-    private async void SaveAs_Click(object sender, RoutedEventArgs e)
+    private void Save_Click(object sender, RoutedEventArgs e)
     {
-        CandidatesGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-        CandidatesGrid.CommitEdit(DataGridEditingUnit.Row, true);
-        var dialog = new SaveFileDialog
-        {
-            Title = "另存章节编辑结果",
-            Filter = "文本文件 (*.txt)|*.txt",
-            AddExtension = true,
-            DefaultExt = ".txt",
-            InitialDirectory = Path.GetDirectoryName(_document.SourcePath),
-            FileName = Path.GetFileNameWithoutExtension(_document.SourcePath) + ".章节已编辑.txt",
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
         try
         {
-            var edits = Rows
-                .Where(row => row.IsApplied)
-                .Select(row => new ChapterTitleEdit(row.LineNumber, row.TargetTitle))
-                .ToArray();
-            await _document.SaveAsAsync(dialog.FileName, edits);
-            SavedPath = Path.GetFullPath(dialog.FileName);
+            ResultPlan = _document.CreatePlan(Flatten().Select(node => node.ToEntry()));
             DialogResult = true;
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存章节编辑结果", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "无法保存章节树", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void ChapterTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _dragStart = e.GetPosition(ChapterTree);
+        _draggedNode = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext as ChapterTreeNode;
+    }
+    private void ChapterTree_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _draggedNode is null) return;
+        var current = e.GetPosition(ChapterTree);
+        if (Math.Abs(current.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        DragDrop.DoDragDrop(ChapterTree, _draggedNode, DragDropEffects.Move);
+    }
+    private void ChapterTree_Drop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(typeof(ChapterTreeNode))) return;
+        var dragged = (ChapterTreeNode)e.Data.GetData(typeof(ChapterTreeNode))!;
+        var target = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext as ChapterTreeNode;
+        if (ReferenceEquals(dragged, target) || target is not null && IsDescendant(target, dragged)) return;
+        if (target is not null && MaxRelativeDepth(dragged) + target.Level > 4)
+        {
+            ShowInfo("拖放后会超过四级目录。", "无法移动");
+            return;
+        }
+        Siblings(dragged).Remove(dragged);
+        if (target is null)
+        {
+            Roots.Add(dragged);
+            dragged.Parent = null;
+            SetLevelRecursive(dragged, 1);
+        }
+        else
+        {
+            target.Children.Add(dragged);
+            dragged.Parent = target;
+            SetLevelRecursive(dragged, target.Level + 1);
+        }
+        UpdateSummary();
+    }
+
+    private void RefreshSelectedLines()
+    {
+        SelectedLines.Clear();
+        if (_selectedNode is null) return;
+        foreach (var line in _document.GetSourceLines(_selectedNode.ToEntry())) SelectedLines.Add(line);
+        SelectionHint.Text = $"{SelectedLines.Count} 行";
+    }
+    private void UpdateSummary()
+    {
+        var nodes = Flatten().ToArray();
+        var depth = nodes.Length == 0 ? 0 : nodes.Max(node => node.Level);
+        SummaryText.Text = $"{nodes.Length} 章 · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
+    }
+    private IEnumerable<ChapterTreeNode> Flatten()
+    {
+        foreach (var root in Roots)
+        {
+            yield return root;
+            foreach (var child in Flatten(root)) yield return child;
+        }
+    }
+    private static IEnumerable<ChapterTreeNode> Flatten(ChapterTreeNode node)
+    {
+        foreach (var child in node.Children)
+        {
+            yield return child;
+            foreach (var nested in Flatten(child)) yield return nested;
+        }
+    }
+    private ObservableCollection<ChapterTreeNode> Siblings(ChapterTreeNode node) => node.Parent?.Children ?? Roots;
+    private static ObservableCollection<ChapterTreeNode> BuildTree(IReadOnlyList<ChapterTreeEntry> entries)
+    {
+        var roots = new ObservableCollection<ChapterTreeNode>();
+        var stack = new Stack<ChapterTreeNode>();
+        foreach (var entry in entries)
+        {
+            var node = new ChapterTreeNode(entry);
+            while (stack.Count > 0 && stack.Peek().Level >= node.Level) stack.Pop();
+            if (stack.Count == 0) roots.Add(node);
+            else { node.Parent = stack.Peek(); stack.Peek().Children.Add(node); }
+            stack.Push(node);
+        }
+        return roots;
+    }
+    private static void SetLevelRecursive(ChapterTreeNode node, int level)
+    {
+        node.Level = Math.Clamp(level, 1, 4);
+        foreach (var child in node.Children) SetLevelRecursive(child, node.Level + 1);
+    }
+    private static int MaxRelativeDepth(ChapterTreeNode node) => node.Children.Count == 0 ? 1 : 1 + node.Children.Max(MaxRelativeDepth);
+    private static bool IsDescendant(ChapterTreeNode candidate, ChapterTreeNode ancestor)
+    {
+        for (var current = candidate.Parent; current is not null; current = current.Parent)
+            if (ReferenceEquals(current, ancestor)) return true;
+        return false;
+    }
+    private static T? FindAncestor<T>(DependencyObject? source) where T : DependencyObject
+    {
+        while (source is not null)
+        {
+            if (source is T match) return match;
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return null;
+    }
+    private void ShowInfo(string message, string title) =>
+        MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
 }
 
-public sealed class ChapterEditorRow : INotifyPropertyChanged
+public sealed class ChapterTreeNode : INotifyPropertyChanged
 {
-    private bool _isApplied;
-    private string _targetTitle;
-    private bool _initialized;
-
-    public ChapterEditorRow(ChapterCandidate candidate)
+    private string _title;
+    private int _level;
+    private bool _includeInToc;
+    private IReadOnlyList<ChapterSourceRange> _contentRanges;
+    public ChapterTreeNode(ChapterTreeEntry entry)
     {
-        LineNumber = candidate.LineNumber;
-        OriginalTitle = candidate.OriginalTitle;
-        SuggestedTitle = candidate.SuggestedTitle;
-        Kind = candidate.Kind;
-        _targetTitle = candidate.SuggestedTitle;
-        _initialized = true;
+        Id = entry.Id; _title = entry.Title; _level = entry.Level; _includeInToc = entry.IncludeInToc;
+        TitleLineNumber = entry.TitleLineNumber; _contentRanges = entry.ContentRanges ?? [];
     }
-
-    public int LineNumber { get; }
-
-    public string OriginalTitle { get; }
-
-    public string SuggestedTitle { get; }
-
-    public ChapterCandidateKind Kind { get; }
-
-    public string KindLabel => Kind == ChapterCandidateKind.NumericTitle ? "数字标题" : "已识别";
-
-    public bool IsApplied
-    {
-        get => _isApplied;
-        set => SetField(ref _isApplied, value);
-    }
-
-    public string TargetTitle
-    {
-        get => _targetTitle;
-        set
-        {
-            if (!SetField(ref _targetTitle, value)) return;
-            if (_initialized) IsApplied = true;
-        }
-    }
-
+    public string Id { get; }
+    public int? TitleLineNumber { get; }
+    public ChapterTreeNode? Parent { get; set; }
+    public ObservableCollection<ChapterTreeNode> Children { get; } = [];
+    public string Title { get => _title; set => SetField(ref _title, value); }
+    public int Level { get => _level; set { if (SetField(ref _level, value)) OnPropertyChanged(nameof(LevelLabel)); } }
+    public bool IncludeInToc { get => _includeInToc; set => SetField(ref _includeInToc, value); }
+    public IReadOnlyList<ChapterSourceRange> ContentRanges { get => _contentRanges; set => _contentRanges = value; }
+    public string LevelLabel => $"L{Level}";
+    public string LineCountLabel => $"{ContentRanges.Sum(range => range.EndLine - range.StartLine + 1)} 行";
+    public ChapterTreeEntry ToEntry() => new(Id, Title, Level, IncludeInToc, TitleLineNumber, ContentRanges);
+    public void NotifyLineCount() => OnPropertyChanged(nameof(LineCountLabel));
     public event PropertyChangedEventHandler? PropertyChanged;
-
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-        field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        return true;
+        field = value; OnPropertyChanged(propertyName); return true;
     }
+    private void OnPropertyChanged(string? propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }

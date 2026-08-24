@@ -55,6 +55,7 @@ try
             EnableReadingProgressSync = values.MobiSync,
             Asin = values.MobiAsin,
             ExtraArguments = values.KindleGenArguments,
+            EpubInputMode = values.EpubMode,
         },
     };
     var extension = values.Format == "mobi" ? ".mobi" : ".epub";
@@ -116,6 +117,14 @@ static CliValues ParseArguments(string[] arguments)
             case "--no-mobi-sync": values.MobiSync = false; break;
             case "--mobi-asin": values.MobiAsin = Next(); break;
             case "--kindlegen-args": values.KindleGenArguments = Next(); break;
+            case "--epub-mode":
+                values.EpubMode = Next().ToLowerInvariant() switch
+                {
+                    "preserve" => EpubInputMode.PreserveOriginal,
+                    "reflow" => EpubInputMode.EasyPubCompatible,
+                    _ => throw new ArgumentException("--epub-mode 只能是 preserve 或 reflow。"),
+                };
+                break;
             case "--keep-blank-lines": values.KeepBlankLines = true; break;
             case "--no-fullwidth-indent": values.NoFullWidthIndent = true; break;
             case "--keep-source-archive": values.KeepSourceArchive = true; break;
@@ -126,18 +135,20 @@ static CliValues ParseArguments(string[] arguments)
         }
     }
     if (values.Format is not ("epub" or "mobi")) throw new ArgumentException("--format 只能是 epub 或 mobi。");
-    if (values.Inputs.Count == 0) throw new ArgumentException("至少需要一个 TXT 输入文件。");
+    if (values.Inputs.Count == 0) throw new ArgumentException("至少需要一个 TXT 或 EPUB 输入文件。");
+    if (values.Format != "mobi" && values.Inputs.Any(input => string.Equals(Path.GetExtension(input), ".epub", StringComparison.OrdinalIgnoreCase)))
+        throw new ArgumentException("EPUB 输入只能输出 MOBI。");
     return values;
 }
 
 static void PrintUsage()
 {
-    Console.Error.WriteLine("用法: EasyPub.Cli <输出目录> <input.txt> [input2.txt ...] [选项]");
+    Console.Error.WriteLine("用法: EasyPub.Cli <输出目录> <input.txt|input.epub> [更多输入 ...] [选项]");
     Console.Error.WriteLine("主要选项: --format epub|mobi --parallel N --title 标题 --author 作者");
     Console.Error.WriteLine("书籍信息: --translator 译者 --isbn ISBN --publication-date yyyy-MM-dd --publisher 出版社 --category 类别 --language zh-CN --description 简介");
     Console.Error.WriteLine("排版选项: --chapter-regex 正则 --encoding Auto|Utf8|Gbk --font-size N --line-height N --cover 图片路径");
     Console.Error.WriteLine("字体选项: --font 字体.ttf --font-family 字体名 --no-font-subset");
-    Console.Error.WriteLine("MOBI选项: --kindlegen 路径 --mobi-compression 0|1|2 --mobi-asin B00XXXXXXX --no-mobi-sync --kindlegen-args 参数 --keep-source-archive");
+    Console.Error.WriteLine("MOBI选项: --kindlegen 路径 --epub-mode preserve|reflow --mobi-compression 0|1|2 --mobi-asin B00XXXXXXX --no-mobi-sync --kindlegen-args 参数 --keep-source-archive");
 }
 
 sealed class CliValues
@@ -177,5 +188,6 @@ sealed class CliValues
     public string? MobiAsin { get; set; }
     public bool KeepSourceArchive { get; set; }
     public string? KindleGenArguments { get; set; }
+    public EpubInputMode EpubMode { get; set; } = EpubInputMode.PreserveOriginal;
     public List<string> Inputs { get; } = [];
 }

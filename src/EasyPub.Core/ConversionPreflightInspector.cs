@@ -68,33 +68,65 @@ public sealed class ConversionPreflightInspector
 
             var options = request.Options ?? ConversionOptions.LegacyDefault;
             int? inputLineCount = null;
-            try
+            var inputExtension = Path.GetExtension(request.InputPath);
+            if (string.Equals(inputExtension, ".epub", StringComparison.OrdinalIgnoreCase))
             {
-                var document = await ChapterEditingDocument.LoadAsync(
-                    request.InputPath,
-                    options.ChapterPattern,
-                    options.TextEncoding,
-                    cancellationToken);
-                inputLineCount = document.LineCount;
-                books.Add(new ConversionPreflightBook(request.InputPath, document.Candidates.Count));
-                if (document.Candidates.Count == 0)
+                if (!string.Equals(Path.GetExtension(request.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase))
                 {
                     issues.Add(new ConversionPreflightIssue(
                         request.InputPath,
-                        PreflightSeverity.Warning,
-                        "chapter_not_found",
-                        "没有识别到章节标题，将作为单章电子书转换。",
-                        PreflightTargetKind.Chapters));
+                        PreflightSeverity.Error,
+                        "epub_output_unsupported",
+                        "EPUB 输入只能转换为 MOBI。",
+                        PreflightTargetKind.Output));
+                }
+                try
+                {
+                    var inspection = EpubInspectionService.Inspect(request.InputPath);
+                    books.Add(new ConversionPreflightBook(request.InputPath, inspection.SpineDocumentCount));
+                    if (inspection.HasUnsupportedEncryption)
+                        issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_drm", "EPUB 含 DRM 或不支持的加密资源。", PreflightTargetKind.InputBook));
+                    if (inspection.IsFixedLayout && options.Mobi.EpubInputMode == EpubInputMode.EasyPubCompatible)
+                        issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_fixed_layout_reflow", "固定版式 EPUB 不能兼容重排，请选择“保留原 EPUB 版式”。", PreflightTargetKind.Mobi));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_unreadable", $"无法读取 EPUB：{exception.Message}", PreflightTargetKind.InputBook));
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            else
             {
-                issues.Add(new ConversionPreflightIssue(
-                    request.InputPath,
-                    PreflightSeverity.Error,
-                    "input_unreadable",
-                    $"无法读取或解析 TXT：{exception.Message}",
-                    PreflightTargetKind.InputBook));
+                try
+                {
+                    var document = await ChapterTreeDocument.LoadAsync(
+                        request.InputPath,
+                        options.ChapterPattern,
+                        options.TocHierarchy,
+                        options.TextEncoding,
+                        request.ChapterTree,
+                        cancellationToken);
+                    inputLineCount = document.LineCount;
+                    var candidateCount = document.Entries.Count(entry => entry.TitleLineNumber.HasValue);
+                    books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
+                    if (candidateCount == 0)
+                    {
+                        issues.Add(new ConversionPreflightIssue(
+                            request.InputPath,
+                            PreflightSeverity.Warning,
+                            "chapter_not_found",
+                            "没有识别到章节标题，将作为单章电子书转换。",
+                            PreflightTargetKind.Chapters));
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    issues.Add(new ConversionPreflightIssue(
+                        request.InputPath,
+                        PreflightSeverity.Error,
+                        "input_unreadable",
+                        $"无法读取或解析 TXT：{exception.Message}",
+                        PreflightTargetKind.InputBook));
+                }
             }
 
             if (File.Exists(request.OutputPath))

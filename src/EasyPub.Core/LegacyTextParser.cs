@@ -3,7 +3,11 @@ using System.Text.RegularExpressions;
 
 namespace EasyPub.Core;
 
-internal sealed record LegacyChapter(string Title, IReadOnlyList<string> Paragraphs, int TocLevel = 2);
+internal sealed record LegacyChapter(
+    string Title,
+    IReadOnlyList<string> Paragraphs,
+    int TocLevel = 2,
+    bool IncludeInToc = true);
 
 internal static partial class LegacyTextParser
 {
@@ -12,10 +16,15 @@ internal static partial class LegacyTextParser
     public static async Task<IReadOnlyList<LegacyChapter>> ParseAsync(
         string inputPath,
         ConversionOptions options,
+        ChapterTreePlan? chapterTree,
         CancellationToken cancellationToken)
     {
         var bytes = await File.ReadAllBytesAsync(inputPath, cancellationToken);
         var text = DetectEncoding(bytes, options.TextEncoding).GetString(RemovePreamble(bytes));
+        var sourceLines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        if (chapterTree is not null)
+            return ParseUsingChapterTree(bytes, sourceLines, options, chapterTree);
+
         var hierarchy = options.TocHierarchy ?? new TocHierarchyOptions();
         var chapters = new List<MutableChapter> { new("序", hierarchy.Enabled ? 1 : 2) };
         var chapterRegex = string.IsNullOrWhiteSpace(options.ChapterPattern)
@@ -25,7 +34,6 @@ internal static partial class LegacyTextParser
             ? CreateHierarchyRegexes(hierarchy)
             : [];
 
-        var sourceLines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         var positionedIllustrations = options.Illustrations
             .Where(illustration => illustration.InsertAfterLine.HasValue)
             .GroupBy(illustration => illustration.InsertAfterLine!.Value)
@@ -61,6 +69,52 @@ internal static partial class LegacyTextParser
         return chapters
             .Select(chapter => new LegacyChapter(chapter.Title, chapter.Paragraphs.ToArray(), chapter.TocLevel))
             .ToArray();
+    }
+
+    private static IReadOnlyList<LegacyChapter> ParseUsingChapterTree(
+        byte[] sourceBytes,
+        IReadOnlyList<string> sourceLines,
+        ConversionOptions options,
+        ChapterTreePlan chapterTree)
+    {
+        var sourceHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sourceBytes));
+        if (!string.Equals(sourceHash, chapterTree.SourceSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("TXT 内容已发生变化，章节树已失效，请重新打开章节树并保存。");
+        ChapterTreeDocument.ValidatePlan(chapterTree, sourceLines.Count);
+
+        var positionedIllustrations = options.Illustrations
+            .Where(illustration => illustration.InsertAfterLine.HasValue)
+            .GroupBy(illustration => illustration.InsertAfterLine!.Value)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var result = new List<LegacyChapter>(chapterTree.Entries.Count);
+        foreach (var entry in chapterTree.Entries)
+        {
+            var paragraphs = new List<string>();
+            if (entry.TitleLineNumber is int titleLine)
+                AddPositionedIllustrations(paragraphs, positionedIllustrations, titleLine);
+            foreach (var range in entry.ContentRanges ?? [])
+            {
+                for (var lineNumber = range.StartLine; lineNumber <= range.EndLine; lineNumber++)
+                {
+                    var line = sourceLines[lineNumber - 1].Trim();
+                    if (line.Length > 0 || !options.RemoveBlankLines) paragraphs.Add(line);
+                    AddPositionedIllustrations(paragraphs, positionedIllustrations, lineNumber);
+                }
+            }
+            result.Add(new LegacyChapter(
+                entry.Title.Trim(), paragraphs, Math.Clamp(entry.Level, 1, 4), entry.IncludeInToc));
+        }
+        return result;
+    }
+
+    private static void AddPositionedIllustrations(
+        ICollection<string> paragraphs,
+        IReadOnlyDictionary<int, BookIllustration[]> positionedIllustrations,
+        int lineNumber)
+    {
+        if (!positionedIllustrations.TryGetValue(lineNumber, out var illustrations)) return;
+        foreach (var illustration in illustrations)
+            paragraphs.Add(PositionedIllustrationPrefix + illustration.Marker.Trim());
     }
 
     private static Regex[] CreateHierarchyRegexes(TocHierarchyOptions hierarchy) =>

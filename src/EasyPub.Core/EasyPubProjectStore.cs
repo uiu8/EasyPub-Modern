@@ -13,6 +13,7 @@ public sealed record EasyPubProjectBook(
 {
     public BookMetadataOverrides MetadataOverrides { get; init; } = new();
     public string? MetadataRuleFolder { get; init; }
+    public ChapterTreePlan? ChapterTree { get; init; }
 }
 
 public sealed record EasyPubProjectDocument(
@@ -143,6 +144,7 @@ public sealed class EasyPubProjectStore
                 Illustrations = book.Illustrations ?? [],
                 MetadataOverrides = book.MetadataOverrides ?? new BookMetadataOverrides(),
                 MetadataRuleFolder = NormalizeOptionalPath(book.MetadataRuleFolder),
+                ChapterTree = book.ChapterTree,
             })
             .ToArray(),
     };

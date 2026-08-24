@@ -49,6 +49,7 @@ public sealed class BookPreviewService
             var chapters = await LegacyTextParser.ParseAsync(
                 request.InputPath,
                 request.Options ?? ConversionOptions.LegacyDefault,
+                request.ChapterTree,
                 cancellationToken).ConfigureAwait(false);
             var items = new List<BookPreviewItem>
             {

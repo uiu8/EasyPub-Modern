@@ -13,6 +13,98 @@ internal static class LegacyMobiWriter
         CancellationToken cancellationToken,
         IProgress<ConversionProgress>? progress = null)
     {
+        var inputExtension = Path.GetExtension(request.InputPath);
+        if (string.Equals(inputExtension, ".txt", StringComparison.OrdinalIgnoreCase))
+            return await WriteFromTextAsync(request, cancellationToken, progress).ConfigureAwait(false);
+        if (!string.Equals(inputExtension, ".epub", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("MOBI 输入目前支持 TXT 和 EPUB 文件。");
+
+        var options = request.Options ?? ConversionOptions.LegacyDefault;
+        return options.Mobi.EpubInputMode == EpubInputMode.PreserveOriginal
+            ? await WritePreservedEpubAsync(request, cancellationToken, progress).ConfigureAwait(false)
+            : await WriteCompatibleEpubAsync(request, cancellationToken, progress).ConfigureAwait(false);
+    }
+
+    private static async Task<(int ChapterCount, long OutputBytes)> WriteCompatibleEpubAsync(
+        ConversionRequest request,
+        CancellationToken cancellationToken,
+        IProgress<ConversionProgress>? progress)
+    {
+        progress?.Report(new ConversionProgress(request.InputPath, 0.02, "正在读取 EPUB 目录与正文"));
+        using var imported = await EpubCompatibilityImporter.ImportAsync(request.InputPath, cancellationToken).ConfigureAwait(false);
+        var options = request.Options ?? ConversionOptions.LegacyDefault;
+        var importedMetadata = imported.Metadata;
+        var configuredMetadata = options.Metadata;
+        var mergedMetadata = configuredMetadata with
+        {
+            Isbn = First(configuredMetadata.Isbn, importedMetadata.Isbn),
+            PublicationDate = configuredMetadata.PublicationDate ?? importedMetadata.PublicationDate,
+            Publisher = First(configuredMetadata.Publisher, importedMetadata.Publisher),
+            Category = First(configuredMetadata.Category, importedMetadata.Category),
+            Language = configuredMetadata.Language == "zh-CN" && !string.IsNullOrWhiteSpace(importedMetadata.Language)
+                ? importedMetadata.Language
+                : configuredMetadata.Language,
+            Description = First(configuredMetadata.Description, importedMetadata.Description),
+        };
+        var textRequest = new ConversionRequest(
+            imported.TextPath,
+            request.OutputPath,
+            First(request.Title, imported.Title),
+            First(request.Author, imported.Author),
+            options with
+            {
+                CoverImagePath = First(options.CoverImagePath, imported.CoverImagePath),
+                Illustrations = imported.Illustrations.Concat(options.Illustrations).ToArray(),
+                Metadata = mergedMetadata,
+            })
+        {
+            ChapterTree = imported.ChapterTree,
+        };
+        var scaledProgress = progress is null ? null : new Progress<ConversionProgress>(value =>
+            progress.Report(new ConversionProgress(request.InputPath, 0.10 + value.Fraction * 0.90, value.Stage)));
+        return await WriteFromTextAsync(textRequest, cancellationToken, scaledProgress).ConfigureAwait(false);
+    }
+
+    private static async Task<(int ChapterCount, long OutputBytes)> WritePreservedEpubAsync(
+        ConversionRequest request,
+        CancellationToken cancellationToken,
+        IProgress<ConversionProgress>? progress)
+    {
+        var inspection = EpubInspectionService.Inspect(request.InputPath);
+        if (inspection.HasUnsupportedEncryption)
+            throw new InvalidDataException("该 EPUB 含 DRM 或不支持的加密资源，无法转换。");
+        var outputPath = Path.GetFullPath(request.OutputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        var options = request.Options ?? ConversionOptions.LegacyDefault;
+        var kindleGenPath = KindleGenLocator.Resolve(options.Mobi.KindleGenPath);
+        var workingDirectory = Path.Combine(Path.GetDirectoryName(outputPath)!, ".easypub-modern-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingDirectory);
+        var sourceName = "source.epub";
+        var sourcePath = Path.Combine(workingDirectory, sourceName);
+        var rawMobiName = "source_out.mobi";
+        var rawMobiPath = Path.Combine(workingDirectory, rawMobiName);
+        try
+        {
+            File.Copy(request.InputPath, sourcePath, overwrite: false);
+            progress?.Report(new ConversionProgress(request.InputPath, 0.12, "正在保留 EPUB 原版式资源"));
+            await RunKindleGenAsync(
+                kindleGenPath, workingDirectory, sourceName, rawMobiName, options,
+                request.InputPath, cancellationToken, progress, 0.20, 0.82).ConfigureAwait(false);
+            var bytes = await FinalizeMobiAsync(
+                rawMobiPath, outputPath, options, request.InputPath, cancellationToken, progress).ConfigureAwait(false);
+            return (inspection.SpineDocumentCount, bytes);
+        }
+        finally
+        {
+            TryDeleteDirectory(workingDirectory);
+        }
+    }
+
+    private static async Task<(int ChapterCount, long OutputBytes)> WriteFromTextAsync(
+        ConversionRequest request,
+        CancellationToken cancellationToken,
+        IProgress<ConversionProgress>? progress)
+    {
         var outputPath = Path.GetFullPath(request.OutputPath);
         var outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
@@ -38,52 +130,12 @@ internal static class LegacyMobiWriter
             ZipFile.ExtractToDirectory(epubPath, workingDirectory);
             PrepareLegacyMobiPackage(oebpsDirectory, options);
 
-            var startInfo = new ProcessStartInfo(kindleGenPath)
-            {
-                WorkingDirectory = oebpsDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            startInfo.ArgumentList.Add("content.opf");
-            startInfo.ArgumentList.Add($"-c{(int)options.Mobi.Compression}");
-            foreach (var argument in CommandLineArguments.Parse(options.Mobi.ExtraArguments))
-                startInfo.ArgumentList.Add(argument);
-            startInfo.ArgumentList.Add("-o");
-            startInfo.ArgumentList.Add(rawMobiName);
-
-            using var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("无法启动 KindleGen。");
-            using var cancellationRegistration = cancellationToken.Register(() =>
-            {
-                try
-                {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                }
-                catch (InvalidOperationException) { }
-            });
-            progress?.Report(new ConversionProgress(request.InputPath, 0.78, "KindleGen 正在生成 MOBI"));
-            var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var log = (await standardOutput) + (await standardError);
-
-            if (!File.Exists(rawMobiPath) || new FileInfo(rawMobiPath).Length == 0)
-                throw new InvalidOperationException($"KindleGen 未生成 MOBI（退出码 {process.ExitCode}）。\n{log.Trim()}");
-
-            var mobiBytes = await File.ReadAllBytesAsync(rawMobiPath, cancellationToken);
-            progress?.Report(new ConversionProgress(request.InputPath, 0.91, "正在修复并验证 Kindle 联合结构"));
-            var kindleGenProducedJointMobi = LegacyMobiPostProcessor.HasValidJointStructure(mobiBytes);
-            if (options.Mobi.StripSourceArchive)
-                mobiBytes = LegacyMobiPostProcessor.StripSourceArchive(mobiBytes);
-            var asin = options.Mobi.EnableReadingProgressSync ? NormalizeOrGenerateAsin(options.Mobi.Asin) : null;
-            mobiBytes = LegacyMobiPostProcessor.ApplyEasyPubMetadata(mobiBytes, asin);
-            if (kindleGenProducedJointMobi && !LegacyMobiPostProcessor.HasValidJointStructure(mobiBytes))
-                throw new InvalidDataException("MOBI 后处理破坏了 Kindle KF8 联合结构，已停止输出无效文件。");
-            await File.WriteAllBytesAsync(outputPath, mobiBytes, cancellationToken);
-            progress?.Report(new ConversionProgress(request.InputPath, 1, "转换完成"));
-            return (epubResult.ChapterCount, mobiBytes.LongLength);
+            await RunKindleGenAsync(
+                kindleGenPath, oebpsDirectory, "content.opf", rawMobiName, options,
+                request.InputPath, cancellationToken, progress, 0.78, 0.88).ConfigureAwait(false);
+            var outputBytes = await FinalizeMobiAsync(
+                rawMobiPath, outputPath, options, request.InputPath, cancellationToken, progress).ConfigureAwait(false);
+            return (epubResult.ChapterCount, outputBytes);
         }
         finally
         {
@@ -91,6 +143,76 @@ internal static class LegacyMobiWriter
             TryDeleteDirectory(workingDirectory);
         }
     }
+
+    private static async Task RunKindleGenAsync(
+        string kindleGenPath,
+        string workingDirectory,
+        string inputName,
+        string outputName,
+        ConversionOptions options,
+        string reportedInputPath,
+        CancellationToken cancellationToken,
+        IProgress<ConversionProgress>? progress,
+        double startFraction,
+        double endFraction)
+    {
+        var startInfo = new ProcessStartInfo(kindleGenPath)
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add(inputName);
+        startInfo.ArgumentList.Add($"-c{(int)options.Mobi.Compression}");
+        foreach (var argument in CommandLineArguments.Parse(options.Mobi.ExtraArguments))
+            startInfo.ArgumentList.Add(argument);
+        startInfo.ArgumentList.Add("-o");
+        startInfo.ArgumentList.Add(outputName);
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 KindleGen。");
+        using var cancellationRegistration = cancellationToken.Register(() =>
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { }
+        });
+        progress?.Report(new ConversionProgress(reportedInputPath, startFraction, "KindleGen 正在生成 MOBI"));
+        var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        var log = (await standardOutput.ConfigureAwait(false)) + (await standardError.ConfigureAwait(false));
+        var rawPath = Path.Combine(workingDirectory, outputName);
+        if (!File.Exists(rawPath) || new FileInfo(rawPath).Length == 0)
+            throw new InvalidOperationException($"KindleGen 未生成 MOBI（退出码 {process.ExitCode}）。\n{log.Trim()}");
+        progress?.Report(new ConversionProgress(reportedInputPath, endFraction, "KindleGen 已完成，正在校验"));
+    }
+
+    private static async Task<long> FinalizeMobiAsync(
+        string rawMobiPath,
+        string outputPath,
+        ConversionOptions options,
+        string reportedInputPath,
+        CancellationToken cancellationToken,
+        IProgress<ConversionProgress>? progress)
+    {
+        var mobiBytes = await File.ReadAllBytesAsync(rawMobiPath, cancellationToken).ConfigureAwait(false);
+        progress?.Report(new ConversionProgress(reportedInputPath, 0.91, "正在修复并验证 Kindle 联合结构"));
+        var kindleGenProducedJointMobi = LegacyMobiPostProcessor.HasValidJointStructure(mobiBytes);
+        if (options.Mobi.StripSourceArchive)
+            mobiBytes = LegacyMobiPostProcessor.StripSourceArchive(mobiBytes);
+        var asin = options.Mobi.EnableReadingProgressSync ? NormalizeOrGenerateAsin(options.Mobi.Asin) : null;
+        mobiBytes = LegacyMobiPostProcessor.ApplyEasyPubMetadata(mobiBytes, asin);
+        if (kindleGenProducedJointMobi && !LegacyMobiPostProcessor.HasValidJointStructure(mobiBytes))
+            throw new InvalidDataException("MOBI 后处理破坏了 Kindle KF8 联合结构，已停止输出无效文件。");
+        await File.WriteAllBytesAsync(outputPath, mobiBytes, cancellationToken).ConfigureAwait(false);
+        progress?.Report(new ConversionProgress(reportedInputPath, 1, "转换完成"));
+        return mobiBytes.LongLength;
+    }
+
+    private static string? First(string? preferred, string? fallback) =>
+        !string.IsNullOrWhiteSpace(preferred) ? preferred.Trim() :
+        !string.IsNullOrWhiteSpace(fallback) ? fallback.Trim() : null;
 
     private static string NormalizeOrGenerateAsin(string? configuredAsin)
     {

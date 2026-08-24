@@ -179,4 +179,28 @@ public sealed class ConversionPreflightTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task Epub_input_is_inspected_and_requires_mobi_output()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-preflight-epub-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var text = Path.Combine(directory, "小说.txt");
+        var epub = Path.Combine(directory, "小说.epub");
+        await File.WriteAllTextAsync(text, "第一章 开始\n正文");
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(text, epub));
+            var report = await new ConversionPreflightInspector().InspectAsync([
+                new ConversionRequest(epub, Path.Combine(directory, "复制.epub")),
+            ]);
+
+            Assert.Contains(report.Issues, issue => issue.Code == "epub_output_unsupported");
+            Assert.True(Assert.Single(report.Books).ChapterCandidateCount >= 3);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

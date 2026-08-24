@@ -1,76 +1,71 @@
 <Window x:Class="EasyPub.Desktop.ChapterEditorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="章节编辑与标题规范化 · EasyPub Modern v0.9.1"
-        Width="1180" Height="760" MinWidth="920" MinHeight="600"
-        WindowStartupLocation="CenterOwner" Background="#F4F5F7">
+        xmlns:local="clr-namespace:EasyPub.Desktop"
+        Title="章节树 · EasyPub Modern" Width="1240" Height="800" MinWidth="980" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FB">
     <Window.Resources>
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="14,8"/>
-            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Padding" Value="13,8"/><Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="MinHeight" Value="36"/>
         </Style>
+        <HierarchicalDataTemplate DataType="{x:Type local:ChapterTreeNode}" ItemsSource="{Binding Children}">
+            <Border Padding="5,3" CornerRadius="5">
+                <Grid Width="500">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <CheckBox IsChecked="{Binding IncludeInToc}" ToolTip="是否显示在 Kindle 目录中" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <Border Grid.Column="1" Background="#E8F0FE" CornerRadius="8" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding LevelLabel}" Foreground="#174EA6" FontSize="11"/>
+                    </Border>
+                    <TextBox Grid.Column="2" Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" BorderThickness="0" Background="Transparent" Padding="2"/>
+                    <TextBlock Grid.Column="3" Text="{Binding LineCountLabel}" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                </Grid>
+            </Border>
+        </HierarchicalDataTemplate>
     </Window.Resources>
-    <Grid Margin="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="14"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="16"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="章节编辑与标题规范化" FontSize="26" FontWeight="SemiBold" Foreground="#202124"/>
-                <TextBlock x:Name="SourceText" Margin="0,5,0,0" Foreground="#5F6368" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="章节树" FontSize="26" FontWeight="SemiBold" Foreground="#172033"/>
+                <TextBlock x:Name="SourceText" Margin="0,5,0,0" Foreground="#667085" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="#E8F0FE" CornerRadius="8" Padding="14,9" VerticalAlignment="Center">
-                <TextBlock x:Name="SummaryText" Foreground="#174EA6" FontWeight="SemiBold"/>
+            <Border Grid.Column="1" Background="#ECFDF3" CornerRadius="9" Padding="14,9" VerticalAlignment="Center">
+                <TextBlock x:Name="SummaryText" Foreground="#067647" FontWeight="SemiBold"/>
             </Border>
         </Grid>
-
-        <Grid Grid.Row="2">
+        <WrapPanel Grid.Row="2">
+            <Button Content="上移" Click="MoveUp_Click"/><Button Content="下移" Click="MoveDown_Click"/>
+            <Button Content="提升层级" Click="Promote_Click"/><Button Content="降为上一项的子章节" Click="Demote_Click"/>
+            <Button Content="合并到上一章" Click="Merge_Click"/><Button Content="一键规范化数字标题" Click="NormalizeAll_Click" Background="#E8F0FE" Foreground="#174EA6"/>
+            <Button Content="目录全部勾选" Click="SelectAll_Click" Background="#ECFDF3" Foreground="#067647"/>
+            <Button Content="目录全部取消" Click="ClearAll_Click"/>
+        </WrapPanel>
+        <Grid Grid.Row="4">
             <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
-            <Border Background="White" BorderBrush="#DADCE0" BorderThickness="1" CornerRadius="10" Padding="8">
-                <DataGrid x:Name="CandidatesGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
-                          CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column"
-                          GridLinesVisibility="Horizontal" BorderThickness="0" SelectionMode="Single"
-                          SelectionChanged="CandidatesGrid_SelectionChanged">
-                    <DataGrid.Columns>
-                        <DataGridCheckBoxColumn Header="应用" Binding="{Binding IsApplied, UpdateSourceTrigger=PropertyChanged}" Width="58"/>
-                        <DataGridTextColumn Header="行号" Binding="{Binding LineNumber}" IsReadOnly="True" Width="64"/>
-                        <DataGridTextColumn Header="类型" Binding="{Binding KindLabel}" IsReadOnly="True" Width="98"/>
-                        <DataGridTextColumn Header="原标题" Binding="{Binding OriginalTitle}" IsReadOnly="True" Width="2*"/>
-                        <DataGridTextColumn Header="编辑后标题" Binding="{Binding TargetTitle, UpdateSourceTrigger=PropertyChanged}" Width="2*"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+            <Border Background="White" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="10" Padding="8">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <DockPanel><TextBlock Text="目录结构" FontSize="16" FontWeight="SemiBold" Foreground="#172033"/><TextBlock DockPanel.Dock="Right" Text="拖到另一章下成为子章节；拖到空白处成为根章节" Foreground="#667085" FontSize="11" VerticalAlignment="Center"/></DockPanel>
+                    <TreeView x:Name="ChapterTree" Grid.Row="2" ItemsSource="{Binding Roots}" BorderThickness="0" Background="Transparent"
+                              SelectedItemChanged="ChapterTree_SelectedItemChanged" AllowDrop="True"
+                              PreviewMouseLeftButtonDown="ChapterTree_PreviewMouseLeftButtonDown"
+                              PreviewMouseMove="ChapterTree_PreviewMouseMove" Drop="ChapterTree_Drop"/>
+                </Grid>
             </Border>
-            <Border Grid.Column="2" Background="White" BorderBrush="#DADCE0" BorderThickness="1" CornerRadius="10" Padding="16">
-                <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <TextBlock Text="原文上下文预览" FontSize="16" FontWeight="SemiBold" Foreground="#202124"/>
-                    <TextBox x:Name="PreviewText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True"
-                             FontFamily="Consolas, Microsoft YaHei UI" FontSize="14" TextWrapping="NoWrap"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                             BorderThickness="0" Background="#F8FAFD" Padding="12"/>
+            <Border Grid.Column="2" Background="White" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="10" Padding="12">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <DockPanel><TextBlock Text="本章原文" FontSize="16" FontWeight="SemiBold" Foreground="#172033"/><TextBlock x:Name="SelectionHint" DockPanel.Dock="Right" Foreground="#667085" FontSize="11" VerticalAlignment="Center"/></DockPanel>
+                    <ListBox x:Name="SourceLinesList" Grid.Row="2" ItemsSource="{Binding SelectedLines}" BorderThickness="0" Background="#F8FAFC" FontFamily="Consolas, Microsoft YaHei UI" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                        <ListBox.ItemTemplate><DataTemplate><Grid Margin="5,2"><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding LineNumber}" Foreground="#98A2B3"/><TextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap"/></Grid></DataTemplate></ListBox.ItemTemplate>
+                    </ListBox>
+                    <Button Grid.Row="4" Content="在所选正文行前拆分新章节" Click="Split_Click" Margin="0" Background="#FFF7ED" Foreground="#C2410C"/>
                 </Grid>
             </Border>
         </Grid>
-
-        <Grid Grid.Row="4">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal">
-                <Button Content="全选全部章节" Click="SelectAll_Click" Background="#E6F4EA" Foreground="#137333"/>
-                <Button Content="一键转换全部数字标题" Click="NormalizeAll_Click" Background="#E8F0FE" Foreground="#174EA6"/>
-                <Button Content="取消全选" Click="ClearAll_Click"/>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button Content="关闭" Click="Close_Click"/>
-                <Button Content="另存并用于转换" Click="SaveAs_Click" Margin="0" Padding="22,9"
-                        FontWeight="SemiBold" Background="#1A73E8" Foreground="White"/>
-            </StackPanel>
+        <Grid Grid.Row="6">
+            <TextBlock Text="保存后只记录章节树，不会修改原始 TXT。正文顺序会按左侧树的顺序输出。" Foreground="#667085" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" Click="Close_Click"/><Button Content="保存章节树" Click="Save_Click" Margin="0" Padding="22,9" Background="#2563EB" Foreground="White" FontWeight="SemiBold"/></StackPanel>
         </Grid>
     </Grid>
 </Window>

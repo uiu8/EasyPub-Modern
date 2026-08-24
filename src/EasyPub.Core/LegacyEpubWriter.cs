@@ -18,6 +18,8 @@ internal static class LegacyEpubWriter
         var inputPath = Path.GetFullPath(request.InputPath);
         var outputPath = Path.GetFullPath(request.OutputPath);
         if (!File.Exists(inputPath)) throw new FileNotFoundException("Input file does not exist.", inputPath);
+        if (!string.Equals(Path.GetExtension(inputPath), ".txt", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException("EPUB 输出目前只接受 TXT 输入；EPUB 输入请选择 MOBI 输出。");
         if (!string.Equals(Path.GetExtension(outputPath), ".epub", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("The compatibility core currently supports EPUB output only.");
 
@@ -29,7 +31,7 @@ internal static class LegacyEpubWriter
         ValidateOptions(options);
         var metadata = options.Metadata;
         progress?.Report(new ConversionProgress(inputPath, 0.03, "正在读取并分析 TXT"));
-        var chapters = await LegacyTextParser.ParseAsync(inputPath, options, cancellationToken);
+        var chapters = await LegacyTextParser.ParseAsync(inputPath, options, request.ChapterTree, cancellationToken);
         progress?.Report(new ConversionProgress(inputPath, 0.14, $"已识别 {chapters.Count} 个章节"));
         var bookId = CreateLegacyBookId(title, author);
         var cover = string.IsNullOrWhiteSpace(options.CoverImagePath)
@@ -153,6 +155,7 @@ internal static class LegacyEpubWriter
         lines.Add("<dl>");
         for (var index = 0; index < chapters.Count; index++)
         {
+            if (!chapters[index].IncludeInToc) continue;
             var level = Math.Clamp(chapters[index].TocLevel, 1, 4);
             lines.Add($"<dt class=\"tocl{level}\"><a href=\"chapter{index}.html\">{Html(chapters[index].Title)}</a></dt>");
         }
@@ -301,6 +304,7 @@ internal static class LegacyEpubWriter
         var stack = new Stack<TocNode>();
         for (var index = 0; index < chapters.Count; index++)
         {
+            if (!chapters[index].IncludeInToc) continue;
             var node = new TocNode(index, Math.Clamp(chapters[index].TocLevel, 1, 4));
             while (stack.Count > 0 && stack.Peek().Level >= node.Level) stack.Pop();
             if (stack.Count == 0) roots.Add(node);

@@ -47,6 +47,8 @@ public sealed class ProjectStoreTests
             {
                 MetadataOverrides = new BookMetadataOverrides { Publisher = "起点", Category = "网络文学" },
                 MetadataRuleFolder = Path.Combine(directory, "起点"),
+                ChapterTree = new ChapterTreePlan("ABC123", [
+                    new ChapterTreeEntry("chapter-1", "第一章", 2, true, 1, [new ChapterSourceRange(2, 3)])]),
             }],
             DateTimeOffset.Now);
 
@@ -66,6 +68,7 @@ public sealed class ProjectStoreTests
             Assert.Equal(12, Assert.Single(book.Illustrations).InsertAfterLine);
             Assert.Equal("起点", book.MetadataOverrides.Publisher);
             Assert.Equal(Path.Combine(directory, "起点"), book.MetadataRuleFolder);
+            Assert.Equal("第一章", Assert.Single(book.ChapterTree!.Entries).Title);
             Assert.Equal(EasyPubProjectStore.Fingerprint(document), EasyPubProjectStore.Fingerprint(loaded));
             Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
         }

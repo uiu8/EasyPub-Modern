@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyPub Modern v0.15.0" Width="1180" Height="900" MinWidth="960" MinHeight="780"
+        Title="EasyPub Modern v0.16.0" Width="1180" Height="900" MinWidth="960" MinHeight="780"
         WindowStartupLocation="CenterScreen" Background="#F5F7FB" AllowDrop="True"
         FontFamily="Microsoft YaHei UI" TextOptions.TextFormattingMode="Display"
         Drop="Window_Drop" DragOver="Window_DragOver">
@@ -117,7 +117,7 @@
             </Border>
             <StackPanel Grid.Column="2" VerticalAlignment="Center">
                 <TextBlock Text="EasyPub Modern" FontSize="27" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
-                <TextBlock Margin="0,3,0,0" Text="从 TXT 到 Kindle · 章节、封面、正文插图与定制排版" FontSize="13" Foreground="{StaticResource MutedTextBrush}"/>
+                <TextBlock Margin="0,3,0,0" Text="TXT / EPUB 到 Kindle · 章节树、封面、正文插图与定制排版" FontSize="13" Foreground="{StaticResource MutedTextBrush}"/>
             </StackPanel>
             <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                 <Menu Margin="0,0,8,0" VerticalAlignment="Center" Background="White">
@@ -146,7 +146,7 @@
 
                 <DockPanel Grid.Row="0">
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                        <Button Content="＋ 添加 TXT" Click="AddFiles_Click" Style="{StaticResource AccentButton}"/>
+                        <Button Content="＋ 添加 TXT / EPUB" Click="AddFiles_Click" Style="{StaticResource AccentButton}"/>
                         <Button Content="导入文件夹" Click="ImportFolder_Click"/>
                         <Button Content="全选" Click="SelectAllFiles_Click"/>
                         <Button Content="移除选中" Click="RemoveSelected_Click"/>
@@ -167,7 +167,7 @@
                         </StackPanel>
                         <ComboBox x:Name="FavoriteFolderCombo" Grid.Column="2" ItemsSource="{Binding FavoriteFolders}" SelectionChanged="FavoriteFolderCombo_SelectionChanged" ToolTip="选择常用小说目录"/>
                         <StackPanel Grid.Column="4" Orientation="Horizontal">
-                            <Button x:Name="AddFromFavoriteButton" Content="从此文件夹添加 TXT" Click="AddFromFavoriteFolder_Click" IsEnabled="False" Style="{StaticResource GreenButton}"/>
+                            <Button x:Name="AddFromFavoriteButton" Content="从此文件夹添加" Click="AddFromFavoriteFolder_Click" IsEnabled="False" Style="{StaticResource GreenButton}"/>
                             <Button Content="添加收藏" Click="AddFavoriteFolder_Click"/>
                             <Button x:Name="RemoveFavoriteButton" Content="移除收藏" Click="RemoveFavoriteFolder_Click" IsEnabled="False" Margin="0"/>
                         </StackPanel>
@@ -192,7 +192,8 @@
                                                 <Border Background="#ECFDF3" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding CoverBadgeVisibility}"><TextBlock Text="有封面" Foreground="#067647" FontSize="11" FontWeight="SemiBold"/></Border>
                                                 <Border Background="#FFF7ED" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding IllustrationBadgeVisibility}"><TextBlock Text="{Binding IllustrationLabel}" Foreground="#C2410C" FontSize="11" FontWeight="SemiBold"/></Border>
                                                 <Border Background="#F0FDF4" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding MetadataBadgeVisibility}"><TextBlock Text="{Binding MetadataLabel}" Foreground="#15803D" FontSize="11" FontWeight="SemiBold"/></Border>
-                                                <Border Background="#EEF4FF" CornerRadius="10" Padding="7,3"><TextBlock Text="TXT" Foreground="#1D4ED8" FontSize="11" FontWeight="SemiBold"/></Border>
+                                                <Border Background="#F5F3FF" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding ChapterTreeBadgeVisibility}"><TextBlock Text="{Binding ChapterTreeLabel}" Foreground="#7C3AED" FontSize="11" FontWeight="SemiBold"/></Border>
+                                                <Border Background="#EEF4FF" CornerRadius="10" Padding="7,3"><TextBlock Text="{Binding FormatLabel}" Foreground="#1D4ED8" FontSize="11" FontWeight="SemiBold"/></Border>
                                             </StackPanel>
                                         </Grid>
                                     </DataTemplate>
@@ -200,8 +201,8 @@
                             </ListBox>
                             <StackPanel x:Name="EmptyFilesHint" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Center">
                                 <Border Width="46" Height="46" CornerRadius="23" Background="#EEF4FF" HorizontalAlignment="Center"><TextBlock Text="＋" FontSize="26" Foreground="#2563EB" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                <TextBlock Text="添加或拖入 TXT 文件" Margin="0,9,0,0" FontWeight="SemiBold" Foreground="#475467" HorizontalAlignment="Center"/>
-                                <TextBlock Text="支持一次选择多本小说" Margin="0,3,0,0" FontSize="11" Foreground="#98A2B3" HorizontalAlignment="Center"/>
+                                <TextBlock Text="添加或拖入 TXT / EPUB 文件" Margin="0,9,0,0" FontWeight="SemiBold" Foreground="#475467" HorizontalAlignment="Center"/>
+                                <TextBlock Text="支持混合选择与批量转换" Margin="0,3,0,0" FontSize="11" Foreground="#98A2B3" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -248,7 +249,7 @@
                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                     <StackPanel><TextBlock Style="{StaticResource FieldLabel}" Text="章节标题正则（留空使用原版默认）"/><TextBox x:Name="ChapterRegexText"/></StackPanel>
                                     <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource FieldLabel}" Text="文本编码"/><ComboBox x:Name="EncodingCombo" SelectedIndex="0"><ComboBoxItem Content="自动检测" Tag="Auto"/><ComboBoxItem Content="UTF-8" Tag="Utf8"/><ComboBoxItem Content="GBK" Tag="Gbk"/></ComboBox></StackPanel>
-                                    <Button Grid.Column="4" Content="打开章节 / 标题编辑器" Click="EditChapters_Click" VerticalAlignment="Bottom" Style="{StaticResource AccentButton}" Margin="0"/>
+                                    <Button Grid.Column="4" Content="打开章节树" Click="EditChapters_Click" VerticalAlignment="Bottom" Style="{StaticResource AccentButton}" Margin="0"/>
                                     <Grid Grid.Row="2" Grid.ColumnSpan="5"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="12"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><CheckBox x:Name="FullWidthIndentCheck" Content="保留原版每段两个全角空格" IsChecked="True" Margin="0,0,24,0"/><CheckBox x:Name="KeepBlankLinesCheck" Content="保留空行"/></StackPanel><TextBlock x:Name="TocHierarchyStatusText" Grid.Column="1" Text="层级目录：关闭" Foreground="#667085" VerticalAlignment="Center"/><Button Grid.Column="3" Content="层级目录设置" Click="EditTocHierarchy_Click" Style="{StaticResource GreenButton}" Margin="0"/></Grid>
                                 </Grid>
                             </Border>
@@ -257,7 +258,7 @@
                             <Border Padding="12">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                     <StackPanel><TextBlock Style="{StaticResource FieldLabel}" Text="字号 %"/><TextBox x:Name="FontSizeText" Text="110"/></StackPanel>
                                     <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource FieldLabel}" Text="行高 %"/><TextBox x:Name="LineHeightText" Text="120"/></StackPanel>
                                     <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource FieldLabel}" Text="段间距 em"/><TextBox x:Name="ParagraphSpacingText" Text="0.6"/></StackPanel>
@@ -333,6 +334,8 @@
                                     <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource FieldLabel}" Text="额外 KindleGen 参数"/><TextBox x:Name="KindleGenArgsText"/></StackPanel>
                                     <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal"><CheckBox x:Name="StripSourceCheck" IsChecked="True" Content="移除附加源文件" Margin="0,0,20,0"/><CheckBox x:Name="MobiSyncCheck" IsChecked="True" Content="写入 ASIN/EBOK"/></StackPanel>
                                     <StackPanel Grid.Row="2" Grid.Column="4"><TextBlock Style="{StaticResource FieldLabel}" Text="固定 ASIN（可选）"/><TextBox x:Name="MobiAsinText" MaxLength="10"/></StackPanel>
+                                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3"><TextBlock Style="{StaticResource FieldLabel}" Text="EPUB 输入转换方式"/><ComboBox x:Name="EpubModeCombo" SelectedIndex="0"><ComboBoxItem Content="保留原 EPUB 版式（CSS、图片、目录原样交给 KindleGen）" Tag="PreserveOriginal"/><ComboBoxItem Content="EasyPub 兼容重排（套用本页之外的新版排版选项）" Tag="EasyPubCompatible"/></ComboBox></StackPanel>
+                                    <TextBlock Grid.Row="4" Grid.Column="4" Text="此选项只影响 EPUB→MOBI。保留原版式时，EasyPub 的版式、封面、字体和自定义 CSS 设置不会覆盖原 EPUB。" Foreground="#667085" TextWrapping="Wrap" VerticalAlignment="Center"/>
                                 </Grid>
                             </Border>
                         </TabItem>
@@ -352,7 +355,7 @@
 
                 <Grid Grid.Row="10">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="12,9" VerticalAlignment="Center"><StackPanel><ProgressBar x:Name="Progress" Height="6" Minimum="0" Maximum="1" Foreground="{StaticResource AccentBrush}"/><TextBlock x:Name="StatusText" Margin="0,6,0,0" Text="准备就绪，可添加或拖入多个 TXT 文件" Foreground="#667085"/></StackPanel></Border>
+                    <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="12,9" VerticalAlignment="Center"><StackPanel><ProgressBar x:Name="Progress" Height="6" Minimum="0" Maximum="1" Foreground="{StaticResource AccentBrush}"/><TextBlock x:Name="StatusText" Margin="0,6,0,0" Text="准备就绪，可添加或拖入多个 TXT / EPUB 文件" Foreground="#667085"/></StackPanel></Border>
                     <Button x:Name="RetryFailedButton" Grid.Column="1" Content="重试失败项" Margin="14,0,0,0" Click="RetryFailed_Click" IsEnabled="False"/>
                     <Button Grid.Column="2" Content="转换前检查" Margin="8,0,0,0" Style="{StaticResource AccentButton}" Click="RunPreflight_Click"/>
                     <Button x:Name="CancelButton" Grid.Column="3" Content="取消" Margin="8,0,0,0" Click="Cancel_Click" IsEnabled="False"/>

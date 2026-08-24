@@ -5,7 +5,10 @@ public sealed record ConversionRequest(
     string OutputPath,
     string? Title = null,
     string? Author = null,
-    ConversionOptions? Options = null);
+    ConversionOptions? Options = null)
+{
+    public ChapterTreePlan? ChapterTree { get; init; }
+}
 
 public sealed record ConversionOptions
 {
@@ -78,6 +81,13 @@ public sealed record MobiOptions
     public bool EnableReadingProgressSync { get; init; } = true;
     public string? Asin { get; init; }
     public string? ExtraArguments { get; init; }
+    public EpubInputMode EpubInputMode { get; init; } = EpubInputMode.PreserveOriginal;
+}
+
+public enum EpubInputMode
+{
+    PreserveOriginal,
+    EasyPubCompatible,
 }
 
 public enum TextEncodingMode

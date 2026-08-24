@@ -6,7 +6,8 @@ public sealed record BookConversionSource(
     string? Title = null,
     string? Author = null,
     IReadOnlyList<BookIllustration>? Illustrations = null,
-    BookMetadataOverrides? MetadataOverrides = null);
+    BookMetadataOverrides? MetadataOverrides = null,
+    ChapterTreePlan? ChapterTree = null);
 
 public static class BatchConversionRequestFactory
 {
@@ -40,7 +41,10 @@ public static class BatchConversionRequestFactory
                     CoverImagePath = source.CoverImagePath,
                     Illustrations = source.Illustrations ?? [],
                     Metadata = MetadataMappingResolver.Apply(baseOptions.Metadata, metadataOverrides),
-                });
+                })
+            {
+                ChapterTree = source.ChapterTree,
+            };
         })
             .ToArray();
     }

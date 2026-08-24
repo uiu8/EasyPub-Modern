@@ -265,6 +265,7 @@ public partial class MainWindow : Window
         MobiSyncCheck.IsChecked = options.Mobi.EnableReadingProgressSync;
         MobiAsinText.Text = options.Mobi.Asin ?? string.Empty;
         KindleGenArgsText.Text = options.Mobi.ExtraArguments ?? string.Empty;
+        SelectComboItemByTag(EpubModeCombo, options.Mobi.EpubInputMode.ToString());
         Topmost = import.AlwaysOnTop;
     }
 
@@ -333,6 +334,7 @@ public partial class MainWindow : Window
         MobiSyncCheck.IsChecked = options.Mobi.EnableReadingProgressSync;
         MobiAsinText.Text = options.Mobi.Asin ?? string.Empty;
         KindleGenArgsText.Text = options.Mobi.ExtraArguments ?? string.Empty;
+        SelectComboItemByTag(EpubModeCombo, options.Mobi.EpubInputMode.ToString());
     }
 
     private ConversionProfile CaptureProfile()
@@ -381,6 +383,7 @@ public partial class MainWindow : Window
                 EnableReadingProgressSync = MobiSyncCheck.IsChecked == true,
                 Asin = EmptyToNull(MobiAsinText.Text),
                 ExtraArguments = EmptyToNull(KindleGenArgsText.Text),
+                EpubInputMode = Enum.Parse<EpubInputMode>(((ComboBoxItem)EpubModeCombo.SelectedItem).Tag.ToString()!),
             },
         };
         return new ConversionProfile(
@@ -567,6 +570,7 @@ public partial class MainWindow : Window
         {
             MetadataOverrides = book.MetadataOverrides,
             MetadataRuleFolder = book.MetadataRuleFolder,
+            ChapterTree = book.ChapterTree,
         }).ToArray(),
         DateTimeOffset.Now);
 
@@ -586,6 +590,7 @@ public partial class MainWindow : Window
             };
             item.SetIllustrations(saved.Illustrations);
             item.SetMetadataOverrides(saved.MetadataOverrides, saved.MetadataRuleFolder);
+            item.SetChapterTree(saved.ChapterTree);
             InputBooks.Add(item);
         }
         FilesList.SelectedItem = InputBooks.FirstOrDefault();
@@ -655,7 +660,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "文本文件 (*.txt)|*.txt",
+            Filter = "支持的书稿 (*.txt;*.epub)|*.txt;*.epub|文本文件 (*.txt)|*.txt|EPUB 电子书 (*.epub)|*.epub",
             Multiselect = true,
             CheckFileExists = true,
         };
@@ -676,18 +681,19 @@ public partial class MainWindow : Window
         {
             var files = Directory.EnumerateFiles(
                     dialog.FolderName,
-                    "*.txt",
+                    "*",
                     new EnumerationOptions
                     {
                         RecurseSubdirectories = true,
                         IgnoreInaccessible = true,
                         MatchCasing = MatchCasing.CaseInsensitive,
                     })
+                .Where(IsSupportedInput)
                 .ToArray();
             var before = InputBooks.Count;
             AddFiles(files);
             StatusText.Text = files.Length == 0
-                ? $"文件夹中没有找到 TXT：{dialog.FolderName}"
+                ? $"文件夹中没有找到 TXT 或 EPUB：{dialog.FolderName}"
                 : $"已从文件夹及子目录导入 {InputBooks.Count - before} 本，跳过 {files.Length - (InputBooks.Count - before)} 个重复项";
         }
         catch (Exception exception)
@@ -787,8 +793,8 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Title = $"从 {Path.GetFileName(selected)} 添加 TXT",
-            Filter = "文本文件 (*.txt)|*.txt",
+            Title = $"从 {Path.GetFileName(selected)} 添加 TXT / EPUB",
+            Filter = "支持的书稿 (*.txt;*.epub)|*.txt;*.epub|文本文件 (*.txt)|*.txt|EPUB 电子书 (*.epub)|*.epub",
             InitialDirectory = selected,
             Multiselect = true,
             CheckFileExists = true,
@@ -847,6 +853,11 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "请在待转换文件中只选中一个 TXT，再打开章节编辑器。", "EasyPub Modern");
             return;
         }
+        if (!string.Equals(Path.GetExtension(book.InputPath), ".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "EPUB 会直接读取原书目录；章节树编辑目前用于 TXT 书稿。", "EasyPub Modern");
+            return;
+        }
 
         try
         {
@@ -855,16 +866,36 @@ public partial class MainWindow : Window
             var encoding = Enum.Parse<TextEncodingMode>(
                 ((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!);
             var chapterPattern = EmptyToNull(ChapterRegexText.Text);
-            var document = await Task.Run(() => ChapterEditingDocument.LoadAsync(
-                inputPath,
-                chapterPattern,
-                encoding));
-            var editor = new ChapterEditorWindow(document) { Owner = this };
-            if (editor.ShowDialog() == true && editor.SavedPath is not null)
+            ChapterTreeDocument document;
+            try
             {
-                book.InputPath = editor.SavedPath;
-                FilesList.SelectedItem = book;
-                StatusText.Text = $"已另存章节编辑结果，并用于后续转换：{Path.GetFileName(editor.SavedPath)}";
+                document = await Task.Run(() => ChapterTreeDocument.LoadAsync(
+                    inputPath,
+                    chapterPattern,
+                    _tocHierarchy,
+                    encoding,
+                    book.ChapterTree));
+            }
+            catch (InvalidDataException exception) when (book.ChapterTree is not null)
+            {
+                var rebuild = MessageBox.Show(
+                    this,
+                    exception.Message + "\n\n是否丢弃旧章节树并按当前 TXT 重新识别？",
+                    "章节树已失效",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (rebuild != MessageBoxResult.Yes) return;
+                document = await Task.Run(() => ChapterTreeDocument.LoadAsync(
+                    inputPath,
+                    chapterPattern,
+                    _tocHierarchy,
+                    encoding));
+            }
+            var editor = new ChapterEditorWindow(document) { Owner = this };
+            if (editor.ShowDialog() == true && editor.ResultPlan is not null)
+            {
+                book.SetChapterTree(editor.ResultPlan);
+                StatusText.Text = $"已保存《{book.DisplayName}》的章节树，共 {editor.ResultPlan.Entries.Count} 章";
             }
             else
             {
@@ -982,6 +1013,11 @@ public partial class MainWindow : Window
         if (book is null)
         {
             MessageBox.Show(this, "请只选中一本小说，再管理它的正文插图。", "EasyPub Modern");
+            return;
+        }
+        if (book.IsEpub)
+        {
+            MessageBox.Show(this, "EPUB 内已有的正文图片会自动处理；手动插图位置编辑目前用于 TXT 书稿。", "EasyPub Modern");
             return;
         }
 
@@ -1154,12 +1190,14 @@ public partial class MainWindow : Window
     {
         if (StatusText is not null && FormatCombo.SelectedIndex == 1 && InputBooks.Count == 0)
             StatusText.Text = "已选择 MOBI；KindleGen 设置位于“MOBI 选项”分页";
+        if (StatusText is not null && FormatCombo?.SelectedIndex == 0 && InputBooks.Any(book => book.IsEpub))
+            StatusText.Text = "当前含 EPUB 输入；EPUB 输入只能转换为 MOBI";
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
         e.Effects = e.Data.GetData(DataFormats.FileDrop) is string[] paths
-                    && paths.Any(path => string.Equals(Path.GetExtension(path), ".txt", StringComparison.OrdinalIgnoreCase))
+                    && paths.Any(IsSupportedInput)
             ? DragDropEffects.Copy
             : DragDropEffects.None;
         e.Handled = true;
@@ -1176,6 +1214,11 @@ public partial class MainWindow : Window
         if (book is null)
         {
             MessageBox.Show(this, "请只选中一本小说，再打开整书预览。", "EasyPub Modern");
+            return;
+        }
+        if (book.IsEpub)
+        {
+            MessageBox.Show(this, "EPUB 输入可直接转换为 MOBI；当前整书预览用于 TXT 重排结果。", "EasyPub Modern");
             return;
         }
 
@@ -1465,11 +1508,14 @@ public partial class MainWindow : Window
 
     private async Task<IReadOnlyList<ConversionRequest>> BuildConversionRequestsAsync()
     {
-        if (InputBooks.Count == 0) throw new InvalidOperationException("请先添加至少一个 TXT 文件。");
+        if (InputBooks.Count == 0) throw new InvalidOperationException("请先添加至少一个 TXT 或 EPUB 文件。");
         var outputDirectory = OutputDirectoryText.Text.Trim();
         if (outputDirectory.Length == 0) throw new InvalidOperationException("请选择输出目录。");
 
         var profile = CaptureProfile();
+        if (!string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase)
+            && InputBooks.Any(book => book.IsEpub))
+            throw new InvalidOperationException("EPUB 输入只能输出 MOBI。请把输出格式切换为 MOBI。");
         var options = profile.Options;
         if (string.IsNullOrWhiteSpace(options.AdditionalCss) &&
             !string.IsNullOrWhiteSpace(profile.AdditionalCssFilePath))
@@ -1481,7 +1527,8 @@ public partial class MainWindow : Window
                 book.Title,
                 book.Author,
                 book.Illustrations,
-                book.MetadataOverrides)),
+                book.MetadataOverrides,
+                book.ChapterTree)),
             outputDirectory,
             profile.OutputFormat,
             profile.Author,
@@ -1492,7 +1539,7 @@ public partial class MainWindow : Window
     {
         InputBookItem? firstAdded = null;
         foreach (var path in paths
-                     .Where(path => string.Equals(Path.GetExtension(path), ".txt", StringComparison.OrdinalIgnoreCase))
+                     .Where(IsSupportedInput)
                      .Select(Path.GetFullPath)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -1503,6 +1550,7 @@ public partial class MainWindow : Window
             InputBooks.Add(book);
             firstAdded ??= book;
         }
+        if (firstAdded is not null && InputBooks.Any(book => book.IsEpub)) FormatCombo.SelectedIndex = 1;
         if (FilesList.SelectedItems.Count == 0 && firstAdded is not null)
             FilesList.SelectedItem = firstAdded;
         UpdateStatus();
@@ -1552,9 +1600,11 @@ public partial class MainWindow : Window
         EmptyFilesHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ConvertButton.IsEnabled = count > 0;
         StatusText.Text = count == 0
-            ? "准备就绪，可添加或拖入多个 TXT 文件"
-            : $"已添加 {count} 本小说 · {InputBooks.Count(book => book.CoverImagePath is not null)} 本有封面 · {InputBooks.Sum(book => book.Illustrations.Count)} 张正文插图";
+            ? "准备就绪，可添加或拖入多个 TXT / EPUB 文件"
+            : $"已添加 {count} 本 · TXT {InputBooks.Count(book => !book.IsEpub)} · EPUB {InputBooks.Count(book => book.IsEpub)} · {InputBooks.Count(book => book.ChapterTree is not null)} 本有章节树";
     }
+
+    private static bool IsSupportedInput(string path) => Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".epub";
 
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
@@ -1591,6 +1641,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
     private IReadOnlyList<BookIllustration> _illustrations = [];
     private BookMetadataOverrides _metadataOverrides = new();
     private string? _metadataRuleFolder;
+    private ChapterTreePlan? _chapterTree;
 
     public InputBookItem(string inputPath)
     {
@@ -1605,12 +1656,16 @@ public sealed class InputBookItem : INotifyPropertyChanged
             if (!SetField(ref _inputPath, Path.GetFullPath(value))) return;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DirectoryPath)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEpub)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FormatLabel)));
         }
     }
 
     public string DisplayName => Path.GetFileNameWithoutExtension(InputPath);
 
     public string DirectoryPath => Path.GetDirectoryName(InputPath) ?? string.Empty;
+    public bool IsEpub => string.Equals(Path.GetExtension(InputPath), ".epub", StringComparison.OrdinalIgnoreCase);
+    public string FormatLabel => IsEpub ? "EPUB" : "TXT";
 
     public string? Title
     {
@@ -1654,6 +1709,9 @@ public sealed class InputBookItem : INotifyPropertyChanged
         : MetadataOverrides.Publisher;
 
     public Visibility MetadataBadgeVisibility => MetadataOverrides.IsEmpty ? Visibility.Collapsed : Visibility.Visible;
+    public ChapterTreePlan? ChapterTree => _chapterTree;
+    public string ChapterTreeLabel => _chapterTree is null ? string.Empty : $"章节树 {_chapterTree.Entries.Count}";
+    public Visibility ChapterTreeBadgeVisibility => _chapterTree is null ? Visibility.Collapsed : Visibility.Visible;
 
     public void SetIllustrations(IReadOnlyList<BookIllustration> illustrations)
     {
@@ -1675,6 +1733,14 @@ public sealed class InputBookItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MetadataBadgeVisibility)));
     }
 
+    public void SetChapterTree(ChapterTreePlan? chapterTree)
+    {
+        _chapterTree = chapterTree;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChapterTree)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChapterTreeLabel)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChapterTreeBadgeVisibility)));
+    }
+
     public InputBookItem Clone()
     {
         var clone = new InputBookItem(InputPath)
@@ -1685,6 +1751,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
         };
         clone.SetIllustrations(Illustrations);
         clone.SetMetadataOverrides(MetadataOverrides, MetadataRuleFolder);
+        clone.SetChapterTree(ChapterTree);
         return clone;
     }
 
@@ -1697,6 +1764,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
             CoverImagePath = request.Options?.CoverImagePath,
         };
         item.SetIllustrations(request.Options?.Illustrations ?? []);
+        item.SetChapterTree(request.ChapterTree);
         item.SetMetadataOverrides(new BookMetadataOverrides
         {
             Translator = request.Options?.Metadata.Translator,
