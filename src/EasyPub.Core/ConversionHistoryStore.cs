@@ -27,10 +27,16 @@ public sealed class ConversionHistoryStore
 
     public string StoragePath { get; }
 
-    public static ConversionHistoryStore CreateDefault() => new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "EasyPub Modern",
-        "conversion-history.json"));
+    public static ConversionHistoryStore CreateDefault()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("EASYPUB_HISTORY_PATH");
+        return new ConversionHistoryStore(string.IsNullOrWhiteSpace(overridePath)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "EasyPub Modern",
+                "conversion-history.json")
+            : overridePath);
+    }
 
     public async Task<IReadOnlyList<ConversionHistoryEntry>> LoadAsync(
         CancellationToken cancellationToken = default)

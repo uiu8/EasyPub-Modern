@@ -670,8 +670,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.19.2"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.19.2";
+        ? "EasyPub Modern v0.19.3"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.19.3";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {

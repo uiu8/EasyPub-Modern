@@ -15,10 +15,16 @@ public sealed class FavoriteFolderStore
 
     public string StoragePath { get; }
 
-    public static FavoriteFolderStore CreateDefault() => new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "EasyPub Modern",
-        "favorite-folders.json"));
+    public static FavoriteFolderStore CreateDefault()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("EASYPUB_FAVORITES_PATH");
+        return new FavoriteFolderStore(string.IsNullOrWhiteSpace(overridePath)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "EasyPub Modern",
+                "favorite-folders.json")
+            : overridePath);
+    }
 
     public async Task<IReadOnlyList<string>> LoadAsync(CancellationToken cancellationToken = default)
     {

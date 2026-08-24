@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.BatchMetadataWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="批量元数据 · EasyPub Modern v0.19.2" Width="1160" Height="620" MinWidth="900" MinHeight="480"
+        Title="批量元数据 · EasyPub Modern v0.19.3" Width="1160" Height="620" MinWidth="900" MinHeight="480"
         WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
     <Grid Margin="22">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
