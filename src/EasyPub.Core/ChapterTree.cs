@@ -14,6 +14,7 @@ public sealed record ChapterTreeEntry(
     IReadOnlyList<ChapterSourceRange> ContentRanges)
 {
     public bool IsFrontMatter { get; init; }
+    public int HeadingLevel { get; init; }
 }
 
 public sealed record ChapterTreePlan(
@@ -67,7 +68,7 @@ public sealed class ChapterTreeDocument
         {
             if (!string.Equals(existingPlan.SourceSha256, sourceHash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("TXT 内容已发生变化，已保存的章节树不能继续套用，请重新识别。");
-            existingPlan = NormalizeLegacyFrontMatter(existingPlan);
+            existingPlan = NormalizePersistedPlan(existingPlan);
             ValidatePlan(existingPlan, sourceLines.Length);
             return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries);
         }
@@ -104,6 +105,7 @@ public sealed class ChapterTreeDocument
             CreateRange(1, firstHeadingLine - 1))
         {
             IsFrontMatter = true,
+            HeadingLevel = 2,
         });
 
         for (var index = 0; index < headings.Count; index++)
@@ -116,9 +118,13 @@ public sealed class ChapterTreeDocument
                 heading.Level,
                 true,
                 heading.LineNumber,
-                CreateRange(heading.LineNumber + 1, endLine)));
+                CreateRange(heading.LineNumber + 1, endLine))
+            {
+                HeadingLevel = heading.Level,
+            });
         }
 
+        entries = NormalizeHierarchyLevels(entries).ToList();
         var plan = new ChapterTreePlan(sourceHash, entries);
         ValidatePlan(plan, sourceLines.Length);
         return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries);
@@ -153,6 +159,7 @@ public sealed class ChapterTreeDocument
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var occupiedLines = new HashSet<int>();
+        var previousTreeLevel = 0;
         foreach (var entry in plan.Entries)
         {
             if (string.IsNullOrWhiteSpace(entry.Id) || !ids.Add(entry.Id))
@@ -163,6 +170,20 @@ public sealed class ChapterTreeDocument
                 throw new InvalidDataException($"章节“{entry.Title}”的层级必须在 1–4 之间。");
             if (entry.IsFrontMatter && entry.Level != 2)
                 throw new InvalidDataException($"前置章节“{entry.Title}”不参与层级，内部目录级别必须保持为 2。");
+            if (entry.HeadingLevel is < 0 or > 4)
+                throw new InvalidDataException($"章节“{entry.Title}”的正文标题样式级别无效。");
+            if (entry.IsFrontMatter)
+            {
+                previousTreeLevel = 0;
+            }
+            else
+            {
+                if (previousTreeLevel == 0 && entry.Level != 1)
+                    throw new InvalidDataException($"根章节“{entry.Title}”必须是 L1。");
+                if (previousTreeLevel > 0 && entry.Level > previousTreeLevel + 1)
+                    throw new InvalidDataException($"章节“{entry.Title}”跳过了中间目录层级。");
+                previousTreeLevel = entry.Level;
+            }
             if (entry.TitleLineNumber is < 1 || entry.TitleLineNumber > lineCount)
                 throw new InvalidDataException($"章节“{entry.Title}”的标题行超出 TXT 范围。");
             foreach (var range in entry.ContentRanges ?? [])
@@ -201,7 +222,42 @@ public sealed class ChapterTreeDocument
         var startsAtBeginning = first.ContentRanges.Count == 0 || first.ContentRanges.Min(range => range.StartLine) == 1;
         if (!startsAtBeginning) return plan;
         var entries = plan.Entries.ToArray();
-        entries[0] = first with { Level = 2, IsFrontMatter = true };
+        entries[0] = first with
+        {
+            Level = 2,
+            IsFrontMatter = true,
+            HeadingLevel = first.HeadingLevel is >= 1 and <= 4 ? first.HeadingLevel : 2,
+        };
         return plan with { Entries = entries };
+    }
+
+    private static ChapterTreePlan NormalizePersistedPlan(ChapterTreePlan plan)
+    {
+        plan = NormalizeLegacyFrontMatter(plan);
+        return plan with { Entries = NormalizeHierarchyLevels(plan.Entries) };
+    }
+
+    internal static IReadOnlyList<ChapterTreeEntry> NormalizeHierarchyLevels(
+        IReadOnlyList<ChapterTreeEntry> entries)
+    {
+        var normalized = new List<ChapterTreeEntry>(entries.Count);
+        var stack = new Stack<(int SourceLevel, int TreeLevel)>();
+        foreach (var entry in entries)
+        {
+            var sourceLevel = Math.Clamp(entry.Level, 1, 4);
+            var headingLevel = entry.HeadingLevel is >= 1 and <= 4 ? entry.HeadingLevel : sourceLevel;
+            if (entry.IsFrontMatter)
+            {
+                normalized.Add(entry with { Level = 2, HeadingLevel = headingLevel });
+                stack.Clear();
+                continue;
+            }
+
+            while (stack.Count > 0 && stack.Peek().SourceLevel >= sourceLevel) stack.Pop();
+            var treeLevel = stack.Count == 0 ? 1 : stack.Peek().TreeLevel + 1;
+            normalized.Add(entry with { Level = treeLevel, HeadingLevel = headingLevel });
+            stack.Push((sourceLevel, treeLevel));
+        }
+        return normalized;
     }
 }

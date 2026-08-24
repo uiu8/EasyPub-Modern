@@ -35,6 +35,7 @@ public partial class ChapterEditorWindow : Window
     {
         _selectedNode = e.NewValue as ChapterTreeNode;
         RefreshSelectedLines();
+        UpdateActionButtons();
     }
 
     private void MoveUp_Click(object sender, RoutedEventArgs e) => MoveSelected(-1);
@@ -48,17 +49,27 @@ public partial class ChapterEditorWindow : Window
         if (target < 0 || target >= siblings.Count) return;
         siblings.Move(index, target);
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void Promote_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedNode?.Parent is not { } parent) return;
+        var selectedIndex = parent.Children.IndexOf(_selectedNode);
+        var followingSiblings = parent.Children.Skip(selectedIndex + 1).ToArray();
+        foreach (var sibling in followingSiblings) parent.Children.Remove(sibling);
         parent.Children.Remove(_selectedNode);
         var newSiblings = parent.Parent?.Children ?? Roots;
         newSiblings.Insert(newSiblings.IndexOf(parent) + 1, _selectedNode);
         _selectedNode.Parent = parent.Parent;
         SetLevelRecursive(_selectedNode, parent.Level);
+        foreach (var sibling in followingSiblings)
+        {
+            sibling.Parent = _selectedNode;
+            _selectedNode.Children.Add(sibling);
+        }
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void Demote_Click(object sender, RoutedEventArgs e)
@@ -88,6 +99,7 @@ public partial class ChapterEditorWindow : Window
         _selectedNode.Parent = newParent;
         SetLevelRecursive(_selectedNode, newParent.Level + 1);
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void Merge_Click(object sender, RoutedEventArgs e)
@@ -101,19 +113,18 @@ public partial class ChapterEditorWindow : Window
             return;
         }
         var previous = siblings[index - 1];
-        previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
-        foreach (var child in _selectedNode.Children.ToArray())
+        if (previous.Children.Count > 0 || _selectedNode.Children.Count > 0)
         {
-            _selectedNode.Children.Remove(child);
-            child.Parent = previous;
-            previous.Children.Add(child);
-            SetLevelRecursive(child, Math.Min(4, previous.Level + 1));
+            ShowInfo("含有子章节的节点不能直接合并。请先调整子章节层级，避免正文顺序发生歧义。", "无法合并");
+            return;
         }
+        previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
         siblings.Remove(_selectedNode);
         previous.NotifyLineCount();
         _selectedNode = previous;
         RefreshSelectedLines();
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void Split_Click(object sender, RoutedEventArgs e)
@@ -144,11 +155,13 @@ public partial class ChapterEditorWindow : Window
         {
             Parent = _selectedNode.Parent,
             IsFrontMatter = _selectedNode.IsFrontMatter,
+            HeadingLevel = _selectedNode.HeadingLevel,
         };
         var siblings = Siblings(_selectedNode);
         siblings.Insert(siblings.IndexOf(_selectedNode) + 1, newNode);
         RefreshSelectedLines();
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void NormalizeAll_Click(object sender, RoutedEventArgs e)
@@ -160,11 +173,13 @@ public partial class ChapterEditorWindow : Window
     {
         foreach (var node in Flatten()) node.IncludeInToc = true;
         UpdateSummary();
+        UpdateActionButtons();
     }
     private void ClearAll_Click(object sender, RoutedEventArgs e)
     {
         foreach (var node in Flatten()) node.IncludeInToc = false;
         UpdateSummary();
+        UpdateActionButtons();
     }
     private void Save_Click(object sender, RoutedEventArgs e)
     {
@@ -223,6 +238,7 @@ public partial class ChapterEditorWindow : Window
             SetLevelRecursive(dragged, target.Level + 1);
         }
         UpdateSummary();
+        UpdateActionButtons();
     }
 
     private void RefreshSelectedLines()
@@ -235,8 +251,33 @@ public partial class ChapterEditorWindow : Window
     private void UpdateSummary()
     {
         var nodes = Flatten().ToArray();
-        var depth = nodes.Length == 0 ? 0 : nodes.Max(node => node.Level);
-        SummaryText.Text = $"{nodes.Length} 章 · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
+        var normalNodes = nodes.Where(node => !node.IsFrontMatter).ToArray();
+        var frontMatterCount = nodes.Length - normalNodes.Length;
+        var depth = normalNodes.Length == 0 ? 0 : normalNodes.Max(node => node.Level);
+        var frontMatterLabel = frontMatterCount == 0 ? string.Empty : $" · 前置 {frontMatterCount} 项";
+        SummaryText.Text = $"{normalNodes.Length} 章{frontMatterLabel} · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
+    }
+
+    private void UpdateActionButtons()
+    {
+        if (_selectedNode is null)
+        {
+            MoveUpButton.IsEnabled = false;
+            MoveDownButton.IsEnabled = false;
+            PromoteButton.IsEnabled = false;
+            DemoteButton.IsEnabled = false;
+            return;
+        }
+
+        var siblings = Siblings(_selectedNode);
+        var index = siblings.IndexOf(_selectedNode);
+        MoveUpButton.IsEnabled = index > 0;
+        MoveDownButton.IsEnabled = index >= 0 && index < siblings.Count - 1;
+        PromoteButton.IsEnabled = !_selectedNode.IsFrontMatter && _selectedNode.Parent is not null;
+        DemoteButton.IsEnabled = !_selectedNode.IsFrontMatter
+            && index > 0
+            && !siblings[index - 1].IsFrontMatter
+            && MaxRelativeDepth(_selectedNode) + siblings[index - 1].Level <= 4;
     }
     private IEnumerable<ChapterTreeNode> Flatten()
     {
@@ -311,10 +352,12 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
         Id = entry.Id; _title = entry.Title; _level = entry.Level; _includeInToc = entry.IncludeInToc;
         TitleLineNumber = entry.TitleLineNumber; _contentRanges = entry.ContentRanges ?? [];
         IsFrontMatter = entry.IsFrontMatter;
+        HeadingLevel = entry.HeadingLevel is >= 1 and <= 4 ? entry.HeadingLevel : entry.Level;
     }
     public string Id { get; }
     public int? TitleLineNumber { get; }
     public bool IsFrontMatter { get; set; }
+    public int HeadingLevel { get; set; }
     public ChapterTreeNode? Parent { get; set; }
     public ObservableCollection<ChapterTreeNode> Children { get; } = [];
     public string Title { get => _title; set => SetField(ref _title, value); }
@@ -326,6 +369,7 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     public ChapterTreeEntry ToEntry() => new(Id, Title, Level, IncludeInToc, TitleLineNumber, ContentRanges)
     {
         IsFrontMatter = IsFrontMatter,
+        HeadingLevel = HeadingLevel,
     };
     public void NotifyLineCount() => OnPropertyChanged(nameof(LineCountLabel));
     public event PropertyChangedEventHandler? PropertyChanged;

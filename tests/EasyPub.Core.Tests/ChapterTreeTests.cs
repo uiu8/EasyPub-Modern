@@ -7,6 +7,38 @@ namespace EasyPub.Core.Tests;
 public sealed class ChapterTreeTests
 {
     [Fact]
+    public async Task Chapters_without_a_volume_are_root_l1_nodes_not_orphan_l2_nodes()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-tree-depth-{Guid.NewGuid():N}.txt");
+        var output = Path.ChangeExtension(path, ".epub");
+        await File.WriteAllTextAsync(path, "书籍信息\n第一章 开始\n正文\n第二章 继续\n正文");
+        try
+        {
+            var document = await ChapterTreeDocument.LoadAsync(
+                path,
+                hierarchy: new TocHierarchyOptions { Enabled = true });
+            var chapters = document.Entries.Where(entry => !entry.IsFrontMatter).ToArray();
+
+            Assert.Equal(2, chapters.Length);
+            Assert.All(chapters, chapter => Assert.Equal(1, chapter.Level));
+            Assert.All(chapters, chapter => Assert.Equal(2, chapter.HeadingLevel));
+
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output)
+            {
+                ChapterTree = document.CreatePlan(document.Entries),
+            });
+            using var archive = ZipFile.OpenRead(output);
+            Assert.Contains("class=\"tocl1\"", ReadText(archive, "OEBPS/book-toc.html"));
+            Assert.Contains("<h2", ReadText(archive, "OEBPS/chapter1.html"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(output);
+        }
+    }
+
+    [Fact]
     public async Task Chapter_tree_reorders_levels_and_excludes_only_the_toc_entry()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"easypub-tree-{Guid.NewGuid():N}");
@@ -21,6 +53,8 @@ public sealed class ChapterTreeTests
             Assert.Equal(4, document.Entries.Count);
             Assert.True(document.Entries[0].IsFrontMatter);
             Assert.Equal(2, document.Entries[0].Level);
+            Assert.Equal(1, document.Entries[1].Level);
+            Assert.Equal(2, document.Entries[2].Level);
             var edited = new[]
             {
                 document.Entries[0],
@@ -92,12 +126,15 @@ public sealed class ChapterTreeTests
             var current = await ChapterTreeDocument.LoadAsync(path);
             var legacyEntries = current.Entries.ToArray();
             legacyEntries[0] = legacyEntries[0] with { Level = 1, IsFrontMatter = false };
+            legacyEntries[1] = legacyEntries[1] with { Level = 2, HeadingLevel = 0 };
             var legacyPlan = current.CreatePlan(current.Entries) with { Entries = legacyEntries };
 
             var migrated = await ChapterTreeDocument.LoadAsync(path, existingPlan: legacyPlan);
 
             Assert.True(migrated.Entries[0].IsFrontMatter);
             Assert.Equal(2, migrated.Entries[0].Level);
+            Assert.Equal(1, migrated.Entries[1].Level);
+            Assert.Equal(2, migrated.Entries[1].HeadingLevel);
         }
         finally
         {

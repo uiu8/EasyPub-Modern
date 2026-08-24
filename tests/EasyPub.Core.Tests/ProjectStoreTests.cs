@@ -48,7 +48,8 @@ public sealed class ProjectStoreTests
                 MetadataOverrides = new BookMetadataOverrides { Publisher = "起点", Category = "网络文学" },
                 MetadataRuleFolder = Path.Combine(directory, "起点"),
                 ChapterTree = new ChapterTreePlan("ABC123", [
-                    new ChapterTreeEntry("chapter-1", "第一章", 2, true, 1, [new ChapterSourceRange(2, 3)])]),
+                    new ChapterTreeEntry("chapter-1", "第一章", 1, true, 1, [new ChapterSourceRange(2, 3)])
+                    { HeadingLevel = 2 }]),
             }],
             DateTimeOffset.Now);
 

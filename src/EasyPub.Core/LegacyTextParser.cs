@@ -7,7 +7,8 @@ internal sealed record LegacyChapter(
     string Title,
     IReadOnlyList<string> Paragraphs,
     int TocLevel = 2,
-    bool IncludeInToc = true);
+    bool IncludeInToc = true,
+    int? HeadingLevel = null);
 
 internal static partial class LegacyTextParser
 {
@@ -102,7 +103,11 @@ internal static partial class LegacyTextParser
                 }
             }
             result.Add(new LegacyChapter(
-                entry.Title.Trim(), paragraphs, entry.IsFrontMatter ? 2 : Math.Clamp(entry.Level, 1, 4), entry.IncludeInToc));
+                entry.Title.Trim(),
+                paragraphs,
+                entry.IsFrontMatter ? 2 : Math.Clamp(entry.Level, 1, 4),
+                entry.IncludeInToc,
+                entry.HeadingLevel is >= 1 and <= 4 ? entry.HeadingLevel : null));
         }
         return result;
     }

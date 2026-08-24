@@ -129,7 +129,10 @@ internal static class EpubCompatibilityImporter
                     Math.Clamp(level, 1, 4),
                     true,
                     null,
-                    startLine <= endLine ? [new ChapterSourceRange(startLine, endLine)] : []));
+                    startLine <= endLine ? [new ChapterSourceRange(startLine, endLine)] : [])
+                {
+                    HeadingLevel = Math.Clamp(level, 1, 4),
+                });
             }
 
             if (chapters.Count == 0)
@@ -138,7 +141,9 @@ internal static class EpubCompatibilityImporter
             var textPath = Path.Combine(workingDirectory, "imported.txt");
             var textBytes = new UTF8Encoding(false).GetBytes(string.Join("\n", bodyLines));
             await File.WriteAllBytesAsync(textPath, textBytes, cancellationToken).ConfigureAwait(false);
-            var plan = new ChapterTreePlan(Convert.ToHexString(SHA256.HashData(textBytes)), chapters);
+            var plan = new ChapterTreePlan(
+                Convert.ToHexString(SHA256.HashData(textBytes)),
+                ChapterTreeDocument.NormalizeHierarchyLevels(chapters));
             ChapterTreeDocument.ValidatePlan(plan, bodyLines.Count);
 
             string? coverPath = null;

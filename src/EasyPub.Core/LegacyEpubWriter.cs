@@ -173,7 +173,7 @@ internal static class LegacyEpubWriter
         IReadOnlyList<PreparedIllustration> illustrations)
     {
         var lines = LegacyTemplates.XhtmlHeader($"chapter {index} - 0");
-        var level = Math.Clamp(chapter.TocLevel, 1, 4);
+        var level = Math.Clamp(chapter.HeadingLevel ?? chapter.TocLevel, 1, 4);
         var titleClass = chapter.Paragraphs.Count == 0 ? $"titlel{level}single" : $"titlel{level}std";
         lines.Add($"<h{level} id=\"title\" class=\"{titleClass}\">{Html(chapter.Title)}</h{level}>");
         var prefix = options.AddFullWidthIndent ? "　　" : string.Empty;

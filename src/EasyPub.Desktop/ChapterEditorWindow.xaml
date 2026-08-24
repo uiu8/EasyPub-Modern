@@ -36,8 +36,9 @@
             </Border>
         </Grid>
         <WrapPanel Grid.Row="2">
-            <Button Content="上移" Click="MoveUp_Click"/><Button Content="下移" Click="MoveDown_Click"/>
-            <Button Content="提升层级" Click="Promote_Click"/><Button Content="降为上一项的子章节" Click="Demote_Click"/>
+            <Button x:Name="MoveUpButton" Content="上移" Click="MoveUp_Click" IsEnabled="False"/><Button x:Name="MoveDownButton" Content="下移" Click="MoveDown_Click" IsEnabled="False"/>
+            <Button x:Name="PromoteButton" Content="移出父章节（提升）" ToolTip="让本章与当前父章节同级；后续同级章节仍保持原正文顺序" Click="Promote_Click" IsEnabled="False"/>
+            <Button x:Name="DemoteButton" Content="归入上一章（降低）" ToolTip="让本章成为上一同级章节的最后一个子章节" Click="Demote_Click" IsEnabled="False"/>
             <Button Content="合并到上一章" Click="Merge_Click"/><Button Content="一键规范化数字标题" Click="NormalizeAll_Click" Background="#E8F0FE" Foreground="#174EA6"/>
             <Button Content="目录全部勾选" Click="SelectAll_Click" Background="#ECFDF3" Foreground="#067647"/>
             <Button Content="目录全部取消" Click="ClearAll_Click"/>
