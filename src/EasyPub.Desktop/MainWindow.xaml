@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyPub Modern v0.14.0" Width="1180" Height="900" MinWidth="960" MinHeight="780"
+        Title="EasyPub Modern v0.15.0" Width="1180" Height="900" MinWidth="960" MinHeight="780"
         WindowStartupLocation="CenterScreen" Background="#F5F7FB" AllowDrop="True"
         FontFamily="Microsoft YaHei UI" TextOptions.TextFormattingMode="Display"
         Drop="Window_Drop" DragOver="Window_DragOver">
@@ -121,7 +121,9 @@
             </StackPanel>
             <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                 <Menu Margin="0,0,8,0" VerticalAlignment="Center" Background="White">
-                    <MenuItem Header="项目">
+                    <MenuItem Header="项目" ToolTip="保存书稿列表、封面、插图、逐书信息和转换设置，方便下次继续">
+                        <MenuItem Header="保存当前工作，方便下次继续" IsEnabled="False"/>
+                        <Separator/>
                         <MenuItem Header="新建项目" Click="NewProject_Click"/>
                         <MenuItem Header="打开项目…" Click="OpenProject_Click"/>
                         <Separator/>
@@ -130,9 +132,7 @@
                     </MenuItem>
                 </Menu>
                 <Button Content="整书预览" Click="PreviewBook_Click" Style="{StaticResource AccentButton}"/>
-                <Button Content="转换历史" Click="ShowHistory_Click" Margin="0,0,8,0"/>
-                <Border Background="#ECFDF3" BorderBrush="#A7E3C1" BorderThickness="1" CornerRadius="14" Padding="10,5" Margin="0,0,8,0"><TextBlock Text="● 本地处理" Foreground="#067647" FontSize="12" FontWeight="SemiBold"/></Border>
-                <Border Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="14" Padding="10,5"><TextBlock Text="v0.14.0" Foreground="#1D4ED8" FontSize="12" FontWeight="SemiBold"/></Border>
+                <Button Content="转换历史" Click="ShowHistory_Click" Margin="0"/>
             </StackPanel>
         </Grid>
 
@@ -249,7 +249,7 @@
                                     <StackPanel><TextBlock Style="{StaticResource FieldLabel}" Text="章节标题正则（留空使用原版默认）"/><TextBox x:Name="ChapterRegexText"/></StackPanel>
                                     <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource FieldLabel}" Text="文本编码"/><ComboBox x:Name="EncodingCombo" SelectedIndex="0"><ComboBoxItem Content="自动检测" Tag="Auto"/><ComboBoxItem Content="UTF-8" Tag="Utf8"/><ComboBoxItem Content="GBK" Tag="Gbk"/></ComboBox></StackPanel>
                                     <Button Grid.Column="4" Content="打开章节 / 标题编辑器" Click="EditChapters_Click" VerticalAlignment="Bottom" Style="{StaticResource AccentButton}" Margin="0"/>
-                                    <StackPanel Grid.Row="2" Grid.ColumnSpan="5" Orientation="Horizontal"><CheckBox x:Name="FullWidthIndentCheck" Content="保留原版每段两个全角空格" IsChecked="True" Margin="0,0,24,0"/><CheckBox x:Name="KeepBlankLinesCheck" Content="保留空行"/></StackPanel>
+                                    <Grid Grid.Row="2" Grid.ColumnSpan="5"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="12"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><CheckBox x:Name="FullWidthIndentCheck" Content="保留原版每段两个全角空格" IsChecked="True" Margin="0,0,24,0"/><CheckBox x:Name="KeepBlankLinesCheck" Content="保留空行"/></StackPanel><TextBlock x:Name="TocHierarchyStatusText" Grid.Column="1" Text="层级目录：关闭" Foreground="#667085" VerticalAlignment="Center"/><Button Grid.Column="3" Content="层级目录设置" Click="EditTocHierarchy_Click" Style="{StaticResource GreenButton}" Margin="0"/></Grid>
                                 </Grid>
                             </Border>
                         </TabItem>

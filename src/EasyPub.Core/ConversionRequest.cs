@@ -12,6 +12,7 @@ public sealed record ConversionOptions
     public static ConversionOptions LegacyDefault { get; } = new();
 
     public string? ChapterPattern { get; init; }
+    public TocHierarchyOptions TocHierarchy { get; init; } = new();
     public TextEncodingMode TextEncoding { get; init; } = TextEncodingMode.Auto;
     public bool RemoveBlankLines { get; init; } = true;
     public bool AddFullWidthIndent { get; init; } = true;
@@ -30,6 +31,18 @@ public sealed record ConversionOptions
     public PublicationMetadata Metadata { get; init; } = new();
     public EmbeddedFontOptions Font { get; init; } = new();
     public MobiOptions Mobi { get; init; } = new();
+}
+
+public sealed record TocHierarchyOptions
+{
+    public const string DefaultLevel1Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[卷部篇集].*";
+    public const string DefaultLevel2Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[章回].*";
+    public const string DefaultLevel3Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+节.*";
+
+    public bool Enabled { get; init; }
+    public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
+    public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
+    public string Level3Pattern { get; init; } = DefaultLevel3Pattern;
 }
 
 public sealed record PublicationMetadata

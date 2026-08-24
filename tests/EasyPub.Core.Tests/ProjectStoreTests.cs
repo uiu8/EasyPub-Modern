@@ -19,6 +19,7 @@ public sealed class ProjectStoreTests
                 OutputFormat = "mobi",
                 Options = ConversionOptions.LegacyDefault with
                 {
+                    TocHierarchy = new TocHierarchyOptions { Enabled = true },
                     Font = new EmbeddedFontOptions
                     {
                         Enabled = true,
@@ -57,6 +58,7 @@ public sealed class ProjectStoreTests
 
             Assert.Equal("mobi", loaded.Profile.OutputFormat);
             Assert.True(loaded.Profile.Options.Font.Enabled);
+            Assert.True(loaded.Profile.Options.TocHierarchy.Enabled);
             Assert.Equal("译者", loaded.Profile.Options.Metadata.Translator);
             Assert.Equal(new DateOnly(2026, 8, 23), loaded.Profile.Options.Metadata.PublicationDate);
             var book = Assert.Single(loaded.Books);

@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private IReadOnlyList<InputBookItem> _lastFailedBooks = [];
     private string? _customCss;
     private string? _customCssSourcePath;
+    private TocHierarchyOptions _tocHierarchy = new();
     private bool _closeSaveInProgress;
     private bool _allowClose;
     private bool _recoverySaveInProgress;
@@ -243,6 +244,8 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(import.OutputDirectory)) OutputDirectoryText.Text = import.OutputDirectory;
         FormatCombo.SelectedIndex = import.OutputFormat == LegacyOutputFormat.Epub ? 0 : 1;
         ChapterRegexText.Text = options.ChapterPattern ?? string.Empty;
+        _tocHierarchy = options.TocHierarchy ?? new TocHierarchyOptions();
+        UpdateTocHierarchySummary();
         FontSizeText.Text = options.FontSizePercent.ToString(CultureInfo.InvariantCulture);
         LineHeightText.Text = options.LineHeightPercent.ToString(CultureInfo.InvariantCulture);
         ParagraphSpacingText.Text = options.ParagraphSpacingEm.ToString("0.###", CultureInfo.InvariantCulture);
@@ -308,6 +311,8 @@ public partial class MainWindow : Window
         SubsetFontCheck.IsChecked = options.Font.Subset;
         UpdateFontSummary();
         ChapterRegexText.Text = options.ChapterPattern ?? string.Empty;
+        _tocHierarchy = options.TocHierarchy ?? new TocHierarchyOptions();
+        UpdateTocHierarchySummary();
         SelectComboItemByTag(EncodingCombo, options.TextEncoding.ToString());
         FontSizeText.Text = options.FontSizePercent.ToString(CultureInfo.InvariantCulture);
         LineHeightText.Text = options.LineHeightPercent.ToString(CultureInfo.InvariantCulture);
@@ -335,6 +340,7 @@ public partial class MainWindow : Window
         var options = new ConversionOptions
         {
             ChapterPattern = EmptyToNull(ChapterRegexText.Text),
+            TocHierarchy = _tocHierarchy,
             TextEncoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!),
             RemoveBlankLines = KeepBlankLinesCheck.IsChecked != true,
             AddFullWidthIndent = FullWidthIndentCheck.IsChecked == true,
@@ -642,8 +648,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.14.0"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.14.0";
+        ? "EasyPub Modern v0.15.0"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.15.0";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -806,6 +812,26 @@ public partial class MainWindow : Window
             ? FavoriteFolders.FirstOrDefault()
             : FavoriteFolders.FirstOrDefault(folder =>
                 string.Equals(folder, Path.TrimEndingDirectorySeparator(Path.GetFullPath(selectedPath)), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void EditTocHierarchy_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new TocHierarchyWindow(_tocHierarchy) { Owner = this };
+        if (editor.ShowDialog() != true || editor.Result is null) return;
+        _tocHierarchy = editor.Result;
+        UpdateTocHierarchySummary();
+        StatusText.Text = _tocHierarchy.Enabled
+            ? "已启用三级层级目录；转换时会生成嵌套目录"
+            : "已关闭层级目录；章节将使用原版单层目录";
+    }
+
+    private void UpdateTocHierarchySummary()
+    {
+        if (TocHierarchyStatusText is null) return;
+        TocHierarchyStatusText.Text = _tocHierarchy.Enabled ? "层级目录：一级 / 二级 / 三级" : "层级目录：关闭";
+        TocHierarchyStatusText.Foreground = _tocHierarchy.Enabled
+            ? System.Windows.Media.Brushes.SeaGreen
+            : System.Windows.Media.Brushes.SlateGray;
     }
 
     private async void EditChapters_Click(object sender, RoutedEventArgs e)

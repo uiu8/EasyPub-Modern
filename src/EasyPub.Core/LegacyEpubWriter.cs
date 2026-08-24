@@ -152,7 +152,10 @@ internal static class LegacyEpubWriter
         lines.Add("<div class=\"toc\">");
         lines.Add("<dl>");
         for (var index = 0; index < chapters.Count; index++)
-            lines.Add($"<dt class=\"tocl2\"><a href=\"chapter{index}.html\">{Html(chapters[index].Title)}</a></dt>");
+        {
+            var level = Math.Clamp(chapters[index].TocLevel, 1, 4);
+            lines.Add($"<dt class=\"tocl{level}\"><a href=\"chapter{index}.html\">{Html(chapters[index].Title)}</a></dt>");
+        }
         lines.Add("</dl>");
         lines.Add("</div>");
         lines.Add("</body>");
@@ -167,8 +170,9 @@ internal static class LegacyEpubWriter
         IReadOnlyList<PreparedIllustration> illustrations)
     {
         var lines = LegacyTemplates.XhtmlHeader($"chapter {index} - 0");
-        var titleClass = chapter.Paragraphs.Count == 0 ? "titlel2single" : "titlel2std";
-        lines.Add($"<h2 id=\"title\" class=\"{titleClass}\">{Html(chapter.Title)}</h2>");
+        var level = Math.Clamp(chapter.TocLevel, 1, 4);
+        var titleClass = chapter.Paragraphs.Count == 0 ? $"titlel{level}single" : $"titlel{level}std";
+        lines.Add($"<h{level} id=\"title\" class=\"{titleClass}\">{Html(chapter.Title)}</h{level}>");
         var prefix = options.AddFullWidthIndent ? "　　" : string.Empty;
         var illustrationByMarker = illustrations.ToDictionary(
             illustration => illustration.Marker,
@@ -266,6 +270,7 @@ internal static class LegacyEpubWriter
 
     private static string BuildNcx(string title, string author, string bookId, IReadOnlyList<LegacyChapter> chapters)
     {
+        var tocTree = BuildTocTree(chapters);
         var lines = new List<string>
         {
             "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"no\"?>",
@@ -273,7 +278,7 @@ internal static class LegacyEpubWriter
             "<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">", "<head>",
             "<meta name=\"cover\" content=\"cover\"/>",
             $"<meta name=\"dtb:uid\" content=\"{bookId}\" />",
-            "<meta name=\"dtb:depth\" content=\"1\"/>",
+            $"<meta name=\"dtb:depth\" content=\"{CalculateTocDepth(tocTree)}\"/>",
             $"<meta name=\"dtb:generator\" content=\"{Generator}\"/>",
             "<meta name=\"dtb:totalPageCount\" content=\"0\"/>",
             "<meta name=\"dtb:maxPageNumber\" content=\"0\"/>", "</head>", "",
@@ -284,17 +289,49 @@ internal static class LegacyEpubWriter
             "<navPoint id=\"htmltoc\" playOrder=\"2\">", "<navLabel><text>目录</text></navLabel>",
             "<content src=\"book-toc.html\"/>", "</navPoint>", "",
         };
-        for (var index = 0; index < chapters.Count; index++)
-        {
-            lines.Add($"<navPoint id=\"chapter{index}\" playOrder=\"{index + 3}\">");
-            lines.Add($"<navLabel><text>{Html(chapters[index].Title)}</text></navLabel>");
-            lines.Add($"<content src=\"chapter{index}.html\"/>");
-            lines.Add("</navPoint>");
-            lines.Add("");
-        }
+        foreach (var root in tocTree) AddNcxNode(lines, root, chapters);
         lines.Add("</navMap>");
         lines.Add("</ncx>");
         return JoinLines(lines);
+    }
+
+    private static IReadOnlyList<TocNode> BuildTocTree(IReadOnlyList<LegacyChapter> chapters)
+    {
+        var roots = new List<TocNode>();
+        var stack = new Stack<TocNode>();
+        for (var index = 0; index < chapters.Count; index++)
+        {
+            var node = new TocNode(index, Math.Clamp(chapters[index].TocLevel, 1, 4));
+            while (stack.Count > 0 && stack.Peek().Level >= node.Level) stack.Pop();
+            if (stack.Count == 0) roots.Add(node);
+            else stack.Peek().Children.Add(node);
+            stack.Push(node);
+        }
+        return roots;
+    }
+
+    private static int CalculateTocDepth(IReadOnlyList<TocNode> roots) =>
+        roots.Count == 0 ? 1 : roots.Max(CalculateTocDepth);
+
+    private static int CalculateTocDepth(TocNode node) =>
+        node.Children.Count == 0 ? 1 : 1 + node.Children.Max(CalculateTocDepth);
+
+    private static void AddNcxNode(
+        List<string> lines,
+        TocNode node,
+        IReadOnlyList<LegacyChapter> chapters)
+    {
+        lines.Add($"<navPoint id=\"chapter{node.ChapterIndex}\" playOrder=\"{node.ChapterIndex + 3}\">");
+        lines.Add($"<navLabel><text>{Html(chapters[node.ChapterIndex].Title)}</text></navLabel>");
+        lines.Add($"<content src=\"chapter{node.ChapterIndex}.html\"/>");
+        foreach (var child in node.Children) AddNcxNode(lines, child, chapters);
+        lines.Add("</navPoint>");
+        lines.Add("");
+    }
+
+    private sealed record TocNode(int ChapterIndex, int Level)
+    {
+        public List<TocNode> Children { get; } = [];
     }
 
     private static string CreateLegacyBookId(string title, string author)
