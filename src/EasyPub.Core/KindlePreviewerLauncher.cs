@@ -79,8 +79,6 @@ public sealed class KindlePreviewerLauncher
         var executableExtension = Path.GetExtension(executable);
         var isCommandScript = executableExtension.Equals(".bat", StringComparison.OrdinalIgnoreCase)
                               || executableExtension.Equals(".cmd", StringComparison.OrdinalIgnoreCase);
-        var outputDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(previewFilePath))!, "kindle-output");
-        Directory.CreateDirectory(outputDirectory);
         var startInfo = new ProcessStartInfo
         {
             FileName = isCommandScript
@@ -95,16 +93,11 @@ public sealed class KindlePreviewerLauncher
             startInfo.ArgumentList.Add("/d");
             startInfo.ArgumentList.Add("/s");
             startInfo.ArgumentList.Add("/c");
-            startInfo.ArgumentList.Add($"\"\"{executable}\" \"{Path.GetFullPath(previewFilePath)}\" -showpreview -output \"{outputDirectory}\" -locale zh\"");
+            startInfo.ArgumentList.Add($"\"\"{executable}\" \"{Path.GetFullPath(previewFilePath)}\"\"");
         }
         else
         {
             startInfo.ArgumentList.Add(Path.GetFullPath(previewFilePath));
-            startInfo.ArgumentList.Add("-showpreview");
-            startInfo.ArgumentList.Add("-output");
-            startInfo.ArgumentList.Add(outputDirectory);
-            startInfo.ArgumentList.Add("-locale");
-            startInfo.ArgumentList.Add("zh");
         }
         return startInfo;
     }

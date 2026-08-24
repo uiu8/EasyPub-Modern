@@ -27,7 +27,7 @@ public sealed class KindlePreviewerLauncherTests
     }
 
     [Fact]
-    public void Preview_copy_and_official_arguments_are_safe_for_chinese_book_names()
+    public void Interactive_preview_opens_the_epub_directly_without_headless_cli_commands()
     {
         var root = Path.Combine(Path.GetTempPath(), $"easypub-kp-copy-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -44,16 +44,7 @@ public sealed class KindlePreviewerLauncherTests
             Assert.True(File.Exists(copy));
             Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(copy));
             Assert.Equal(Path.GetFullPath(executable), startInfo.FileName);
-            Assert.Equal(
-                [
-                    Path.GetFullPath(copy),
-                    "-showpreview",
-                    "-output",
-                    Path.Combine(Path.GetDirectoryName(Path.GetFullPath(copy))!, "kindle-output"),
-                    "-locale",
-                    "zh",
-                ],
-                startInfo.ArgumentList);
+            Assert.Equal([Path.GetFullPath(copy)], startInfo.ArgumentList);
         }
         finally
         {
@@ -81,8 +72,8 @@ public sealed class KindlePreviewerLauncherTests
             var command = Assert.Single(startInfo.ArgumentList.Skip(3));
             Assert.Contains($"\"{Path.GetFullPath(alias)}\"", command);
             Assert.Contains($"\"{Path.GetFullPath(source)}\"", command);
-            Assert.Contains("-showpreview", command);
-            Assert.Contains("-locale zh", command);
+            Assert.DoesNotContain("-showpreview", command);
+            Assert.DoesNotContain("-locale", command);
         }
         finally
         {

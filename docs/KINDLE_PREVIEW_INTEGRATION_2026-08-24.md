@@ -73,6 +73,12 @@ kindlepreviewer inputfile.epub -convert -qualitychecks
 
 来源：[当前用户指南，第 3 章“Using Kindle Previewer from a Command-Line Interface”](https://kindlepreviewer3.s3.amazonaws.com/UserGuide320_EN.pdf)
 
+### 2.4 Windows 图形启动实测校正
+
+2026-08-24 对本机 Kindle Previewer 3.106.0 做可见窗口回归测试时发现：直接运行 `Kindle Previewer 3.exe input.epub -showpreview -output ... -locale zh` 会留下后台主进程和转换服务，但 10 秒内没有创建可见窗口；同一 EPUB 改为 `Kindle Previewer 3.exe input.epub` 后约 4.7 秒出现正常预览窗口。该行为也与安装器写入 EPUB 文件关联的命令一致。
+
+因此 EasyPub v0.17.1 起将两类用途分开：**交互预览只使用“直接打开文件”方式**；`-convert/-qualitychecks/-log/-output` 仅用于无界面转换和检查。不能再以“进程未退出”或“生成了 KPF”代替“预览窗口已显示”的验收。
+
 这意味着 EasyPub 不需要使用窗口模拟点击，也不需要依赖未公开参数。但是官方只公开了“启动独立 GUI”和转换/日志命令，没有公开以下能力：
 
 - 把 Kindle 渲染窗口嵌入第三方 WPF 窗口；
@@ -105,7 +111,7 @@ Amazon 把 Kindle Previewer称为免费工具，但安装流程要求用户审�
 - **不打包** `Kindle Previewer 3.exe`、安装器或其 `lib` 目录；
 - **不复制或调用** Kindle Previewer 安装目录里的私有内部转换器；
 - 检测不到时提供 Amazon 官方下载入口，让用户自行安装并接受条款；
-- EasyPub 只调用官方公开的 `kindlepreviewer ... -showpreview/-log/-qualitychecks`；
+- EasyPub 的交互预览使用安装器注册的直接打开文件方式；批量检查只调用公开的 `-log/-qualitychecks/-convert`；
 - 软件界面写“使用 Kindle Previewer 打开”，不要暗示 Kindle Previewer 是 EasyPub 自带组件或 Amazon 为 EasyPub 背书。
 
 ## 五、推荐架构
@@ -153,7 +159,7 @@ KindlePreviewArtifactService
   - 为外部预览建立稳定缓存
 
 KindlePreviewerLauncher
-  - 构造参数并启动 -showpreview/-qualitychecks/-log
+  - 交互预览直接打开文件；批量任务启动 -qualitychecks/-log
   - 返回“已启动/未安装/输入不支持/启动失败”
 
 KindleValidationReportReader
@@ -192,7 +198,7 @@ KindleValidationReportReader
 
 ### 5.5 安全启动
 
-- 使用参数列表 API 传递输入路径、`-showpreview`、`-output`、`-locale zh`，不要拼接一整条命令字符串；
+- 交互预览使用参数列表 API 只传递输入路径；批量检查再按需传递 `-output` 等参数，不要拼接一整条命令字符串；
 - 只接受本机设置中发现/选择的可执行文件，不从 `.easypubproj` 自动运行任意路径；
 - 对含空格、中文、`&`、括号的文件名做回归测试；
 - 调用 `.bat` 时使用受控的 `cmd.exe /d /c` 参数；若已找到实际 `Kindle Previewer 3.exe`，优先直接调用；
@@ -243,7 +249,7 @@ Kindle Create 内置平板、手机和 E-reader 预览，但它围绕自己的 K
 ### 第一阶段：官方一键预览
 
 - 自动发现 Kindle Previewer；
-- 选中一本书后调用 `-showpreview -locale zh`；
+- 选中一本书后按 Windows 文件关联方式直接交给 Kindle Previewer 图形程序打开；
 - 同时支持最终 MOBI和同源 EPUB；
 - 检测不到时提供官方安装入口和手工选择；
 - 不打包 Amazon 文件；
