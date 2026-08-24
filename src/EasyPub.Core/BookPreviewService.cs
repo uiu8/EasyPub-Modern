@@ -6,13 +6,15 @@ public sealed record BookPreviewItem(string Title, string HtmlPath, bool IsChapt
 
 public sealed class BookPreviewPackage : IDisposable
 {
-    internal BookPreviewPackage(string workingDirectory, IReadOnlyList<BookPreviewItem> items)
+    internal BookPreviewPackage(string workingDirectory, string epubPath, IReadOnlyList<BookPreviewItem> items)
     {
         WorkingDirectory = workingDirectory;
+        EpubPath = epubPath;
         Items = items;
     }
 
     public string WorkingDirectory { get; }
+    public string EpubPath { get; }
     public IReadOnlyList<BookPreviewItem> Items { get; }
 
     public void Dispose()
@@ -58,7 +60,7 @@ public sealed class BookPreviewService
             };
             items.AddRange(chapters.Select((chapter, index) =>
                 new BookPreviewItem(chapter.Title, Path.Combine(oebps, $"chapter{index}.html"), true)));
-            return new BookPreviewPackage(workingDirectory, items);
+            return new BookPreviewPackage(workingDirectory, epubPath, items);
         }
         catch
         {

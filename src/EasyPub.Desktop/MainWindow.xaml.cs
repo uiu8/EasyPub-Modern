@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -1253,6 +1254,84 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             MessageBox.Show(this, exception.Message, "无法生成整书预览", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            CancelButton.IsEnabled = false;
+            ConvertButton.IsEnabled = InputBooks.Count > 0;
+            Progress.Value = 0;
+        }
+    }
+
+    private async void KindlePreviewBook_Click(object sender, RoutedEventArgs e)
+    {
+        var book = SelectedCoverBook();
+        if (book is null)
+        {
+            MessageBox.Show(this, "请只选中一本小说，再打开 Kindle 预览。", "EasyPub Modern");
+            return;
+        }
+
+        var launcher = new KindlePreviewerLauncher();
+        var installation = launcher.Discover();
+        if (installation is null)
+        {
+            var install = MessageBox.Show(
+                this,
+                "没有检测到官方 Kindle Previewer。是否打开 Amazon 官方下载页？\n\n你仍可使用“整书预览”检查 EPUB 排版。",
+                "需要 Kindle Previewer",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information);
+            if (install == MessageBoxResult.Yes)
+                Process.Start(new ProcessStartInfo(KindlePreviewerLauncher.OfficialDownloadPage) { UseShellExecute = true });
+            return;
+        }
+
+        if (book.IsEpub)
+        {
+            try
+            {
+                launcher.Launch(book.InputPath, book.Title ?? book.DisplayName, installation);
+                StatusText.Text = $"已在 Kindle Previewer 中打开：《{book.DisplayName}》";
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, exception.Message, "无法打开 Kindle 预览", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return;
+        }
+
+        _operationCancellation?.Dispose();
+        _operationCancellation = new CancellationTokenSource();
+        CancelButton.IsEnabled = true;
+        ConvertButton.IsEnabled = false;
+        Progress.IsIndeterminate = false;
+        Progress.Value = 0;
+        try
+        {
+            var requests = await BuildConversionRequestsAsync();
+            var request = requests.First(item =>
+                string.Equals(item.InputPath, book.InputPath, StringComparison.OrdinalIgnoreCase));
+            var previewProgress = new Progress<ConversionProgress>(value =>
+            {
+                Progress.Value = value.Fraction;
+                StatusText.Text = $"Kindle 预览：{value.Stage}";
+            });
+            using var package = await Task.Run(() => new BookPreviewService().BuildAsync(
+                request,
+                previewProgress,
+                _operationCancellation.Token), _operationCancellation.Token);
+            launcher.Launch(package.EpubPath, book.Title ?? book.DisplayName, installation);
+            Progress.Value = 1;
+            StatusText.Text = $"已在 Kindle Previewer 中打开：《{book.DisplayName}》";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "已取消 Kindle 预览";
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "无法打开 Kindle 预览", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
