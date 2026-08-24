@@ -42,7 +42,11 @@ public sealed class ProjectStoreTests
                 "书名",
                 "作者",
                 Path.Combine(directory, "cover.webp"),
-                [new BookIllustration("雨夜", Path.Combine(directory, "rain.png"), "雨夜图", 12)])],
+                [new BookIllustration("雨夜", Path.Combine(directory, "rain.png"), "雨夜图", 12)])
+            {
+                MetadataOverrides = new BookMetadataOverrides { Publisher = "起点", Category = "网络文学" },
+                MetadataRuleFolder = Path.Combine(directory, "起点"),
+            }],
             DateTimeOffset.Now);
 
         try
@@ -58,6 +62,8 @@ public sealed class ProjectStoreTests
             var book = Assert.Single(loaded.Books);
             Assert.Equal("书名", book.Title);
             Assert.Equal(12, Assert.Single(book.Illustrations).InsertAfterLine);
+            Assert.Equal("起点", book.MetadataOverrides.Publisher);
+            Assert.Equal(Path.Combine(directory, "起点"), book.MetadataRuleFolder);
             Assert.Equal(EasyPubProjectStore.Fingerprint(document), EasyPubProjectStore.Fingerprint(loaded));
             Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
         }

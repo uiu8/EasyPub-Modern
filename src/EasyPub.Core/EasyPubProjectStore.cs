@@ -9,7 +9,11 @@ public sealed record EasyPubProjectBook(
     string? Title,
     string? Author,
     string? CoverImagePath,
-    IReadOnlyList<BookIllustration> Illustrations);
+    IReadOnlyList<BookIllustration> Illustrations)
+{
+    public BookMetadataOverrides MetadataOverrides { get; init; } = new();
+    public string? MetadataRuleFolder { get; init; }
+}
 
 public sealed record EasyPubProjectDocument(
     int SchemaVersion,
@@ -137,6 +141,8 @@ public sealed class EasyPubProjectStore
                 InputPath = Path.GetFullPath(book.InputPath),
                 CoverImagePath = NormalizeOptionalPath(book.CoverImagePath),
                 Illustrations = book.Illustrations ?? [],
+                MetadataOverrides = book.MetadataOverrides ?? new BookMetadataOverrides(),
+                MetadataRuleFolder = NormalizeOptionalPath(book.MetadataRuleFolder),
             })
             .ToArray(),
     };

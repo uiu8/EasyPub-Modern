@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyPub Modern v0.13.1" Width="1180" Height="900" MinWidth="960" MinHeight="780"
+        Title="EasyPub Modern v0.14.0" Width="1180" Height="900" MinWidth="960" MinHeight="780"
         WindowStartupLocation="CenterScreen" Background="#F5F7FB" AllowDrop="True"
         FontFamily="Microsoft YaHei UI" TextOptions.TextFormattingMode="Display"
         Drop="Window_Drop" DragOver="Window_DragOver">
@@ -132,7 +132,7 @@
                 <Button Content="整书预览" Click="PreviewBook_Click" Style="{StaticResource AccentButton}"/>
                 <Button Content="转换历史" Click="ShowHistory_Click" Margin="0,0,8,0"/>
                 <Border Background="#ECFDF3" BorderBrush="#A7E3C1" BorderThickness="1" CornerRadius="14" Padding="10,5" Margin="0,0,8,0"><TextBlock Text="● 本地处理" Foreground="#067647" FontSize="12" FontWeight="SemiBold"/></Border>
-                <Border Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="14" Padding="10,5"><TextBlock Text="v0.13.1" Foreground="#1D4ED8" FontSize="12" FontWeight="SemiBold"/></Border>
+                <Border Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="14" Padding="10,5"><TextBlock Text="v0.14.0" Foreground="#1D4ED8" FontSize="12" FontWeight="SemiBold"/></Border>
             </StackPanel>
         </Grid>
 
@@ -191,6 +191,7 @@
                                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                 <Border Background="#ECFDF3" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding CoverBadgeVisibility}"><TextBlock Text="有封面" Foreground="#067647" FontSize="11" FontWeight="SemiBold"/></Border>
                                                 <Border Background="#FFF7ED" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding IllustrationBadgeVisibility}"><TextBlock Text="{Binding IllustrationLabel}" Foreground="#C2410C" FontSize="11" FontWeight="SemiBold"/></Border>
+                                                <Border Background="#F0FDF4" CornerRadius="10" Padding="7,3" Margin="0,0,7,0" Visibility="{Binding MetadataBadgeVisibility}"><TextBlock Text="{Binding MetadataLabel}" Foreground="#15803D" FontSize="11" FontWeight="SemiBold"/></Border>
                                                 <Border Background="#EEF4FF" CornerRadius="10" Padding="7,3"><TextBlock Text="TXT" Foreground="#1D4ED8" FontSize="11" FontWeight="SemiBold"/></Border>
                                             </StackPanel>
                                         </Grid>
@@ -290,7 +291,7 @@
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="6"/><RowDefinition Height="36"/><RowDefinition Height="6"/><RowDefinition Height="36"/><RowDefinition Height="6"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                                     <StackPanel Grid.ColumnSpan="5"><TextBlock Style="{StaticResource FieldLabel}" Text="统一作者（逐书作者为空时使用）"/><TextBox x:Name="AuthorText"/></StackPanel>
-                                    <Button Grid.Column="6" Content="批量编辑逐书标题与作者" Click="EditMetadata_Click" Style="{StaticResource AccentButton}" VerticalAlignment="Bottom" Margin="0"/>
+                                    <Button Grid.Column="6" Content="批量编辑逐书信息" Click="EditMetadata_Click" Style="{StaticResource AccentButton}" VerticalAlignment="Bottom" Margin="0"/>
 
                                     <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="译者" VerticalAlignment="Center" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="TranslatorText" Grid.Column="2"/></Grid>
                                     <Grid Grid.Row="2" Grid.Column="2"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="ISBN" VerticalAlignment="Center" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="IsbnText" Grid.Column="2"/></Grid>
@@ -300,7 +301,7 @@
                                     <Grid Grid.Row="4" Grid.Column="2"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="类别" VerticalAlignment="Center" Foreground="#475467" FontWeight="SemiBold"/><ComboBox x:Name="CategoryCombo" Grid.Column="2" IsEditable="True"><ComboBoxItem Content="小说"/><ComboBoxItem Content="文学"/><ComboBoxItem Content="科幻"/><ComboBoxItem Content="奇幻"/><ComboBoxItem Content="悬疑"/><ComboBoxItem Content="历史"/><ComboBoxItem Content="传记"/><ComboBoxItem Content="社科"/><ComboBoxItem Content="技术"/><ComboBoxItem Content="其他"/></ComboBox></Grid>
                                     <Grid Grid.Row="4" Grid.Column="4" Grid.ColumnSpan="3"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="语言" VerticalAlignment="Center" Foreground="#475467" FontWeight="SemiBold"/><ComboBox x:Name="LanguageCombo" Grid.Column="2" IsEditable="True" Text="zh-CN"><ComboBoxItem Content="zh-CN"/><ComboBoxItem Content="zh-TW"/><ComboBoxItem Content="en"/><ComboBoxItem Content="ja"/><ComboBoxItem Content="ko"/></ComboBox></Grid>
 
-                                    <Grid Grid.Row="6" Grid.ColumnSpan="7"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="简介" VerticalAlignment="Top" Margin="0,8,0,0" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="DescriptionText" Grid.Column="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/><TextBlock Grid.Column="4" Text="本页内容均为可选项" Foreground="#B42318" VerticalAlignment="Bottom" Margin="0,0,0,7"/></Grid>
+                                    <Grid Grid.Row="6" Grid.ColumnSpan="7"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="简介" VerticalAlignment="Top" Margin="0,8,0,0" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="DescriptionText" Grid.Column="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/><StackPanel Grid.Column="4" VerticalAlignment="Bottom"><TextBlock x:Name="MetadataMappingStatusText" Text="尚未设置文件夹映射" Foreground="#667085" FontSize="11" TextAlignment="Right" Margin="0,0,0,5"/><Button Content="文件夹元数据映射" Click="EditMetadataMappings_Click" Style="{StaticResource GreenButton}" Margin="0"/></StackPanel></Grid>
                                 </Grid>
                             </Border>
                         </TabItem>

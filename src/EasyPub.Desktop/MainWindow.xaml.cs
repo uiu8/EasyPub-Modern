@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private bool _useLegacyConfig = true;
     private int _coverPreviewVersion;
     private readonly FavoriteFolderStore _favoriteFolderStore = FavoriteFolderStore.CreateDefault();
+    private readonly MetadataMappingStore _metadataMappingStore = MetadataMappingStore.CreateDefault();
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
     private readonly ConversionHistoryStore _historyStore = ConversionHistoryStore.CreateDefault();
     private readonly EasyPubProjectStore _recoveryStore = EasyPubProjectStore.CreateRecoveryDefault();
@@ -33,6 +34,7 @@ public partial class MainWindow : Window
     private string? _lastExplicitSaveFingerprint;
     private string? _currentProjectPath;
     private CancellationTokenSource? _operationCancellation;
+    private IReadOnlyList<FolderMetadataRule> _metadataMappings = [];
 
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
@@ -61,6 +63,8 @@ public partial class MainWindow : Window
         try
         {
             ApplyFavoriteFolders(await _favoriteFolderStore.LoadAsync());
+            _metadataMappings = await _metadataMappingStore.LoadAsync();
+            UpdateMetadataMappingSummary();
             if (File.Exists(_appSettingsStore.StoragePath))
             {
                 var settings = await _appSettingsStore.LoadAsync();
@@ -553,7 +557,11 @@ public partial class MainWindow : Window
             book.Title,
             book.Author,
             book.CoverImagePath,
-            book.Illustrations)).ToArray(),
+            book.Illustrations)
+        {
+            MetadataOverrides = book.MetadataOverrides,
+            MetadataRuleFolder = book.MetadataRuleFolder,
+        }).ToArray(),
         DateTimeOffset.Now);
 
     private void ApplyProjectDocument(EasyPubProjectDocument document)
@@ -571,6 +579,7 @@ public partial class MainWindow : Window
                 CoverImagePath = saved.CoverImagePath,
             };
             item.SetIllustrations(saved.Illustrations);
+            item.SetMetadataOverrides(saved.MetadataOverrides, saved.MetadataRuleFolder);
             InputBooks.Add(item);
         }
         FilesList.SelectedItem = InputBooks.FirstOrDefault();
@@ -633,8 +642,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.13.1"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.13.1";
+        ? "EasyPub Modern v0.14.0"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.14.0";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -690,7 +699,30 @@ public partial class MainWindow : Window
         }
         var editor = new BatchMetadataWindow(InputBooks.ToArray()) { Owner = this };
         if (editor.ShowDialog() == true)
-            StatusText.Text = $"已保存 {InputBooks.Count} 本小说的逐书标题和作者设置";
+        {
+            UpdateMetadataMappingSummary();
+            StatusText.Text = $"已保存 {InputBooks.Count} 本小说的逐书书籍信息";
+        }
+    }
+
+    private async void EditMetadataMappings_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new MetadataMappingWindow(_metadataMappings) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+
+        try
+        {
+            await _metadataMappingStore.SaveAsync(editor.Rules);
+            _metadataMappings = await _metadataMappingStore.LoadAsync();
+            foreach (var book in InputBooks) ApplyMetadataMapping(book);
+            UpdateMetadataMappingSummary();
+            UpdateStatus();
+            StatusText.Text = $"已保存 {_metadataMappings.Count} 条文件夹元数据映射，并重新匹配当前书稿";
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "无法保存元数据映射", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void AddFavoriteFolder_Click(object sender, RoutedEventArgs e)
@@ -967,8 +999,11 @@ public partial class MainWindow : Window
         await RefreshCoverPreviewAsync();
     }
 
-    private async void FilesList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+    private async void FilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateMetadataMappingSummary();
         await RefreshCoverPreviewAsync();
+    }
 
     private void CoverDrop_DragOver(object sender, DragEventArgs e)
     {
@@ -1419,7 +1454,8 @@ public partial class MainWindow : Window
                 book.CoverImagePath,
                 book.Title,
                 book.Author,
-                book.Illustrations)),
+                book.Illustrations,
+                book.MetadataOverrides)),
             outputDirectory,
             profile.OutputFormat,
             profile.Author,
@@ -1437,12 +1473,50 @@ public partial class MainWindow : Window
             if (InputBooks.Any(book => string.Equals(book.InputPath, path, StringComparison.OrdinalIgnoreCase)))
                 continue;
             var book = new InputBookItem(path);
+            ApplyMetadataMapping(book);
             InputBooks.Add(book);
             firstAdded ??= book;
         }
         if (FilesList.SelectedItems.Count == 0 && firstAdded is not null)
             FilesList.SelectedItem = firstAdded;
         UpdateStatus();
+    }
+
+    private void ApplyMetadataMapping(InputBookItem book)
+    {
+        var matched = MetadataMappingResolver.Match(book.InputPath, _metadataMappings);
+        var hasManualOverrides = book.MetadataRuleFolder is null && !book.MetadataOverrides.IsEmpty;
+        if (hasManualOverrides) return;
+
+        if (matched is null)
+        {
+            if (book.MetadataRuleFolder is not null)
+                book.SetMetadataOverrides(new BookMetadataOverrides(), null);
+            return;
+        }
+
+        book.SetMetadataOverrides(matched.Metadata, matched.FolderPath);
+    }
+
+    private void UpdateMetadataMappingSummary()
+    {
+        if (MetadataMappingStatusText is null) return;
+        var selectedBooks = FilesList?.SelectedItems.Cast<InputBookItem>().ToArray() ?? [];
+        var selected = selectedBooks.Length == 1 ? selectedBooks[0] : null;
+        if (selected?.MetadataRuleFolder is not null)
+        {
+            var publisher = selected.MetadataOverrides.Publisher;
+            MetadataMappingStatusText.Text = string.IsNullOrWhiteSpace(publisher)
+                ? $"所选书已匹配：{Path.GetFileName(selected.MetadataRuleFolder)}"
+                : $"所选书出版社：{publisher}";
+            MetadataMappingStatusText.ToolTip = selected.MetadataRuleFolder;
+            return;
+        }
+
+        MetadataMappingStatusText.Text = _metadataMappings.Count == 0
+            ? "尚未设置文件夹映射"
+            : $"已设置 {_metadataMappings.Count} 条文件夹映射";
+        MetadataMappingStatusText.ToolTip = null;
     }
 
     private void UpdateStatus()
@@ -1489,6 +1563,8 @@ public sealed class InputBookItem : INotifyPropertyChanged
     private string? _title;
     private string? _author;
     private IReadOnlyList<BookIllustration> _illustrations = [];
+    private BookMetadataOverrides _metadataOverrides = new();
+    private string? _metadataRuleFolder;
 
     public InputBookItem(string inputPath)
     {
@@ -1543,12 +1619,34 @@ public sealed class InputBookItem : INotifyPropertyChanged
 
     public Visibility IllustrationBadgeVisibility => _illustrations.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
+    public BookMetadataOverrides MetadataOverrides => _metadataOverrides;
+
+    public string? MetadataRuleFolder => _metadataRuleFolder;
+
+    public string MetadataLabel => string.IsNullOrWhiteSpace(MetadataOverrides.Publisher)
+        ? "有元数据"
+        : MetadataOverrides.Publisher;
+
+    public Visibility MetadataBadgeVisibility => MetadataOverrides.IsEmpty ? Visibility.Collapsed : Visibility.Visible;
+
     public void SetIllustrations(IReadOnlyList<BookIllustration> illustrations)
     {
         _illustrations = illustrations.ToArray();
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Illustrations)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IllustrationLabel)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IllustrationBadgeVisibility)));
+    }
+
+    public void SetMetadataOverrides(BookMetadataOverrides? metadata, string? ruleFolder)
+    {
+        _metadataOverrides = metadata ?? new BookMetadataOverrides();
+        _metadataRuleFolder = string.IsNullOrWhiteSpace(ruleFolder)
+            ? null
+            : MetadataMappingResolver.NormalizeFolder(ruleFolder);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MetadataOverrides)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MetadataRuleFolder)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MetadataLabel)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MetadataBadgeVisibility)));
     }
 
     public InputBookItem Clone()
@@ -1560,6 +1658,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
             CoverImagePath = CoverImagePath,
         };
         clone.SetIllustrations(Illustrations);
+        clone.SetMetadataOverrides(MetadataOverrides, MetadataRuleFolder);
         return clone;
     }
 
@@ -1572,6 +1671,16 @@ public sealed class InputBookItem : INotifyPropertyChanged
             CoverImagePath = request.Options?.CoverImagePath,
         };
         item.SetIllustrations(request.Options?.Illustrations ?? []);
+        item.SetMetadataOverrides(new BookMetadataOverrides
+        {
+            Translator = request.Options?.Metadata.Translator,
+            Isbn = request.Options?.Metadata.Isbn,
+            PublicationDate = request.Options?.Metadata.PublicationDate,
+            Publisher = request.Options?.Metadata.Publisher,
+            Category = request.Options?.Metadata.Category,
+            Language = request.Options?.Metadata.Language,
+            Description = request.Options?.Metadata.Description,
+        }, null);
         return item;
     }
 

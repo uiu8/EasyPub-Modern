@@ -5,7 +5,8 @@ public sealed record BookConversionSource(
     string? CoverImagePath = null,
     string? Title = null,
     string? Author = null,
-    IReadOnlyList<BookIllustration>? Illustrations = null);
+    IReadOnlyList<BookIllustration>? Illustrations = null,
+    BookMetadataOverrides? MetadataOverrides = null);
 
 public static class BatchConversionRequestFactory
 {
@@ -26,16 +27,21 @@ public static class BatchConversionRequestFactory
             _ => throw new ArgumentException("输出格式只能是 epub 或 mobi。", nameof(outputFormat)),
         };
 
-        return sources.Select(source => new ConversionRequest(
-            source.InputPath,
-            Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(source.InputPath) + extension),
-            Title: NormalizeOptional(source.Title),
-            Author: NormalizeOptional(source.Author) ?? NormalizeOptional(author),
-            Options: baseOptions with
-            {
-                CoverImagePath = source.CoverImagePath,
-                Illustrations = source.Illustrations ?? [],
-            }))
+        return sources.Select(source =>
+        {
+            var metadataOverrides = source.MetadataOverrides ?? new BookMetadataOverrides();
+            return new ConversionRequest(
+                source.InputPath,
+                Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(source.InputPath) + extension),
+                Title: NormalizeOptional(source.Title),
+                Author: NormalizeOptional(source.Author) ?? NormalizeOptional(metadataOverrides.Author) ?? NormalizeOptional(author),
+                Options: baseOptions with
+                {
+                    CoverImagePath = source.CoverImagePath,
+                    Illustrations = source.Illustrations ?? [],
+                    Metadata = MetadataMappingResolver.Apply(baseOptions.Metadata, metadataOverrides),
+                });
+        })
             .ToArray();
     }
 
