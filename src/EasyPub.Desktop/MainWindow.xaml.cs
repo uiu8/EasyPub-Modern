@@ -28,6 +28,10 @@ public partial class MainWindow : Window
     private string? _customCss;
     private string? _customCssSourcePath;
     private TocHierarchyOptions _tocHierarchy = new();
+    private TextCleanupOptions _textCleanupOptions = new();
+    private ConversionMode _conversionMode = ConversionMode.OriginalCompatible;
+    private bool _applyingProfile;
+    private TaskCenterWindow? _taskCenterWindow;
     private bool _closeSaveInProgress;
     private bool _allowClose;
     private bool _recoverySaveInProgress;
@@ -41,6 +45,7 @@ public partial class MainWindow : Window
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
     public ObservableCollection<NamedConversionPreset> ConversionPresets { get; } = [];
+    public ObservableCollection<BookTaskViewModel> BookTasks { get; } = [];
 
     public MainWindow()
     {
@@ -283,6 +288,11 @@ public partial class MainWindow : Window
 
     private void ApplyProfile(ConversionProfile profile)
     {
+        _applyingProfile = true;
+        _conversionMode = profile.Mode;
+        OriginalModeRadio.IsChecked = profile.Mode == ConversionMode.OriginalCompatible;
+        ModernModeRadio.IsChecked = profile.Mode == ConversionMode.ModernLayout;
+        CustomModeRadio.IsChecked = profile.Mode == ConversionMode.Custom;
         FormatCombo.SelectedIndex = string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         AuthorText.Text = profile.Author ?? string.Empty;
         var metadata = profile.Options.Metadata ?? new PublicationMetadata();
@@ -315,6 +325,8 @@ public partial class MainWindow : Window
         UpdateFontSummary();
         ChapterRegexText.Text = options.ChapterPattern ?? string.Empty;
         _tocHierarchy = options.TocHierarchy ?? new TocHierarchyOptions();
+        _textCleanupOptions = options.TextCleanup ?? new TextCleanupOptions();
+        UpdateTextCleanupSummary();
         UpdateTocHierarchySummary();
         SelectComboItemByTag(EncodingCombo, options.TextEncoding.ToString());
         FontSizeText.Text = options.FontSizePercent.ToString(CultureInfo.InvariantCulture);
@@ -337,6 +349,7 @@ public partial class MainWindow : Window
         MobiAsinText.Text = options.Mobi.Asin ?? string.Empty;
         KindleGenArgsText.Text = options.Mobi.ExtraArguments ?? string.Empty;
         SelectComboItemByTag(EpubModeCombo, options.Mobi.EpubInputMode.ToString());
+        _applyingProfile = false;
     }
 
     private ConversionProfile CaptureProfile()
@@ -387,13 +400,17 @@ public partial class MainWindow : Window
                 ExtraArguments = EmptyToNull(KindleGenArgsText.Text),
                 EpubInputMode = Enum.Parse<EpubInputMode>(((ComboBoxItem)EpubModeCombo.SelectedItem).Tag.ToString()!),
             },
+            TextCleanup = _textCleanupOptions,
         };
         return new ConversionProfile(
             FormatCombo.SelectedIndex == 1 ? "mobi" : "epub",
             EmptyToNull(AuthorText.Text),
             int.Parse(((ComboBoxItem)ParallelismCombo.SelectedItem).Content.ToString()!, CultureInfo.InvariantCulture),
             EmptyToNull(_customCssSourcePath ?? string.Empty),
-            options);
+            options)
+        {
+            Mode = _conversionMode,
+        };
     }
 
     private EasyPubAppSettings CaptureAppSettings() => new(
@@ -405,50 +422,20 @@ public partial class MainWindow : Window
         LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
     };
 
-    private void ApplyPreset_Click(object sender, RoutedEventArgs e)
+    private async void ManagePresets_Click(object sender, RoutedEventArgs e)
     {
-        if (PresetCombo.SelectedItem is not NamedConversionPreset preset)
-        {
-            MessageBox.Show(this, "请先从下拉框选择一个预设。", "EasyPub Modern");
-            return;
-        }
-        ApplyProfile(preset.Profile);
-        PresetNameText.Text = preset.Name;
-        StatusText.Text = $"已应用预设：{preset.Name}";
-    }
-
-    private async void SavePreset_Click(object sender, RoutedEventArgs e)
-    {
-        var name = PresetNameText.Text.Trim();
-        if (name.Length == 0)
-        {
-            MessageBox.Show(this, "请先输入预设名称。", "EasyPub Modern");
-            return;
-        }
         try
         {
-            var preset = new NamedConversionPreset(name, CaptureProfile());
-            var existing = ConversionPresets.FirstOrDefault(item =>
-                string.Equals(item.Name, name, StringComparison.CurrentCultureIgnoreCase));
-            if (existing is not null) ConversionPresets.Remove(existing);
-            ConversionPresets.Add(preset);
-            PresetCombo.SelectedItem = preset;
+            var manager = new PresetManagerWindow(ConversionPresets, CaptureProfile()) { Owner = this };
+            manager.ShowDialog();
+            if (!manager.Changed) return;
             await _appSettingsStore.SaveAsync(CaptureAppSettings());
-            StatusText.Text = $"已保存转换预设：{name}";
+            StatusText.Text = $"预设已更新，共 {ConversionPresets.Count} 个";
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存预设", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "无法管理预设", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-    }
-
-    private async void DeletePreset_Click(object sender, RoutedEventArgs e)
-    {
-        if (PresetCombo.SelectedItem is not NamedConversionPreset preset) return;
-        ConversionPresets.Remove(preset);
-        PresetNameText.Clear();
-        await _appSettingsStore.SaveAsync(CaptureAppSettings());
-        StatusText.Text = $"已删除预设：{preset.Name}";
     }
 
     private async void NewProject_Click(object sender, RoutedEventArgs e)
@@ -666,8 +653,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.18.0"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.18.0";
+        ? "EasyPub Modern v0.19.0"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.19.0";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -911,6 +898,81 @@ public partial class MainWindow : Window
         {
             StatusText.Text = "章节分析失败";
             MessageBox.Show(this, exception.Message, "无法打开章节编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void EditTextCleanup_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = FilesList.SelectedItems.Cast<InputBookItem>().FirstOrDefault(book => !book.IsEpub)
+            ?? InputBooks.FirstOrDefault(book => !book.IsEpub);
+        if (selected is null)
+        {
+            MessageBox.Show(this, "请先添加并选择一本 TXT 小说。EPUB 输入不会使用 TXT 清理规则。", "EasyPub Modern");
+            return;
+        }
+        try
+        {
+            var encoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag!.ToString()!);
+            var window = await TextCleanupWindow.CreateAsync(selected.InputPath, encoding, _textCleanupOptions);
+            window.Owner = this;
+            if (window.ShowDialog() != true) return;
+            _textCleanupOptions = window.Result;
+            UpdateTextCleanupSummary();
+            _conversionMode = ConversionMode.Custom;
+            CustomModeRadio.IsChecked = true;
+            StatusText.Text = _textCleanupOptions.Enabled
+                ? "已保存文本清理规则；转换时只在内存中处理，不修改源 TXT"
+                : "已关闭文本清理规则";
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "无法预览文本清理", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void UpdateTextCleanupSummary()
+    {
+        if (TextCleanupStatusText is null) return;
+        var count = new[]
+        {
+            _textCleanupOptions.CollapseBlankLines,
+            _textCleanupOptions.RepairHardWraps,
+            _textCleanupOptions.NormalizeFullWidthSpaces,
+            _textCleanupOptions.NormalizeChapterNumbers,
+            _textCleanupOptions.RemoveSiteNotices,
+            _textCleanupOptions.NormalizePunctuation,
+            _textCleanupOptions.ChineseVariant != ChineseVariantConversion.None,
+        }.Count(enabled => enabled);
+        TextCleanupStatusText.Text = count == 0
+            ? "使用原文，不做额外清理"
+            : $"已启用 {count} 项规则 · 可预览、可撤销 · 不修改源文件";
+    }
+
+    private void ConversionMode_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || _applyingProfile) return;
+        if (OriginalModeRadio.IsChecked == true)
+        {
+            _conversionMode = ConversionMode.OriginalCompatible;
+            FontSizeText.Text = "110"; LineHeightText.Text = "120"; ParagraphSpacingText.Text = "0.6"; IndentText.Text = "0";
+            PageMarginTopText.Text = "0"; PageMarginBottomText.Text = "0"; PageMarginLeftText.Text = "3"; PageMarginRightText.Text = "3";
+            SelectComboItemByTag(AlignmentCombo, EasyPub.Core.TextAlignment.Default.ToString());
+            FullWidthIndentCheck.IsChecked = true;
+            StatusText.Text = "已切换到原版兼容模式";
+        }
+        else if (ModernModeRadio.IsChecked == true)
+        {
+            _conversionMode = ConversionMode.ModernLayout;
+            FontSizeText.Text = "105"; LineHeightText.Text = "165"; ParagraphSpacingText.Text = "0.35"; IndentText.Text = "2";
+            PageMarginTopText.Text = "12"; PageMarginBottomText.Text = "12"; PageMarginLeftText.Text = "18"; PageMarginRightText.Text = "18";
+            SelectComboItemByTag(AlignmentCombo, EasyPub.Core.TextAlignment.Justify.ToString());
+            FullWidthIndentCheck.IsChecked = false;
+            StatusText.Text = "已切换到现代排版模式；MOBI 仍使用同一兼容生成链路";
+        }
+        else
+        {
+            _conversionMode = ConversionMode.Custom;
+            StatusText.Text = "自定义模式：可在下方分页调整全部选项";
         }
     }
 
@@ -1375,6 +1437,38 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowTaskCenter_Click(object sender, RoutedEventArgs e) => ShowTaskCenter();
+
+    private void ShowTaskCenter()
+    {
+        if (_taskCenterWindow is { IsVisible: true })
+        {
+            _taskCenterWindow.Activate();
+            return;
+        }
+        _taskCenterWindow = new TaskCenterWindow(BookTasks) { Owner = this };
+        _taskCenterWindow.RetryRequested += path =>
+        {
+            var original = InputBooks.FirstOrDefault(book => string.Equals(book.InputPath, path, StringComparison.OrdinalIgnoreCase));
+            InputBooks.Clear();
+            if (original is not null) InputBooks.Add(original.Clone()); else AddFiles([path]);
+            FilesList.SelectedItem = InputBooks.FirstOrDefault();
+            UpdateStatus();
+            StatusText.Text = "已载入所选任务，可调整设置后重新转换";
+        };
+        _taskCenterWindow.Show();
+    }
+
+    private void InitializeBookTasks(IReadOnlyList<ConversionRequest> requests)
+    {
+        BookTasks.Clear();
+        foreach (var request in requests) BookTasks.Add(new BookTaskViewModel(request.InputPath, request.OutputPath));
+        _taskCenterWindow?.RefreshSummary();
+    }
+
+    private BookTaskViewModel? FindBookTask(string? inputPath) => inputPath is null ? null : BookTasks.FirstOrDefault(item =>
+        string.Equals(item.InputPath, inputPath, StringComparison.OrdinalIgnoreCase));
+
     private void RetryFailed_Click(object sender, RoutedEventArgs e)
     {
         if (_lastFailedBooks.Count > 0)
@@ -1411,11 +1505,23 @@ public partial class MainWindow : Window
         {
             StatusText.Text = "正在执行转换前检查…";
             var requests = await BuildConversionRequestsAsync();
+            InitializeBookTasks(requests);
+            foreach (var task in BookTasks) task.Update(BookTaskStage.Checking, 0.02, "正在检查");
             var report = await Task.Run(
                 () => new ConversionPreflightInspector().InspectAsync(requests, cancellationToken),
                 cancellationToken);
             if (report.HasErrors)
             {
+                foreach (var task in BookTasks)
+                {
+                    var issues = report.Issues.Where(issue => issue.InputPath is null || string.Equals(issue.InputPath, task.InputPath, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (issues.Any(issue => issue.Severity == PreflightSeverity.Error))
+                    {
+                        task.SetFailure("转换前检查未通过：" + string.Join("；", issues.Select(issue => issue.Message)));
+                    }
+                    else task.Update(BookTaskStage.Waiting, 0, "等待修正其他错误");
+                }
+                ShowTaskCenter();
                 new PreflightWindow(report, allowContinue: false, NavigateToPreflightIssue) { Owner = this }.ShowDialog();
                 StatusText.Text = "转换已停止：请先修正检查错误";
                 return;
@@ -1428,6 +1534,7 @@ public partial class MainWindow : Window
             }
 
             Directory.CreateDirectory(OutputDirectoryText.Text.Trim());
+            ShowTaskCenter();
             StatusText.Text = $"正在转换 {requests.Count} 本小说…";
             var parallelism = int.Parse(
                 ((ComboBoxItem)ParallelismCombo.SelectedItem).Content.ToString()!,
@@ -1439,6 +1546,8 @@ public partial class MainWindow : Window
                     ? string.Empty
                     : $" · {Path.GetFileName(value.CurrentInputPath)}";
                 StatusText.Text = $"{value.Stage}{name} · 已完成 {value.CompletedCount}/{value.TotalCount} · 失败 {value.FailedCount} · 取消 {value.CancelledCount}";
+                FindBookTask(value.CurrentInputPath)?.Update(value.ItemStage, value.ItemFraction, value.Stage, value.Validation);
+                _taskCenterWindow?.RefreshSummary();
             });
             var outcomes = await new BatchConverter(new EasyPubConverter())
                 .ConvertWithReportAsync(requests, parallelism, batchProgress, cancellationToken);
@@ -1472,6 +1581,15 @@ public partial class MainWindow : Window
             RetryFailedButton.IsEnabled = _lastFailedInputPaths.Count > 0;
             var totalBytes = successes.Sum(outcome => outcome.Result!.OutputBytes);
             var cancelled = failures.Count(outcome => outcome.Cancelled);
+            foreach (var outcome in outcomes)
+            {
+                var task = FindBookTask(outcome.Request.InputPath);
+                if (task is null) continue;
+                if (!outcome.Succeeded) task.SetFailure(outcome.ErrorMessage ?? (outcome.Cancelled ? "已取消" : "转换失败"), outcome.Cancelled);
+                else if (outcome.Validation is { } validation)
+                    task.Update(validation.StructurePassed && validation.WarningCount == 0 ? BookTaskStage.Completed : BookTaskStage.Warning, 1, validation.ResultLabel, validation);
+            }
+            _taskCenterWindow?.RefreshSummary();
             StatusText.Text = $"已完成：成功 {successes.Length} 本，失败 {failures.Length - cancelled} 本，取消 {cancelled} 本，合计 {totalBytes / 1024d:F1} KB";
 
             if (failures.Length > 0)
@@ -1481,9 +1599,8 @@ public partial class MainWindow : Window
             }
             else
             {
-                MessageBox.Show(
-                    this,
-                    $"批量转换完成（{Path.GetExtension(requests[0].OutputPath).TrimStart('.').ToUpperInvariant()}）。\n输出目录：{OutputDirectoryText.Text.Trim()}",
+                MessageBox.Show(this,
+                    $"批量转换与逐书验收完成。\n每本书旁已生成 .easypub-report.json 报告。\n输出目录：{OutputDirectoryText.Text.Trim()}",
                     "EasyPub Modern");
             }
         }
@@ -1626,25 +1743,13 @@ public partial class MainWindow : Window
         CoverDropPanel.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
         CoverGapColumn.Width = new GridLength(showCover ? 14 : 0);
         CoverColumn.Width = new GridLength(showCover ? 278 : 0);
-        UpdatePresetButtons();
     }
 
     private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (PresetCombo.SelectedItem is NamedConversionPreset preset && string.IsNullOrWhiteSpace(PresetNameText.Text))
-            PresetNameText.Text = preset.Name;
-        UpdatePresetButtons();
-    }
-
-    private void PresetNameText_TextChanged(object sender, TextChangedEventArgs e) => UpdatePresetButtons();
-
-    private void UpdatePresetButtons()
-    {
-        if (PresetCombo is null) return;
-        var hasPreset = PresetCombo.SelectedItem is NamedConversionPreset;
-        ApplyPresetButton.IsEnabled = hasPreset;
-        DeletePresetButton.IsEnabled = hasPreset;
-        SavePresetButton.IsEnabled = !string.IsNullOrWhiteSpace(PresetNameText.Text);
+        if (_applyingProfile || PresetCombo.SelectedItem is not NamedConversionPreset preset) return;
+        ApplyProfile(preset.Profile);
+        StatusText.Text = $"已应用预设：{preset.Name}";
     }
 
     private static bool IsSupportedInput(string path) => Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".epub";

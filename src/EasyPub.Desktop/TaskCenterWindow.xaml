@@ -1,0 +1,50 @@
+<Window x:Class="EasyPub.Desktop.TaskCenterWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="逐书任务与成品验收中心 · EasyPub Modern" Width="980" Height="650" MinWidth="760" MinHeight="500"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
+    <Grid Margin="18">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="3*"/><RowDefinition Height="12"/><RowDefinition Height="2*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="逐书任务与成品验收" FontSize="24" FontWeight="SemiBold" Foreground="#172033"/>
+                <TextBlock Margin="0,5,0,0" Text="每本书单独显示检查、生成、验收和最终结果；结构通过不等于 Kindle 真机确认。" Foreground="#667085"/>
+            </StackPanel>
+            <Border Grid.Column="1" Background="#EEF4FF" CornerRadius="12" Padding="12,7" VerticalAlignment="Center"><TextBlock x:Name="SummaryText" Text="等待任务" Foreground="#1D4ED8" FontWeight="SemiBold"/></Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="8">
+            <DataGrid x:Name="TasksGrid" ItemsSource="{Binding}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                      HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0" SelectionChanged="TasksGrid_SelectionChanged">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="书名" Binding="{Binding DisplayName}" Width="2*"/>
+                    <DataGridTextColumn Header="状态" Binding="{Binding StatusText}" Width="150"/>
+                    <DataGridTemplateColumn Header="进度" Width="180">
+                        <DataGridTemplateColumn.CellTemplate><DataTemplate><ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="8" Margin="8" Foreground="#2563EB"/></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="验收结果" Binding="{Binding ValidationText}" Width="210"/>
+                    <DataGridTextColumn Header="输出" Binding="{Binding OutputName}" Width="170"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <Border Grid.Row="4" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="14">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock x:Name="IssueTitleText" Text="选择一本书查看检查结果" FontWeight="SemiBold" FontSize="16" Foreground="#344054"/><TextBlock x:Name="HardwareText" Margin="0,4,0,0" Foreground="#B54708"/></StackPanel>
+                    <TextBlock x:Name="ReportPathText" Grid.Column="1" Foreground="#667085" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                </Grid>
+                <ListBox x:Name="IssuesList" Grid.Row="2" BorderThickness="0" Background="#F8FAFC" Padding="6"/>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="查看问题/报告" Padding="14,8" Margin="0,0,8,0" Click="OpenReport_Click"/>
+            <Button Content="打开输出目录" Padding="14,8" Margin="0,0,8,0" Click="OpenOutput_Click"/>
+            <Button Content="重试所选" Padding="14,8" Margin="0,0,8,0" Click="Retry_Click"/>
+            <Button Content="关闭" Padding="18,8" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

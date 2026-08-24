@@ -22,7 +22,8 @@ internal static partial class LegacyTextParser
     {
         var bytes = await File.ReadAllBytesAsync(inputPath, cancellationToken);
         var text = DetectEncoding(bytes, options.TextEncoding).GetString(RemovePreamble(bytes));
-        var sourceLines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var cleanup = TextCleanupPipeline.Apply(text, options.TextCleanup);
+        var sourceLines = cleanup.Lines.ToArray();
         if (chapterTree is not null)
             return ParseUsingChapterTree(bytes, sourceLines, options, chapterTree);
 
@@ -50,6 +51,7 @@ internal static partial class LegacyTextParser
         for (var index = 0; index < sourceLines.Length; index++)
         {
             var rawLine = sourceLines[index];
+            if (rawLine == TextCleanupPipeline.RemovedLine) continue;
             var line = rawLine.Trim();
             if (line.Length == 0)
             {
@@ -98,6 +100,7 @@ internal static partial class LegacyTextParser
                 for (var lineNumber = range.StartLine; lineNumber <= range.EndLine; lineNumber++)
                 {
                     var line = sourceLines[lineNumber - 1].Trim();
+                    if (line == TextCleanupPipeline.RemovedLine) continue;
                     if (line.Length > 0 || !options.RemoveBlankLines) paragraphs.Add(line);
                     AddPositionedIllustrations(paragraphs, positionedIllustrations, lineNumber);
                 }

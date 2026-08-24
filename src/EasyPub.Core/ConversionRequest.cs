@@ -34,6 +34,29 @@ public sealed record ConversionOptions
     public PublicationMetadata Metadata { get; init; } = new();
     public EmbeddedFontOptions Font { get; init; } = new();
     public MobiOptions Mobi { get; init; } = new();
+    public TextCleanupOptions TextCleanup { get; init; } = new();
+}
+
+public sealed record TextCleanupOptions
+{
+    public bool CollapseBlankLines { get; init; }
+    public bool RepairHardWraps { get; init; }
+    public bool NormalizeFullWidthSpaces { get; init; }
+    public bool NormalizeChapterNumbers { get; init; }
+    public bool RemoveSiteNotices { get; init; }
+    public ChineseVariantConversion ChineseVariant { get; init; }
+    public bool NormalizePunctuation { get; init; }
+
+    public bool Enabled => CollapseBlankLines || RepairHardWraps || NormalizeFullWidthSpaces
+        || NormalizeChapterNumbers || RemoveSiteNotices
+        || ChineseVariant != ChineseVariantConversion.None || NormalizePunctuation;
+}
+
+public enum ChineseVariantConversion
+{
+    None,
+    ToSimplified,
+    ToTraditional,
 }
 
 public sealed record TocHierarchyOptions

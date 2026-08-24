@@ -51,15 +51,18 @@ public sealed class BatchConverter(EasyPubConverter converter)
         var sync = new object();
         using var semaphore = new SemaphoreSlim(maxParallelism, maxParallelism);
 
-        void Report(int index, string? inputPath, string stage)
+        void Report(int index, string? inputPath, string stage, BookTaskStage itemStage, ArtifactValidationReport? validation = null)
         {
             lock (sync)
             {
                 var overall = jobs.Length == 0 ? 1 : fractions.Sum() / jobs.Length;
                 progress?.Report(new BatchConversionProgress(
-                    jobs.Length, completed, failed, cancelled, inputPath, stage, overall));
+                    jobs.Length, completed, failed, cancelled, inputPath, stage, overall, itemStage, validation, fractions[index]));
             }
         }
+
+        for (var index = 0; index < jobs.Length; index++)
+            Report(index, jobs[index].InputPath, "等待转换", BookTaskStage.Waiting);
 
         var tasks = jobs.Select(async (job, index) =>
         {
@@ -68,26 +71,37 @@ public sealed class BatchConverter(EasyPubConverter converter)
             {
                 await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                 entered = true;
-                Report(index, job.InputPath, "开始转换");
-                var itemProgress = new Progress<ConversionProgress>(value =>
+                fractions[index] = 0.02;
+                Report(index, job.InputPath, "正在检查", BookTaskStage.Checking);
+                var itemProgress = new InlineProgress<ConversionProgress>(value =>
                 {
                     lock (sync)
                     {
                         fractions[index] = Math.Clamp(value.Fraction, 0, 1);
                         stages[index] = value.Stage;
                     }
-                    Report(index, value.InputPath, value.Stage);
+                    var convertingStage = string.Equals(Path.GetExtension(job.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase)
+                        ? BookTaskStage.GeneratingMobi
+                        : BookTaskStage.GeneratingEpub;
+                    Report(index, value.InputPath, value.Stage, convertingStage);
                 });
                 var result = await Task.Run(
                     () => converter.ConvertAsync(job, itemProgress, cancellationToken),
                     cancellationToken).ConfigureAwait(false);
-                outcomes[index] = new BatchJobOutcome(job, result, null, false);
+                lock (sync) fractions[index] = 0.94;
+                Report(index, job.InputPath, "正在验收成品", BookTaskStage.Validating);
+                var validation = await new ArtifactValidationService()
+                    .ValidateAndSaveAsync(job, cancellationToken).ConfigureAwait(false);
+                outcomes[index] = new BatchJobOutcome(job, result, null, false, validation);
                 lock (sync)
                 {
                     fractions[index] = 1;
                     completed++;
                 }
-                Report(index, job.InputPath, "转换完成");
+                var finalStage = validation.StructurePassed && validation.WarningCount == 0
+                    ? BookTaskStage.Completed
+                    : BookTaskStage.Warning;
+                Report(index, job.InputPath, validation.ResultLabel, finalStage, validation);
             }
             catch (OperationCanceledException)
             {
@@ -97,7 +111,7 @@ public sealed class BatchConverter(EasyPubConverter converter)
                     fractions[index] = 1;
                     cancelled++;
                 }
-                Report(index, job.InputPath, "已取消");
+                Report(index, job.InputPath, "已取消", BookTaskStage.Cancelled);
             }
             catch (Exception exception)
             {
@@ -107,7 +121,7 @@ public sealed class BatchConverter(EasyPubConverter converter)
                     fractions[index] = 1;
                     failed++;
                 }
-                Report(index, job.InputPath, "转换失败");
+                Report(index, job.InputPath, "转换失败", BookTaskStage.Failed);
             }
             finally
             {
@@ -130,13 +144,19 @@ public sealed class BatchConverter(EasyPubConverter converter)
             throw new InvalidOperationException($"Multiple jobs target the same output: {duplicate.Key}");
         }
     }
+
+    private sealed class InlineProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
+    }
 }
 
 public sealed record BatchJobOutcome(
     ConversionRequest Request,
     ConversionResult? Result,
     string? ErrorMessage,
-    bool Cancelled = false)
+    bool Cancelled = false,
+    ArtifactValidationReport? Validation = null)
 {
     public bool Succeeded => Result is not null;
 }

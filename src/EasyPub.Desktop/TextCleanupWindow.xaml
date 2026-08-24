@@ -1,0 +1,52 @@
+<Window x:Class="EasyPub.Desktop.TextCleanupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="文本清理流水线 · EasyPub Modern" Width="1040" Height="720" MinWidth="820" MinHeight="560"
+        WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
+    <Grid Margin="18">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="文本清理流水线" FontSize="24" FontWeight="SemiBold" Foreground="#172033"/>
+            <TextBlock x:Name="BookPathText" Margin="0,5,0,0" Foreground="#667085" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Margin="0,4,0,0" Text="这里只预览并保存转换规则，正式转换时在内存中处理；不会修改原始 TXT。" Foreground="#067647" FontWeight="SemiBold"/>
+        </StackPanel>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="14">
+            <WrapPanel>
+                <CheckBox x:Name="BlankLinesCheck" Content="合并连续空行" Margin="0,0,22,8" Click="Option_Click"/>
+                <CheckBox x:Name="HardWrapCheck" Content="修复正文硬换行" Margin="0,0,22,8" Click="Option_Click"/>
+                <CheckBox x:Name="SpacesCheck" Content="统一全角空格" Margin="0,0,22,8" Click="Option_Click"/>
+                <CheckBox x:Name="ChapterCheck" Content="标准化章节编号" Margin="0,0,22,8" Click="Option_Click"/>
+                <CheckBox x:Name="NoticeCheck" Content="清理网站广告/下载说明" Margin="0,0,22,8" Click="Option_Click"/>
+                <CheckBox x:Name="PunctuationCheck" Content="规范中文标点" Margin="0,0,22,8" Click="Option_Click"/>
+                <TextBlock Text="简繁转换" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                <ComboBox x:Name="ChineseVariantCombo" Width="140" SelectedIndex="0" SelectionChanged="ChineseVariantCombo_SelectionChanged" Margin="0,0,0,8">
+                    <ComboBoxItem Content="不转换" Tag="None"/><ComboBoxItem Content="繁体转简体" Tag="ToSimplified"/><ComboBoxItem Content="简体转繁体" Tag="ToTraditional"/>
+                </ComboBox>
+            </WrapPanel>
+        </Border>
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="5*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="4*"/></Grid.ColumnDefinitions>
+            <Border Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="10">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock x:Name="ChangeSummaryText" Text="尚未选择清理规则" FontWeight="SemiBold" Foreground="#344054"/>
+                    <DataGrid x:Name="ChangesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0">
+                        <DataGrid.Columns><DataGridTextColumn Header="行" Binding="{Binding LineNumber}" Width="52"/><DataGridTextColumn Header="规则" Binding="{Binding Rule}" Width="140"/><DataGridTextColumn Header="修改前" Binding="{Binding Before}" Width="2*"/><DataGridTextColumn Header="修改后" Binding="{Binding After}" Width="2*"/></DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+            <Border Grid.Column="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="10">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Text="处理后正文预览（只读）" FontWeight="SemiBold" Foreground="#344054"/>
+                    <TextBox x:Name="PreviewText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" FontFamily="Microsoft YaHei UI"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal"><Button Content="撤销为打开时设置" Padding="14,8" Margin="0,0,8,0" Click="Undo_Click"/><Button Content="全部关闭" Padding="14,8" Click="Clear_Click"/></StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="取消" Padding="16,8" Margin="0,0,8,0" Click="Cancel_Click"/><Button Content="应用到本项目" Padding="20,8" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" Click="Apply_Click"/></StackPanel>
+        </Grid>
+    </Grid>
+</Window>

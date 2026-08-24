@@ -12,4 +12,20 @@ public sealed record BatchConversionProgress(
     int CancelledCount,
     string? CurrentInputPath,
     string Stage,
-    double Fraction);
+    double Fraction,
+    BookTaskStage ItemStage = BookTaskStage.Waiting,
+    ArtifactValidationReport? Validation = null,
+    double ItemFraction = 0);
+
+public enum BookTaskStage
+{
+    Waiting,
+    Checking,
+    GeneratingEpub,
+    GeneratingMobi,
+    Validating,
+    Completed,
+    Warning,
+    Failed,
+    Cancelled,
+}

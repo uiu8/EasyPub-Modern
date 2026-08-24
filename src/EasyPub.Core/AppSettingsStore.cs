@@ -14,6 +14,14 @@ public sealed record ConversionProfile(
 
     public int FontSizePercent => Options.FontSizePercent;
     public MobiCompression MobiCompression => Options.Mobi.Compression;
+    public ConversionMode Mode { get; init; } = ConversionMode.OriginalCompatible;
+}
+
+public enum ConversionMode
+{
+    OriginalCompatible,
+    ModernLayout,
+    Custom,
 }
 
 public sealed record NamedConversionPreset(string Name, ConversionProfile Profile);
