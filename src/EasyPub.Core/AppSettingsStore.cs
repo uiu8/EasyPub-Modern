@@ -23,6 +23,9 @@ public sealed record EasyPubAppSettings(
     ConversionProfile LastProfile,
     IReadOnlyList<NamedConversionPreset> Presets)
 {
+    public bool UseLegacyConfig { get; init; } = true;
+    public string? LegacyConfigPath { get; init; }
+
     public static EasyPubAppSettings Default { get; } = new(null, ConversionProfile.Default, []);
 }
 

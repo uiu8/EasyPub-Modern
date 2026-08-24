@@ -15,6 +15,7 @@ namespace EasyPub.Desktop;
 public partial class MainWindow : Window
 {
     private LegacyConfigImport? _legacyConfig;
+    private bool _useLegacyConfig = true;
     private int _coverPreviewVersion;
     private readonly FavoriteFolderStore _favoriteFolderStore = FavoriteFolderStore.CreateDefault();
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
@@ -44,9 +45,11 @@ public partial class MainWindow : Window
         OutputDirectoryText.Text = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "EasyPub Modern");
+        var bundledKindleGen = Path.Combine(AppContext.BaseDirectory, "bin", "kindlegen_v2.9.exe");
         var legacyKindleGen = @"C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe";
-        if (File.Exists(legacyKindleGen)) KindleGenText.Text = legacyKindleGen;
-        LoadAutomaticLegacyConfig();
+        KindleGenText.Text = File.Exists(bundledKindleGen)
+            ? bundledKindleGen
+            : File.Exists(legacyKindleGen) ? legacyKindleGen : string.Empty;
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         _recoveryTimer.Tick += RecoveryTimer_Tick;
@@ -59,7 +62,15 @@ public partial class MainWindow : Window
         {
             ApplyFavoriteFolders(await _favoriteFolderStore.LoadAsync());
             if (File.Exists(_appSettingsStore.StoragePath))
-                ApplyAppSettings(await _appSettingsStore.LoadAsync());
+            {
+                var settings = await _appSettingsStore.LoadAsync();
+                RestoreLegacyConfigSelection(settings);
+                ApplyAppSettings(settings);
+            }
+            else
+            {
+                LoadAutomaticLegacyConfig();
+            }
             var history = await _historyStore.LoadAsync();
             var latestFailureTime = history.Where(entry => !entry.Succeeded).Select(entry => (DateTimeOffset?)entry.Timestamp).Max();
             _lastFailedInputPaths = latestFailureTime is null
@@ -122,10 +133,31 @@ public partial class MainWindow : Window
         var path = candidates.FirstOrDefault(File.Exists);
         if (path is null)
         {
+            _legacyConfig = null;
             LegacyConfigStatusText.Text = "未找到 config.xml；可手动选择原版配置";
+            LegacyConfigStatusText.ToolTip = null;
+            UpdateLegacyConfigButtons();
             return;
         }
         LoadLegacyConfig(path, showError: false);
+    }
+
+    private void RestoreLegacyConfigSelection(EasyPubAppSettings settings)
+    {
+        if (!settings.UseLegacyConfig)
+        {
+            _legacyConfig = null;
+            _useLegacyConfig = false;
+            LegacyConfigStatusText.Text = "未选择配置；不会在下次启动时自动加载 config.xml";
+            LegacyConfigStatusText.ToolTip = null;
+            UpdateLegacyConfigButtons();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.LegacyConfigPath) && File.Exists(settings.LegacyConfigPath))
+            LoadLegacyConfig(settings.LegacyConfigPath, showError: false);
+        else
+            LoadAutomaticLegacyConfig();
     }
 
     private void BrowseLegacyConfig_Click(object sender, RoutedEventArgs e)
@@ -137,6 +169,24 @@ public partial class MainWindow : Window
             Title = "选择原版 EasyPub config.xml",
         };
         if (dialog.ShowDialog(this) == true) LoadLegacyConfig(dialog.FileName, showError: true);
+    }
+
+    private async void ClearLegacyConfig_Click(object sender, RoutedEventArgs e)
+    {
+        _legacyConfig = null;
+        _useLegacyConfig = false;
+        LegacyConfigStatusText.Text = "已取消选择；当前界面中的设置保留，下次启动不会自动加载 config.xml";
+        LegacyConfigStatusText.ToolTip = null;
+        UpdateLegacyConfigButtons();
+        try
+        {
+            await _appSettingsStore.SaveAsync(CaptureAppSettings());
+            StatusText.Text = "已取消原版 config.xml；当前设置仍可继续使用";
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "无法保存配置选择", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void ShowLegacyConfigDetails_Click(object sender, RoutedEventArgs e)
@@ -159,17 +209,28 @@ public partial class MainWindow : Window
         try
         {
             _legacyConfig = LegacyEasyPubConfig.Load(path);
+            _useLegacyConfig = true;
             ApplyLegacyConfig(_legacyConfig);
             LegacyConfigStatusText.Text = $"已加载 {_legacyConfig.SourcePath} · 应用 {_legacyConfig.AppliedSettings.Count} 组，待实现 {_legacyConfig.UnsupportedSettings.Count} 组";
             LegacyConfigStatusText.ToolTip = _legacyConfig.SourcePath;
+            UpdateLegacyConfigButtons();
         }
         catch (Exception exception)
         {
             _legacyConfig = null;
             LegacyConfigStatusText.Text = $"配置加载失败：{exception.Message}";
+            LegacyConfigStatusText.ToolTip = null;
+            UpdateLegacyConfigButtons();
             if (showError)
                 MessageBox.Show(this, exception.Message, "无法加载原版配置", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void UpdateLegacyConfigButtons()
+    {
+        var hasConfig = _legacyConfig is not null;
+        ClearLegacyConfigButton.IsEnabled = hasConfig;
+        ShowLegacyConfigDetailsButton.IsEnabled = hasConfig;
     }
 
     private void ApplyLegacyConfig(LegacyConfigImport import)
@@ -189,11 +250,9 @@ public partial class MainWindow : Window
         SelectComboItemByTag(AlignmentCombo, options.TextAlignment.ToString());
         KeepBlankLinesCheck.IsChecked = !options.RemoveBlankLines;
         FullWidthIndentCheck.IsChecked = options.AddFullWidthIndent;
-        var bundledKindleGen = Path.Combine(AppContext.BaseDirectory, "bin", "kindlegen_v2.9.exe");
-        KindleGenText.Text = new[] { options.Mobi.KindleGenPath, bundledKindleGen }
-            .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            ?? options.Mobi.KindleGenPath
-            ?? string.Empty;
+        KindleGenText.Text = KindleGenPathPreference.ResolveForCurrentInstallation(
+            options.Mobi.KindleGenPath,
+            AppContext.BaseDirectory) ?? string.Empty;
         SelectComboItemByTag(CompressionCombo, ((int)options.Mobi.Compression).ToString(CultureInfo.InvariantCulture));
         StripSourceCheck.IsChecked = options.Mobi.StripSourceArchive;
         MobiSyncCheck.IsChecked = options.Mobi.EnableReadingProgressSync;
@@ -257,7 +316,9 @@ public partial class MainWindow : Window
         SelectComboItemByTag(AlignmentCombo, options.TextAlignment.ToString());
         KeepBlankLinesCheck.IsChecked = !options.RemoveBlankLines;
         FullWidthIndentCheck.IsChecked = options.AddFullWidthIndent;
-        KindleGenText.Text = options.Mobi.KindleGenPath ?? string.Empty;
+        KindleGenText.Text = KindleGenPathPreference.ResolveForCurrentInstallation(
+            options.Mobi.KindleGenPath,
+            AppContext.BaseDirectory) ?? string.Empty;
         SelectComboItemByTag(CompressionCombo, ((int)options.Mobi.Compression).ToString(CultureInfo.InvariantCulture));
         StripSourceCheck.IsChecked = options.Mobi.StripSourceArchive;
         MobiSyncCheck.IsChecked = options.Mobi.EnableReadingProgressSync;
@@ -323,7 +384,11 @@ public partial class MainWindow : Window
     private EasyPubAppSettings CaptureAppSettings() => new(
         EmptyToNull(OutputDirectoryText.Text),
         CaptureProfile(),
-        ConversionPresets.ToArray());
+        ConversionPresets.ToArray())
+    {
+        UseLegacyConfig = _useLegacyConfig,
+        LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
+    };
 
     private void ApplyPreset_Click(object sender, RoutedEventArgs e)
     {
@@ -568,8 +633,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-        ? "EasyPub Modern v0.13.0"
-        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.13.0";
+        ? "EasyPub Modern v0.13.1"
+        : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.13.1";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {

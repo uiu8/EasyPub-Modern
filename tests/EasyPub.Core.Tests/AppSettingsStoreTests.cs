@@ -23,7 +23,11 @@ public sealed class AppSettingsStoreTests
         var settings = new EasyPubAppSettings(
             @"D:\电子书",
             profile,
-            [new NamedConversionPreset("Kindle 大字版", profile)]);
+            [new NamedConversionPreset("Kindle 大字版", profile)])
+        {
+            UseLegacyConfig = false,
+            LegacyConfigPath = null,
+        };
 
         try
         {
@@ -34,6 +38,42 @@ public sealed class AppSettingsStoreTests
             Assert.Equal(125, restored.LastProfile.FontSizePercent);
             Assert.Equal(MobiCompression.High, restored.LastProfile.MobiCompression);
             Assert.Equal("Kindle 大字版", Assert.Single(restored.Presets).Name);
+            Assert.False(restored.UseLegacyConfig);
+            Assert.Null(restored.LegacyConfigPath);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Settings_written_before_config_selection_was_added_keep_automatic_config_enabled()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"easypub-old-settings-{Guid.NewGuid():N}");
+        var storagePath = Path.Combine(root, "settings.json");
+        Directory.CreateDirectory(root);
+        try
+        {
+            await File.WriteAllTextAsync(storagePath,
+                """
+                {
+                  "OutputDirectory": null,
+                  "LastProfile": {
+                    "OutputFormat": "epub",
+                    "Author": null,
+                    "Parallelism": 1,
+                    "AdditionalCssFilePath": null,
+                    "Options": {}
+                  },
+                  "Presets": []
+                }
+                """);
+
+            var restored = await new AppSettingsStore(storagePath).LoadAsync();
+
+            Assert.True(restored.UseLegacyConfig);
+            Assert.Null(restored.LegacyConfigPath);
         }
         finally
         {
