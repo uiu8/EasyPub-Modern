@@ -11,7 +11,10 @@ public sealed record ChapterTreeEntry(
     int Level,
     bool IncludeInToc,
     int? TitleLineNumber,
-    IReadOnlyList<ChapterSourceRange> ContentRanges);
+    IReadOnlyList<ChapterSourceRange> ContentRanges)
+{
+    public bool IsFrontMatter { get; init; }
+}
 
 public sealed record ChapterTreePlan(
     string SourceSha256,
@@ -64,6 +67,7 @@ public sealed class ChapterTreeDocument
         {
             if (!string.Equals(existingPlan.SourceSha256, sourceHash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("TXT 内容已发生变化，已保存的章节树不能继续套用，请重新识别。");
+            existingPlan = NormalizeLegacyFrontMatter(existingPlan);
             ValidatePlan(existingPlan, sourceLines.Length);
             return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries);
         }
@@ -94,10 +98,13 @@ public sealed class ChapterTreeDocument
         entries.Add(new ChapterTreeEntry(
             Guid.NewGuid().ToString("N"),
             "序",
-            hierarchyOptions.Enabled ? 1 : 2,
+            2,
             true,
             null,
-            CreateRange(1, firstHeadingLine - 1)));
+            CreateRange(1, firstHeadingLine - 1))
+        {
+            IsFrontMatter = true,
+        });
 
         for (var index = 0; index < headings.Count; index++)
         {
@@ -154,6 +161,8 @@ public sealed class ChapterTreeDocument
                 throw new InvalidDataException("章节标题不能为空或包含换行。");
             if (entry.Level is < 1 or > 4)
                 throw new InvalidDataException($"章节“{entry.Title}”的层级必须在 1–4 之间。");
+            if (entry.IsFrontMatter && entry.Level != 2)
+                throw new InvalidDataException($"前置章节“{entry.Title}”不参与层级，内部目录级别必须保持为 2。");
             if (entry.TitleLineNumber is < 1 || entry.TitleLineNumber > lineCount)
                 throw new InvalidDataException($"章节“{entry.Title}”的标题行超出 TXT 范围。");
             foreach (var range in entry.ContentRanges ?? [])
@@ -182,5 +191,17 @@ public sealed class ChapterTreeDocument
             if (patterns[index].IsMatch(line)) return index + 1;
         }
         return 0;
+    }
+
+    private static ChapterTreePlan NormalizeLegacyFrontMatter(ChapterTreePlan plan)
+    {
+        if (plan.Entries.Count == 0) return plan;
+        var first = plan.Entries[0];
+        if (first.IsFrontMatter || first.TitleLineNumber.HasValue) return plan;
+        var startsAtBeginning = first.ContentRanges.Count == 0 || first.ContentRanges.Min(range => range.StartLine) == 1;
+        if (!startsAtBeginning) return plan;
+        var entries = plan.Entries.ToArray();
+        entries[0] = first with { Level = 2, IsFrontMatter = true };
+        return plan with { Entries = entries };
     }
 }

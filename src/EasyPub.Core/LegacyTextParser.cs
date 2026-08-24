@@ -102,7 +102,7 @@ internal static partial class LegacyTextParser
                 }
             }
             result.Add(new LegacyChapter(
-                entry.Title.Trim(), paragraphs, Math.Clamp(entry.Level, 1, 4), entry.IncludeInToc));
+                entry.Title.Trim(), paragraphs, entry.IsFrontMatter ? 2 : Math.Clamp(entry.Level, 1, 4), entry.IncludeInToc));
         }
         return result;
     }

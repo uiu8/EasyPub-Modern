@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.TocHierarchyWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="层级目录设置 · EasyPub Modern v0.16.0" Width="820" Height="560" MinWidth="700" MinHeight="500"
+        Title="层级目录设置 · EasyPub Modern v0.16.1" Width="820" Height="560" MinWidth="700" MinHeight="500"
         WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
     <Window.Resources>
         <Style TargetType="TextBox"><Setter Property="Padding" Value="9,6"/><Setter Property="MinHeight" Value="36"/><Setter Property="BorderBrush" Value="#D0D7E2"/></Style>

@@ -19,6 +19,8 @@ public sealed class ChapterTreeTests
             var hierarchy = new TocHierarchyOptions { Enabled = true };
             var document = await ChapterTreeDocument.LoadAsync(input, hierarchy: hierarchy);
             Assert.Equal(4, document.Entries.Count);
+            Assert.True(document.Entries[0].IsFrontMatter);
+            Assert.Equal(2, document.Entries[0].Level);
             var edited = new[]
             {
                 document.Entries[0],
@@ -44,6 +46,15 @@ public sealed class ChapterTreeTests
             Assert.DoesNotContain("第一章 雨夜", htmlToc);
             Assert.DoesNotContain("第一章 雨夜", ncx);
             Assert.Contains("第一章 雨夜", lastChapter);
+            var ncxDocument = System.Xml.Linq.XDocument.Parse(ncx);
+            var rootLabels = ncxDocument.Descendants()
+                .Single(element => element.Name.LocalName == "navMap")
+                .Elements()
+                .Where(element => element.Name.LocalName == "navPoint")
+                .Select(element => element.Descendants().First(node => node.Name.LocalName == "text").Value)
+                .ToArray();
+            Assert.Contains("序", rootLabels);
+            Assert.Contains("第一卷 上部", rootLabels);
         }
         finally
         {
@@ -64,6 +75,29 @@ public sealed class ChapterTreeTests
             var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
                 ChapterTreeDocument.LoadAsync(path, existingPlan: plan));
             Assert.Contains("发生变化", exception.Message);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Version_016_front_matter_is_migrated_from_l1_to_a_front_root()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-tree-migrate-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(path, "书籍信息\n第一章 开始\n正文");
+        try
+        {
+            var current = await ChapterTreeDocument.LoadAsync(path);
+            var legacyEntries = current.Entries.ToArray();
+            legacyEntries[0] = legacyEntries[0] with { Level = 1, IsFrontMatter = false };
+            var legacyPlan = current.CreatePlan(current.Entries) with { Entries = legacyEntries };
+
+            var migrated = await ChapterTreeDocument.LoadAsync(path, existingPlan: legacyPlan);
+
+            Assert.True(migrated.Entries[0].IsFrontMatter);
+            Assert.Equal(2, migrated.Entries[0].Level);
         }
         finally
         {

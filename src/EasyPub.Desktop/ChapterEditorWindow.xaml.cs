@@ -64,10 +64,20 @@ public partial class ChapterEditorWindow : Window
     private void Demote_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedNode is null) return;
+        if (_selectedNode.IsFrontMatter)
+        {
+            ShowInfo("前置章节不参与卷、章、节层级，不能降为其他章节的子项。", "前置章节");
+            return;
+        }
         var siblings = Siblings(_selectedNode);
         var index = siblings.IndexOf(_selectedNode);
         if (index <= 0) return;
         var newParent = siblings[index - 1];
+        if (newParent.IsFrontMatter)
+        {
+            ShowInfo("前置章节不能包含普通章节。", "无法降级");
+            return;
+        }
         if (MaxRelativeDepth(_selectedNode) + newParent.Level > 4)
         {
             ShowInfo("降级后会超过四级目录。", "无法降级");
@@ -133,6 +143,7 @@ public partial class ChapterEditorWindow : Window
             Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after))
         {
             Parent = _selectedNode.Parent,
+            IsFrontMatter = _selectedNode.IsFrontMatter,
         };
         var siblings = Siblings(_selectedNode);
         siblings.Insert(siblings.IndexOf(_selectedNode) + 1, newNode);
@@ -188,6 +199,11 @@ public partial class ChapterEditorWindow : Window
         var dragged = (ChapterTreeNode)e.Data.GetData(typeof(ChapterTreeNode))!;
         var target = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext as ChapterTreeNode;
         if (ReferenceEquals(dragged, target) || target is not null && IsDescendant(target, dragged)) return;
+        if (dragged.IsFrontMatter && target is not null || target?.IsFrontMatter == true)
+        {
+            ShowInfo("前置章节必须保持为根节点，且不能包含普通章节。", "无法移动");
+            return;
+        }
         if (target is not null && MaxRelativeDepth(dragged) + target.Level > 4)
         {
             ShowInfo("拖放后会超过四级目录。", "无法移动");
@@ -198,7 +214,7 @@ public partial class ChapterEditorWindow : Window
         {
             Roots.Add(dragged);
             dragged.Parent = null;
-            SetLevelRecursive(dragged, 1);
+            SetLevelRecursive(dragged, dragged.IsFrontMatter ? 2 : 1);
         }
         else
         {
@@ -246,6 +262,12 @@ public partial class ChapterEditorWindow : Window
         foreach (var entry in entries)
         {
             var node = new ChapterTreeNode(entry);
+            if (node.IsFrontMatter)
+            {
+                roots.Add(node);
+                stack.Clear();
+                continue;
+            }
             while (stack.Count > 0 && stack.Peek().Level >= node.Level) stack.Pop();
             if (stack.Count == 0) roots.Add(node);
             else { node.Parent = stack.Peek(); stack.Peek().Children.Add(node); }
@@ -288,18 +310,23 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     {
         Id = entry.Id; _title = entry.Title; _level = entry.Level; _includeInToc = entry.IncludeInToc;
         TitleLineNumber = entry.TitleLineNumber; _contentRanges = entry.ContentRanges ?? [];
+        IsFrontMatter = entry.IsFrontMatter;
     }
     public string Id { get; }
     public int? TitleLineNumber { get; }
+    public bool IsFrontMatter { get; set; }
     public ChapterTreeNode? Parent { get; set; }
     public ObservableCollection<ChapterTreeNode> Children { get; } = [];
     public string Title { get => _title; set => SetField(ref _title, value); }
     public int Level { get => _level; set { if (SetField(ref _level, value)) OnPropertyChanged(nameof(LevelLabel)); } }
     public bool IncludeInToc { get => _includeInToc; set => SetField(ref _includeInToc, value); }
     public IReadOnlyList<ChapterSourceRange> ContentRanges { get => _contentRanges; set => _contentRanges = value; }
-    public string LevelLabel => $"L{Level}";
+    public string LevelLabel => IsFrontMatter ? "前置" : $"L{Level}";
     public string LineCountLabel => $"{ContentRanges.Sum(range => range.EndLine - range.StartLine + 1)} 行";
-    public ChapterTreeEntry ToEntry() => new(Id, Title, Level, IncludeInToc, TitleLineNumber, ContentRanges);
+    public ChapterTreeEntry ToEntry() => new(Id, Title, Level, IncludeInToc, TitleLineNumber, ContentRanges)
+    {
+        IsFrontMatter = IsFrontMatter,
+    };
     public void NotifyLineCount() => OnPropertyChanged(nameof(LineCountLabel));
     public event PropertyChangedEventHandler? PropertyChanged;
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
