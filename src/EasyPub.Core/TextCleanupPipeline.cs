@@ -21,6 +21,8 @@ public static partial class TextCleanupPipeline
 {
     internal const string RemovedLine = "\u001fEasyPubRemovedLine";
 
+    public static bool IsRemovedLine(string line) => line == RemovedLine;
+
     public static TextCleanupPreview Apply(string text, TextCleanupOptions? options)
     {
         options ??= new TextCleanupOptions();

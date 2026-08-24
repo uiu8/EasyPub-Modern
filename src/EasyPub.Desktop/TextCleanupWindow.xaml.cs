@@ -8,6 +8,7 @@ public partial class TextCleanupWindow : Window
 {
     private readonly string _sourceText;
     private readonly TextCleanupOptions _initial;
+    private TextCleanupPreview? _preview;
     private bool _loaded;
 
     private TextCleanupWindow(string inputPath, string sourceText, TextCleanupOptions initial)
@@ -61,12 +62,33 @@ public partial class TextCleanupWindow : Window
     {
         if (!_loaded) return;
         Result = CaptureOptions();
-        var preview = TextCleanupPipeline.Apply(_sourceText, Result);
-        ChangesGrid.ItemsSource = preview.Changes.Take(500).ToArray();
-        ChangeSummaryText.Text = preview.Changes.Count == 0
+        _preview = TextCleanupPipeline.Apply(_sourceText, Result);
+        ChangesGrid.ItemsSource = _preview.Changes;
+        ChangesGrid.SelectedItem = null;
+        ChangeSummaryText.Text = _preview.Changes.Count == 0
             ? "没有检测到需要修改的内容"
-            : $"检测到 {preview.Changes.Count} 处变化" + (preview.Changes.Count > 500 ? "（列表显示前 500 处）" : string.Empty);
-        PreviewText.Text = preview.Text.Length > 120_000 ? preview.Text[..120_000] + "\r\n\r\n……预览已截断……" : preview.Text;
+            : $"检测到 {_preview.Changes.Count} 处变化 · 点击记录定位正文";
+        ShowPreview(TextCleanupPreviewNavigator.Create(_preview));
+    }
+
+    private void ChangesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded || _preview is null || ChangesGrid.SelectedItem is not TextCleanupChange change) return;
+        ShowPreview(TextCleanupPreviewNavigator.Create(_preview, change));
+    }
+
+    private void ShowPreview(TextCleanupPreviewView view)
+    {
+        PreviewText.Text = view.Text;
+        PreviewLocationText.Text = view.LocationText;
+        if (view.SelectionLength <= 0) return;
+
+        PreviewText.Focus();
+        PreviewText.Select(
+            Math.Clamp(view.SelectionStart, 0, PreviewText.Text.Length),
+            Math.Clamp(view.SelectionLength, 0, Math.Max(0, PreviewText.Text.Length - view.SelectionStart)));
+        var line = PreviewText.GetLineIndexFromCharacterIndex(PreviewText.SelectionStart);
+        if (line >= 0) PreviewText.ScrollToLine(line);
     }
 
     private void Option_Click(object sender, RoutedEventArgs e) => RefreshPreview();

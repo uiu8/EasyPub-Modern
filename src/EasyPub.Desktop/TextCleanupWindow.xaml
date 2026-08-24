@@ -31,15 +31,22 @@
             <Border Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="10">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <TextBlock x:Name="ChangeSummaryText" Text="尚未选择清理规则" FontWeight="SemiBold" Foreground="#344054"/>
-                    <DataGrid x:Name="ChangesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0">
+                    <DataGrid x:Name="ChangesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0"
+                              SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="ChangesGrid_SelectionChanged"
+                              AutomationProperties.Name="文本清理修改记录，选择一项可定位正文">
                         <DataGrid.Columns><DataGridTextColumn Header="行" Binding="{Binding LineNumber}" Width="52"/><DataGridTextColumn Header="规则" Binding="{Binding Rule}" Width="140"/><DataGridTextColumn Header="修改前" Binding="{Binding Before}" Width="2*"/><DataGridTextColumn Header="修改后" Binding="{Binding After}" Width="2*"/></DataGrid.Columns>
                     </DataGrid>
                 </Grid>
             </Border>
             <Border Grid.Column="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="10">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <TextBlock Text="处理后正文预览（只读）" FontWeight="SemiBold" Foreground="#344054"/>
-                    <TextBox x:Name="PreviewText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" FontFamily="Microsoft YaHei UI"/>
+                    <StackPanel>
+                        <TextBlock Text="处理后正文预览（只读）" FontWeight="SemiBold" Foreground="#344054"/>
+                        <TextBlock x:Name="PreviewLocationText" Margin="0,3,0,0" Foreground="#2563EB" TextWrapping="Wrap"
+                                   Text="点击左侧修改记录，可定位并高亮对应正文"/>
+                    </StackPanel>
+                    <TextBox x:Name="PreviewText" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" FontFamily="Microsoft YaHei UI"
+                             IsInactiveSelectionHighlightEnabled="True" AutomationProperties.Name="处理后正文定位预览"/>
                 </Grid>
             </Border>
         </Grid>
