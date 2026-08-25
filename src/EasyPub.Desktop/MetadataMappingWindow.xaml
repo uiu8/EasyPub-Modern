@@ -18,22 +18,20 @@
         </Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="文件夹元数据映射" FontSize="25" FontWeight="SemiBold" Foreground="#172033"/>
-            <TextBlock Text="从规则文件夹或其子文件夹导入 TXT / EPUB 时，自动写入逐书元数据；子文件夹的规则优先。" Margin="0,4,0,0" Foreground="#667085"/>
+            <TextBlock Text="从规则文件夹或其子文件夹导入 TXT / EPUB 时，自动写入逐书元数据；每个已定义的自定义字段都会直接成为可编辑列。" Margin="0,4,0,0" Foreground="#667085" TextWrapping="Wrap"/>
         </StackPanel>
         <Border Grid.Row="2" Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="10" Padding="12">
             <TextBlock Text="示例：文件夹 D:\小说\起点 → 出版社“起点”。之后从该目录添加的每一本书都会自动带上此出版社。" Foreground="#1D4ED8" TextWrapping="Wrap"/>
         </Border>
         <Border Grid.Row="4" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="10">
-            <DataGrid x:Name="RulesGrid" ItemsSource="{Binding Rules}" AutoGenerateColumns="False" CanUserAddRows="False"
-                      IsReadOnly="True" SelectionMode="Single" GridLinesVisibility="Horizontal" BorderThickness="0"
-                      MouseDoubleClick="RulesGrid_MouseDoubleClick">
+            <DataGrid x:Name="RulesGrid" ItemsSource="{Binding RuleRows}" AutoGenerateColumns="False" CanUserAddRows="False"
+                      SelectionMode="Single" GridLinesVisibility="Horizontal" BorderThickness="0">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="来源文件夹" Binding="{Binding FolderPath}" Width="*"/>
-                    <DataGridTextColumn Header="作者" Binding="{Binding Metadata.Author}" Width="120"/>
-                    <DataGridTextColumn Header="出版社" Binding="{Binding Metadata.Publisher}" Width="140"/>
-                    <DataGridTextColumn Header="类别" Binding="{Binding Metadata.Category}" Width="110"/>
-                    <DataGridTextColumn Header="自定义列" Binding="{Binding Metadata.CustomMetadataSummary}" Width="160"/>
-                    <DataGridTextColumn Header="语言" Binding="{Binding Metadata.Language}" Width="90"/>
+                    <DataGridTextColumn Header="来源文件夹" Binding="{Binding FolderPath}" IsReadOnly="True" Width="*"/>
+                    <DataGridTextColumn Header="作者" Binding="{Binding Metadata.Author}" IsReadOnly="True" Width="120"/>
+                    <DataGridTextColumn Header="出版社" Binding="{Binding Metadata.Publisher}" IsReadOnly="True" Width="140"/>
+                    <DataGridTextColumn Header="类别" Binding="{Binding Metadata.Category}" IsReadOnly="True" Width="110"/>
+                    <DataGridTextColumn Header="语言" Binding="{Binding Metadata.Language}" IsReadOnly="True" Width="90"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Border>

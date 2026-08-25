@@ -5,7 +5,7 @@
         WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
     <Grid Margin="22">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel><TextBlock Text="批量逐书信息" FontSize="25" FontWeight="SemiBold" Foreground="#172033"/><TextBlock Text="这里会显示文件夹映射结果；保存后按逐书手动值处理，不再随规则变化。" Margin="0,4,0,0" Foreground="#667085"/></StackPanel>
+        <StackPanel><TextBlock Text="逐书填写书籍信息" FontSize="25" FontWeight="SemiBold" Foreground="#172033"/><TextBlock Text="每个已定义的 Calibre 字段都会直接成为一列；每本书可填写不同的值。保存后按逐书手动值处理，不再随规则变化。" Margin="0,4,0,0" Foreground="#667085" TextWrapping="Wrap"/></StackPanel>
         <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="10" Padding="12">
             <DockPanel>
                 <Button Content="应用到全部" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="14,7" Click="ApplyAuthorToAll_Click"/>
@@ -22,9 +22,6 @@
                     <DataGridTextColumn Header="出版社" Binding="{Binding Publisher, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
                     <DataGridTextColumn Header="类别" Binding="{Binding Category, UpdateSourceTrigger=PropertyChanged}" Width="100"/>
                     <DataGridTextColumn Header="语言" Binding="{Binding Language, UpdateSourceTrigger=PropertyChanged}" Width="90"/>
-                    <DataGridTemplateColumn Header="Calibre 自定义列" Width="135">
-                        <DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="{Binding CustomMetadataLabel}" Tag="{Binding}" Click="EditCustomMetadata_Click" Padding="8,4"/></DataTemplate></DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
                     <DataGridTextColumn Header="来源" Binding="{Binding MetadataSource}" IsReadOnly="True" Width="110"/>
                     <DataGridTextColumn Header="封面" Binding="{Binding CoverState}" IsReadOnly="True" Width="80"/>
                 </DataGrid.Columns>

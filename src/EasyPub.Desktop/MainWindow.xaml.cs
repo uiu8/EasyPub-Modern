@@ -692,8 +692,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.21.1"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.1";
+            ? "EasyPub Modern v0.21.2"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.2";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -775,12 +775,18 @@ public partial class MainWindow : Window
         if (CustomMetadataStatusText is null) return;
         var assignedCount = _customMetadata.Count(item => item.HasValue);
         CustomMetadataStatusText.Text = _customMetadata.Count == 0
-            ? "未设置统一自定义元数据"
-            : $"自定义字段：{_customMetadata.Count} 项；统一值：{assignedCount} 项";
+            ? "尚未定义自定义字段"
+            : $"字段：{string.Join("、", _customMetadata.Select(item => item.DisplayHeading))}；统一值 {assignedCount} 项";
         CustomMetadataStatusText.ToolTip = _customMetadata.Count == 0
             ? null
             : string.Join(Environment.NewLine, _customMetadata.Select(item =>
                 $"{item.CalibreLookupName}（{item.DisplayHeading}）：{(item.HasValue ? item.Value : "未填写统一值")}"));
+        if (EditPerBookMetadataButton is not null)
+        {
+            EditPerBookMetadataButton.ToolTip = _customMetadata.Count == 0
+                ? "添加书稿后，可逐书填写标题、作者、出版社等信息。"
+                : $"打开逐书表格并直接填写：{string.Join("、", _customMetadata.Select(item => item.DisplayHeading))}";
+        }
     }
 
     private async void EditMetadataMappings_Click(object sender, RoutedEventArgs e)

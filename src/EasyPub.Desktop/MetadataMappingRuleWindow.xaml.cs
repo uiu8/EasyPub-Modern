@@ -7,17 +7,22 @@ namespace EasyPub.Desktop;
 
 public partial class MetadataMappingRuleWindow : Window
 {
-    private IReadOnlyList<CalibreCustomMetadata> _customMetadata = [];
+    private readonly CustomMetadataValueBag _customMetadataValues;
 
     public MetadataMappingRuleWindow(
         FolderMetadataRule? existing,
         IReadOnlyList<CalibreCustomMetadata>? customMetadataDefinitions = null)
     {
         InitializeComponent();
-        _customMetadata = CalibreCustomMetadata.PrepareAssignments(
+        var prepared = CalibreCustomMetadata.PrepareAssignments(
             customMetadataDefinitions,
             existing?.Metadata.CustomMetadata);
-        UpdateCustomMetadataSummary();
+        var definitions = prepared.Select(item => item with { Value = string.Empty }).ToArray();
+        _customMetadataValues = new CustomMetadataValueBag(definitions, prepared);
+        CustomMetadataFieldsItems.ItemsSource = definitions
+            .Select(item => new CustomMetadataFieldEditRow(item, _customMetadataValues))
+            .ToArray();
+        CustomMetadataEmptyText.Visibility = definitions.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (existing is null) return;
         FolderPathText.Text = existing.FolderPath;
         AuthorText.Text = existing.Metadata.Author ?? string.Empty;
@@ -66,7 +71,7 @@ public partial class MetadataMappingRuleWindow : Window
                 : null,
             Language = EmptyToNull(LanguageCombo.Text),
             Description = EmptyToNull(DescriptionText.Text),
-            CustomMetadata = _customMetadata.Where(item => item.HasValue).ToArray(),
+            CustomMetadata = _customMetadataValues.ToMetadata(),
         };
         if (metadata.IsEmpty)
         {
@@ -79,25 +84,6 @@ public partial class MetadataMappingRuleWindow : Window
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
-
-    private void EditCustomMetadata_Click(object sender, RoutedEventArgs e)
-    {
-        var editor = new CustomMetadataWindow(_customMetadata) { Owner = this };
-        if (editor.ShowDialog() != true) return;
-        _customMetadata = editor.Metadata;
-        UpdateCustomMetadataSummary();
-    }
-
-    private void UpdateCustomMetadataSummary()
-    {
-        if (CustomMetadataSummaryText is null) return;
-        var assigned = _customMetadata.Where(item => item.HasValue).ToArray();
-        CustomMetadataSummaryText.Text = assigned.Length == 0
-            ? _customMetadata.Count == 0
-                ? "尚未定义自定义字段"
-                : $"可填写 {_customMetadata.Count} 个已定义字段；当前规则均留空"
-            : $"当前规则已填写 {assigned.Length} 项：{string.Join("、", assigned.Select(item => item.DisplayHeading))}";
-    }
 
     private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

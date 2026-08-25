@@ -33,7 +33,27 @@
                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <StackPanel><TextBlock Style="{StaticResource Label}" Text="简介"/><TextBox x:Name="DescriptionText" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/></StackPanel>
                     <Border Grid.Row="2" Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="8" Padding="10">
-                    <DockPanel><Button Content="填写自定义元数据" DockPanel.Dock="Right" Margin="10,0,0,0" Click="EditCustomMetadata_Click"/><StackPanel VerticalAlignment="Center"><TextBlock Text="Calibre 自定义列" Foreground="#1D4ED8" FontWeight="SemiBold"/><TextBlock x:Name="CustomMetadataSummaryText" Text="当前规则尚未填写自定义值" Foreground="#667085" FontSize="11"/></StackPanel></DockPanel>
+                        <StackPanel>
+                            <TextBlock Text="按此文件夹填写自定义元数据" Foreground="#1D4ED8" FontWeight="SemiBold"/>
+                            <TextBlock Text="这里直接显示已经定义的字段；留空表示本规则不覆盖统一值。" Foreground="#667085" FontSize="11" Margin="0,3,0,8"/>
+                            <TextBlock x:Name="CustomMetadataEmptyText" Text="尚未定义自定义字段；请先在主窗口“书籍信息”中添加字段。" Foreground="#667085"/>
+                            <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="CustomMetadataFieldsItems">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="210"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayHeading}" FontWeight="SemiBold" Foreground="#334155"/>
+                                                    <TextBlock Text="{Binding LookupName}" Foreground="#667085" FontSize="10"/>
+                                                </StackPanel>
+                                                <TextBox Grid.Column="1" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
                     </Border>
                 </Grid>
             </Grid>
