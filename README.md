@@ -2,20 +2,22 @@
 
 # EasyPub Modern
 
+<img src="assets/branding/easypub-modern-icon-1024.png" alt="EasyPub Modern 图标" width="112">
+
 面向中文小说与 Kindle 用户的现代化 Windows 批量电子书转换器。
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v0.22.2-2563EB?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.2)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.0.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载最新版](https://github.com/uiu8/EasyPub-Modern/releases/download/v0.22.2/EasyPubModern-v0.22.2-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.2)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.0.0/EasyPubModern-Setup-v1.0.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.0.0/EasyPubModern-v1.0.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0)
 
 </div>
 
-![EasyPub Modern v0.22.2 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.0.0 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -36,8 +38,8 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.2) 下载并解压 Windows x64 压缩包。
-2. 运行 `EasyPub.Desktop.exe`。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0) 下载正式安装包；无需安装时也可以选择便携版。
+2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
 5. 点击“检查问题”，确认无阻断问题后开始批量转换。
@@ -59,10 +61,13 @@
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v0.22.2 重点调整
+## v1.0.0 正式版
 
-- 修正 KindleGen 联合 MOBI 的封面验收：原版兼容流程会把封面写入首图记录而不一定生成 EXTH 201，现可正确识别，不再把 Kindle 和 Calibre 能正常显示的封面误报为缺失。
-- 验收会核对 MOBI 图片记录与所选封面内容，避免把普通正文插图误判为封面。
+- 全新黑白品牌图标覆盖程序、窗口、任务栏、安装程序、卸载程序和快捷方式。
+- 提供 Windows x64 离线安装包，默认安装到 `D:\software\EasyPub Modern`，并提供开始菜单与可选桌面快捷方式。
+- 便携版改为压缩的自包含单文件发布，目录只保留主程序、兼容配置与 KindleGen 工具，显著减少散乱的运行库文件。
+- 保留完整 .NET 10 与 WPF 运行环境，不要求用户预装运行库，也不采用风险较高的 WPF 激进裁剪。
+- 修正 KindleGen 联合 MOBI 的首图封面验收误报，并核对图片记录与用户所选封面内容。
 
 - 书稿列表直接显示每本书的封面缩略图，切换小说时更容易确认封面是否对应。
 - 所选小说的右侧卡片始终保留竖版封面预览；点击可查看大图，向卡片拖入 JPG、PNG 或 WebP 可直接替换。
@@ -147,4 +152,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v0.22.2**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v1.0.0**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

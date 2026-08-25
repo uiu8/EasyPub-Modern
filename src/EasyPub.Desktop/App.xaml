@@ -4,6 +4,9 @@
              xmlns:local="clr-namespace:EasyPub.Desktop"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <Style TargetType="Window">
+            <Setter Property="Icon" Value="/Assets/EasyPubModern.ico"/>
+        </Style>
         <Style TargetType="Button">
             <Setter Property="Padding" Value="13,7"/>
             <Setter Property="MinHeight" Value="36"/>
