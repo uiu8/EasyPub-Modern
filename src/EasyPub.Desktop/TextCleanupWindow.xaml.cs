@@ -9,6 +9,8 @@ public partial class TextCleanupWindow : Window
     private readonly string _sourceText;
     private readonly TextCleanupOptions _initial;
     private TextCleanupPreview? _preview;
+    private IReadOnlyList<TextCleanupChangeRow> _allRows = [];
+    private readonly HashSet<string> _excludedKeys = new(StringComparer.Ordinal);
     private bool _loaded;
 
     private TextCleanupWindow(string inputPath, string sourceText, TextCleanupOptions initial)
@@ -19,6 +21,8 @@ public partial class TextCleanupWindow : Window
         Result = initial;
         BookPathText.Text = inputPath;
         ApplyOptions(initial);
+        ChangeRuleFilterCombo.Items.Add("全部规则");
+        ChangeRuleFilterCombo.SelectedIndex = 0;
         _loaded = true;
         RefreshPreview();
     }
@@ -44,6 +48,7 @@ public partial class TextCleanupWindow : Window
         RemoveSiteNotices = NoticeCheck.IsChecked == true,
         NormalizePunctuation = PunctuationCheck.IsChecked == true,
         ChineseVariant = Enum.Parse<ChineseVariantConversion>(((ComboBoxItem)ChineseVariantCombo.SelectedItem).Tag!.ToString()!),
+        ExcludedChangeKeys = _excludedKeys.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
     };
 
     private void ApplyOptions(TextCleanupOptions options)
@@ -54,6 +59,8 @@ public partial class TextCleanupWindow : Window
         ChapterCheck.IsChecked = options.NormalizeChapterNumbers;
         NoticeCheck.IsChecked = options.RemoveSiteNotices;
         PunctuationCheck.IsChecked = options.NormalizePunctuation;
+        _excludedKeys.Clear();
+        foreach (var key in options.ExcludedChangeKeys ?? []) _excludedKeys.Add(key);
         ChineseVariantCombo.SelectedItem = ChineseVariantCombo.Items.OfType<ComboBoxItem>()
             .First(item => string.Equals(item.Tag?.ToString(), options.ChineseVariant.ToString(), StringComparison.Ordinal));
     }
@@ -63,18 +70,26 @@ public partial class TextCleanupWindow : Window
         if (!_loaded) return;
         Result = CaptureOptions();
         _preview = TextCleanupPipeline.Apply(_sourceText, Result);
-        ChangesGrid.ItemsSource = _preview.Changes;
+        _allRows = _preview.Changes.Select(change => new TextCleanupChangeRow(change)).ToArray();
+        var selectedRule = ChangeRuleFilterCombo.SelectedItem?.ToString() ?? "全部规则";
+        var rules = _preview.Changes.Select(change => change.Rule).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.CurrentCulture).ToArray();
+        ChangeRuleFilterCombo.Items.Clear();
+        ChangeRuleFilterCombo.Items.Add("全部规则");
+        foreach (var rule in rules) ChangeRuleFilterCombo.Items.Add(rule);
+        ChangeRuleFilterCombo.SelectedItem = ChangeRuleFilterCombo.Items.Cast<object>().Any(item => Equals(item, selectedRule)) ? selectedRule : "全部规则";
+        ApplyChangeFilter();
         ChangesGrid.SelectedItem = null;
+        var applied = _preview.Changes.Count(change => change.IsApplied);
         ChangeSummaryText.Text = _preview.Changes.Count == 0
             ? "没有检测到需要修改的内容"
-            : $"检测到 {_preview.Changes.Count} 处变化 · 点击记录定位正文";
+            : $"检测到 {_preview.Changes.Count} 处 · 采用 {applied} · 排除 {_preview.Changes.Count - applied}";
         ShowPreview(TextCleanupPreviewNavigator.Create(_preview));
     }
 
     private void ChangesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_loaded || _preview is null || ChangesGrid.SelectedItem is not TextCleanupChange change) return;
-        ShowPreview(TextCleanupPreviewNavigator.Create(_preview, change));
+        if (!_loaded || _preview is null || ChangesGrid.SelectedItem is not TextCleanupChangeRow row) return;
+        ShowPreview(TextCleanupPreviewNavigator.Create(_preview, row.Change));
     }
 
     private void ShowPreview(TextCleanupPreviewView view)
@@ -93,8 +108,36 @@ public partial class TextCleanupWindow : Window
 
     private void Option_Click(object sender, RoutedEventArgs e) => RefreshPreview();
     private void ChineseVariantCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshPreview();
+    private void ChangeFilter_Changed(object sender, RoutedEventArgs e) { if (_loaded) ApplyChangeFilter(); }
+    private void ToggleChange_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string key }) return;
+        if (!_excludedKeys.Add(key)) _excludedKeys.Remove(key);
+        RefreshPreview();
+    }
+
+    private void ApplyChangeFilter()
+    {
+        var rule = ChangeRuleFilterCombo.SelectedItem?.ToString();
+        var search = ChangeSearchText.Text.Trim();
+        ChangesGrid.ItemsSource = _allRows.Where(row =>
+            (string.IsNullOrWhiteSpace(rule) || rule == "全部规则" || string.Equals(row.Rule, rule, StringComparison.Ordinal)) &&
+            (search.Length == 0 || row.Rule.Contains(search, StringComparison.CurrentCultureIgnoreCase) || row.Before.Contains(search, StringComparison.CurrentCultureIgnoreCase) || row.After.Contains(search, StringComparison.CurrentCultureIgnoreCase))).ToArray();
+    }
     private void Undo_Click(object sender, RoutedEventArgs e) { ApplyOptions(_initial); RefreshPreview(); }
     private void Clear_Click(object sender, RoutedEventArgs e) { ApplyOptions(new TextCleanupOptions()); RefreshPreview(); }
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
     private void Apply_Click(object sender, RoutedEventArgs e) { Result = CaptureOptions(); DialogResult = true; }
+}
+
+public sealed class TextCleanupChangeRow(TextCleanupChange change)
+{
+    public TextCleanupChange Change { get; } = change;
+    public string Key => Change.Key;
+    public int LineNumber => Change.LineNumber;
+    public string Rule => Change.Rule;
+    public string Before => Change.Before;
+    public string After => Change.After;
+    public string ToggleLabel => Change.IsApplied ? "排除" : "恢复";
+    public string AccessibleToggleLabel => Change.IsApplied ? $"排除第 {LineNumber} 行的{Rule}" : $"恢复第 {LineNumber} 行的{Rule}";
 }

@@ -45,6 +45,52 @@ public sealed class TaskCenterViewModelTests
     }
 
     [Fact]
+    public void Unified_task_center_exposes_current_tasks_preflight_and_history()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            TaskCenterWindow? window = null;
+            try
+            {
+                var task = new BookTaskViewModel(@"C:\books\demo.txt", @"C:\out\demo.mobi");
+                var preflight = new ConversionPreflightReport(
+                    [new ConversionPreflightBook(@"C:\books\demo.txt", 1)],
+                    [new ConversionPreflightIssue(@"C:\books\demo.txt", PreflightSeverity.Warning, "cover", "需要封面。", PreflightTargetKind.Cover)]);
+                var history = new[]
+                {
+                    new ConversionHistoryEntry(Guid.NewGuid(), DateTimeOffset.Now, task.InputPath, task.OutputPath, false, null, null, null, "测试失败"),
+                };
+                window = new TaskCenterWindow(new ObservableCollection<BookTaskViewModel> { task }, history, preflight)
+                {
+                    ShowInTaskbar = false,
+                    WindowStyle = WindowStyle.None,
+                    Opacity = 0,
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                Assert.Single(window.Tasks);
+                Assert.Single(window.PreflightRows);
+                Assert.Single(window.HistoryRows);
+                Assert.Equal(3, ((System.Windows.Controls.TabControl)window.FindName("WorkflowTabs")).Items.Count);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                window?.Close();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "统一任务中心窗口测试超时。");
+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    [Fact]
     public void Validation_report_updates_task_status_issues_and_retry_state()
     {
         var task = new BookTaskViewModel(@"C:\books\demo.txt", @"C:\out\demo.mobi");

@@ -74,7 +74,7 @@ public sealed class MainWindowLayoutTests
                         Assert.True(
                             validationBounds.Bottom <= advancedBounds.Bottom + 1,
                             $"窗口宽度 {width:F0} 时结构验收行超出高级页：ValidationBottom={validationBounds.Bottom:F1}, ContentBottom={advancedBounds.Bottom:F1}");
-                        Assert.Equal(width < 980 ? "任务" : "任务与验收", taskCenterButton.Content);
+                        Assert.Equal(width < 980 ? "任务" : "任务中心", taskCenterButton.Content);
                     }
 
                     var modernMode = Assert.IsType<RadioButton>(window.FindName("ModernModeRadio"));
@@ -94,6 +94,14 @@ public sealed class MainWindowLayoutTests
                     Assert.Contains("●", layoutTab.Header?.ToString());
 
                     var filesList = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                    Assert.IsType<TextBox>(window.FindName("BookSearchText"));
+                    Assert.IsType<ComboBox>(window.FindName("BookFilterCombo"));
+                    Assert.IsType<ComboBox>(window.FindName("BookSortCombo"));
+                    Assert.IsType<Button>(window.FindName("QuickChapterButton"));
+                    Assert.IsType<Button>(window.FindName("QuickCleanupButton"));
+                    Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
+                    Assert.IsType<Button>(window.FindName("QuickIllustrationButton"));
+                    Assert.IsType<Button>(window.FindName("QuickPreviewButton"));
                     Assert.Equal(ScrollBarVisibility.Disabled, ScrollViewer.GetHorizontalScrollBarVisibility(filesList));
                     var selectedSummary = Assert.IsType<TextBlock>(window.FindName("SelectedBookSummaryText"));
                     var book = new InputBookItem(inputPath);

@@ -53,6 +53,7 @@ public sealed record TextCleanupOptions
     public bool RemoveSiteNotices { get; init; }
     public ChineseVariantConversion ChineseVariant { get; init; }
     public bool NormalizePunctuation { get; init; }
+    public IReadOnlyList<string> ExcludedChangeKeys { get; init; } = [];
 
     public bool Enabled => CollapseBlankLines || RepairHardWraps || NormalizeFullWidthSpaces
         || NormalizeChapterNumbers || RemoveSiteNotices

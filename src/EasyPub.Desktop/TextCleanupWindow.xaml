@@ -29,12 +29,25 @@
         <Grid Grid.Row="4">
             <Grid.ColumnDefinitions><ColumnDefinition Width="5*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="4*"/></Grid.ColumnDefinitions>
             <Border Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="10">
-                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <TextBlock x:Name="ChangeSummaryText" Text="尚未选择清理规则" FontWeight="SemiBold" Foreground="#344054"/>
-                    <DataGrid x:Name="ChangesGrid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0"
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <ComboBox x:Name="ChangeRuleFilterCombo" Width="145" Margin="0,0,8,0" SelectionChanged="ChangeFilter_Changed" AutomationProperties.Name="按清理规则筛选"/>
+                            <TextBox x:Name="ChangeSearchText" Width="170" Padding="8,5" TextChanged="ChangeFilter_Changed" ToolTip="搜索修改前、修改后或规则" AutomationProperties.Name="搜索清理修改"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ChangeSummaryText" Text="尚未选择清理规则" FontWeight="SemiBold" Foreground="#344054" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <TextBlock Grid.Row="2" Text="每一项都可单独排除；排除只影响本项目转换，不修改原始 TXT。" Foreground="#667085" FontSize="11"/>
+                    <DataGrid x:Name="ChangesGrid" Grid.Row="4" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0"
                               SelectionMode="Single" SelectionUnit="FullRow" SelectionChanged="ChangesGrid_SelectionChanged"
                               AutomationProperties.Name="文本清理修改记录，选择一项可定位正文">
-                        <DataGrid.Columns><DataGridTextColumn Header="行" Binding="{Binding LineNumber}" Width="52"/><DataGridTextColumn Header="规则" Binding="{Binding Rule}" Width="140"/><DataGridTextColumn Header="修改前" Binding="{Binding Before}" Width="2*"/><DataGridTextColumn Header="修改后" Binding="{Binding After}" Width="2*"/></DataGrid.Columns>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="采用" Width="72"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="{Binding ToggleLabel}" Tag="{Binding Key}" Click="ToggleChange_Click" Padding="7,3" Margin="2" AutomationProperties.Name="{Binding AccessibleToggleLabel}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTextColumn Header="行" Binding="{Binding LineNumber}" Width="48"/>
+                            <DataGridTextColumn Header="规则" Binding="{Binding Rule}" Width="130"/>
+                            <DataGridTextColumn Header="修改前" Binding="{Binding Before}" Width="2*"/>
+                            <DataGridTextColumn Header="修改后" Binding="{Binding After}" Width="2*"/>
+                        </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
             </Border>

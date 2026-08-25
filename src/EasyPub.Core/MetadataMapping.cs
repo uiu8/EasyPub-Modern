@@ -27,6 +27,17 @@ public sealed record BookMetadataOverrides
 
 public sealed record FolderMetadataRule(string FolderPath, BookMetadataOverrides Metadata);
 
+public sealed record MetadataMappingPreview(
+    string InputPath,
+    string BookName,
+    FolderMetadataRule? MatchedRule,
+    int CandidateCount,
+    string AppliedValues,
+    string Resolution)
+{
+    public bool HasOverlap => CandidateCount > 1;
+}
+
 public static class MetadataMappingResolver
 {
     public static FolderMetadataRule? Match(
@@ -63,6 +74,39 @@ public static class MetadataMappingResolver
         };
     }
 
+    public static IReadOnlyList<MetadataMappingPreview> Preview(
+        IEnumerable<string> inputPaths,
+        IEnumerable<FolderMetadataRule> rules)
+    {
+        ArgumentNullException.ThrowIfNull(inputPaths);
+        ArgumentNullException.ThrowIfNull(rules);
+        var normalizedRules = rules
+            .Where(rule => !string.IsNullOrWhiteSpace(rule.FolderPath))
+            .Select(rule => rule with { FolderPath = NormalizeFolder(rule.FolderPath) })
+            .ToArray();
+
+        return inputPaths.Select(path =>
+        {
+            var fullPath = Path.GetFullPath(path);
+            var candidates = normalizedRules
+                .Where(rule => ContainsFile(rule.FolderPath, fullPath))
+                .OrderByDescending(rule => rule.FolderPath.Length)
+                .ToArray();
+            var winner = candidates.FirstOrDefault();
+            return new MetadataMappingPreview(
+                fullPath,
+                Path.GetFileName(fullPath),
+                winner,
+                candidates.Length,
+                winner is null ? "—" : Describe(winner.Metadata),
+                winner is null
+                    ? "未命中规则"
+                    : candidates.Length == 1
+                        ? "命中 1 条规则"
+                        : $"命中 {candidates.Length} 条，已采用最具体的子文件夹规则");
+        }).ToArray();
+    }
+
     public static string NormalizeFolder(string folderPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -80,4 +124,16 @@ public static class MetadataMappingResolver
 
     private static string? Prefer(string? preferred, string? fallback) =>
         string.IsNullOrWhiteSpace(preferred) ? fallback : preferred.Trim();
+
+    private static string Describe(BookMetadataOverrides metadata)
+    {
+        var values = new List<string>();
+        if (!string.IsNullOrWhiteSpace(metadata.Author)) values.Add($"作者={metadata.Author}");
+        if (!string.IsNullOrWhiteSpace(metadata.Publisher)) values.Add($"出版社={metadata.Publisher}");
+        if (!string.IsNullOrWhiteSpace(metadata.Category)) values.Add($"类别={metadata.Category}");
+        if (!string.IsNullOrWhiteSpace(metadata.Language)) values.Add($"语言={metadata.Language}");
+        if (!string.IsNullOrWhiteSpace(metadata.Isbn)) values.Add($"ISBN={metadata.Isbn}");
+        if (metadata.PublicationDate is not null) values.Add($"日期={metadata.PublicationDate:yyyy-MM-dd}");
+        return values.Count == 0 ? "其他标准书籍信息" : string.Join(" · ", values);
+    }
 }

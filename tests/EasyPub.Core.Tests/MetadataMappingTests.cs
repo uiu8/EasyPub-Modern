@@ -25,6 +25,25 @@ public sealed class MetadataMappingTests
     }
 
     [Fact]
+    public void Preview_explains_overlapping_rules_and_the_effective_values()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"easypub-map-preview-{Guid.NewGuid():N}");
+        var child = Path.Combine(root, "起点");
+        var input = Path.Combine(child, "小说.txt");
+
+        var preview = Assert.Single(MetadataMappingResolver.Preview([input], [
+            new FolderMetadataRule(root, new BookMetadataOverrides { Publisher = "通用" }),
+            new FolderMetadataRule(child, new BookMetadataOverrides { Publisher = "起点", Category = "网文" }),
+        ]));
+
+        Assert.True(preview.HasOverlap);
+        Assert.Equal(2, preview.CandidateCount);
+        Assert.Equal(MetadataMappingResolver.NormalizeFolder(child), preview.MatchedRule!.FolderPath);
+        Assert.Contains("出版社=起点", preview.AppliedValues);
+        Assert.Contains("已采用最具体", preview.Resolution);
+    }
+
+    [Fact]
     public void Similar_folder_prefix_does_not_match()
     {
         var root = Path.Combine(Path.GetTempPath(), $"easypub-map-{Guid.NewGuid():N}");

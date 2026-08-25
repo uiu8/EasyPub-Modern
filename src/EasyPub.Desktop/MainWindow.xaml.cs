@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -49,6 +50,10 @@ public partial class MainWindow : Window
     private readonly HashSet<TabItem> _dirtyOptionTabs = [];
     private bool _optionTrackingReady;
     private bool _compactLayout;
+    private ICollectionView? _bookWorklistView;
+    private ConversionPreflightReport? _lastPreflightReport;
+    private string? _activeConversionPlanName;
+    private bool _conversionPlanModified;
 
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
@@ -59,6 +64,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = this;
+        _bookWorklistView = CollectionViewSource.GetDefaultView(InputBooks);
+        _bookWorklistView.Filter = FilterBookWorklist;
         OutputDirectoryText.Text = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "EasyPub Modern");
@@ -72,6 +79,7 @@ public partial class MainWindow : Window
         _recoveryTimer.Tick += RecoveryTimer_Tick;
         InitializeOptionTracking();
         UpdateModeDescription();
+        UpdateWorkspaceScope();
         UpdateContextualControls();
     }
 
@@ -457,11 +465,11 @@ public partial class MainWindow : Window
             manager.ShowDialog();
             if (!manager.Changed) return;
             await _appSettingsStore.SaveAsync(CaptureAppSettings());
-            StatusText.Text = $"预设已更新，共 {ConversionPresets.Count} 个";
+            StatusText.Text = $"转换方案已更新，共 {ConversionPresets.Count} 个";
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法管理预设", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "无法管理转换方案", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -687,9 +695,24 @@ public partial class MainWindow : Window
         StatusText.Text = "已删除自动恢复快照";
     }
 
-    private void UpdateProjectTitle() => Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.21.3"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.3";
+    private void UpdateProjectTitle()
+    {
+        Title = _currentProjectPath is null
+            ? "EasyPub Modern v0.22.0"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.22.0";
+        UpdateWorkspaceScope();
+    }
+
+    private void UpdateWorkspaceScope()
+    {
+        if (WorkspaceScopeText is null) return;
+        var project = _currentProjectPath is null ? "未保存项目" : Path.GetFileName(_currentProjectPath);
+        var plan = string.IsNullOrWhiteSpace(_activeConversionPlanName)
+            ? "当前手动设置"
+            : _conversionPlanModified ? $"{_activeConversionPlanName}（已修改）" : _activeConversionPlanName;
+        WorkspaceScopeText.Text = $"当前工作：{project} · 转换方案：{plan}";
+        WorkspaceScopeText.ToolTip = "项目保存书稿和逐书内容；转换方案只保存整批通用转换参数。";
+    }
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -756,7 +779,7 @@ public partial class MainWindow : Window
 
     private async void EditMetadataMappings_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new MetadataMappingWindow(_metadataMappings) { Owner = this };
+        var editor = new MetadataMappingWindow(_metadataMappings, InputBooks.Select(book => book.InputPath).ToArray()) { Owner = this };
         if (editor.ShowDialog() != true) return;
 
         try
@@ -1356,12 +1379,12 @@ public partial class MainWindow : Window
         var book = SelectedCoverBook();
         if (book is null)
         {
-            MessageBox.Show(this, "请只选中一本小说，再打开整书预览。", "EasyPub Modern");
+            MessageBox.Show(this, "请只选中一本小说，再打开近似版式预览。", "EasyPub Modern");
             return;
         }
         if (book.IsEpub)
         {
-            MessageBox.Show(this, "EPUB 输入可直接转换为 MOBI；当前整书预览用于 TXT 重排结果。", "EasyPub Modern");
+            MessageBox.Show(this, "EPUB 输入可直接转换为 MOBI；当前近似版式预览用于 TXT 重排结果。", "EasyPub Modern");
             return;
         }
 
@@ -1386,7 +1409,7 @@ public partial class MainWindow : Window
                 previewProgress,
                 _operationCancellation.Token), _operationCancellation.Token);
             Progress.Value = 1;
-            StatusText.Text = $"整书预览已生成：《{book.DisplayName}》";
+            StatusText.Text = $"近似版式预览已生成：《{book.DisplayName}》；Kindle 真机效果仍需实际确认";
             new BookPreviewWindow(book.Title ?? book.DisplayName, package) { Owner = this }.ShowDialog();
         }
         catch (OperationCanceledException)
@@ -1395,7 +1418,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法生成整书预览", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, exception.Message, "无法生成近似版式预览", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1416,6 +1439,9 @@ public partial class MainWindow : Window
             Progress.IsIndeterminate = true;
             var requests = await BuildConversionRequestsAsync();
             var (report, reused) = await GetPreflightReportAsync(requests, _operationCancellation.Token);
+            _lastPreflightReport = report;
+            ApplyPreflightToWorklist(report);
+            _taskCenterWindow?.UpdatePreflight(report);
             new PreflightWindow(report, allowContinue: false, NavigateToPreflightIssue) { Owner = this }.ShowDialog();
             StatusText.Text = report.HasErrors
                 ? $"检查完成：发现 {report.Issues.Count(issue => issue.Severity == PreflightSeverity.Error)} 个错误"
@@ -1512,16 +1538,26 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowTaskCenter_Click(object sender, RoutedEventArgs e) => ShowTaskCenter();
+    private async void ShowTaskCenter_Click(object sender, RoutedEventArgs e) => await ShowTaskCenterAsync();
 
-    private void ShowTaskCenter()
+    private async Task ShowTaskCenterAsync()
     {
         if (_taskCenterWindow is { IsVisible: true })
         {
             _taskCenterWindow.Activate();
             return;
         }
-        _taskCenterWindow = new TaskCenterWindow(BookTasks) { Owner = this };
+        IReadOnlyList<ConversionHistoryEntry> history;
+        try
+        {
+            history = await _historyStore.LoadAsync();
+        }
+        catch (Exception exception)
+        {
+            history = [];
+            StatusText.Text = $"任务中心已打开，但历史加载失败：{exception.Message}";
+        }
+        _taskCenterWindow = new TaskCenterWindow(BookTasks, history, _lastPreflightReport) { Owner = this };
         _taskCenterWindow.RetryRequested += path =>
         {
             var original = InputBooks.FirstOrDefault(book => string.Equals(book.InputPath, path, StringComparison.OrdinalIgnoreCase));
@@ -1531,12 +1567,19 @@ public partial class MainWindow : Window
             UpdateStatus();
             StatusText.Text = "已载入所选任务，可调整设置后重新转换";
         };
+        _taskCenterWindow.RetryHistoryRequested += LoadRetryInputs;
+        _taskCenterWindow.PreflightRequested += () => RunPreflight_Click(this, new RoutedEventArgs());
+        _taskCenterWindow.NavigatePreflightRequested += issue =>
+        {
+            NavigateToPreflightIssue(issue);
+            _taskCenterWindow?.Close();
+        };
         _taskCenterWindow.Show();
     }
 
     private void ShowTaskCenterWhenRequested()
     {
-        if (AutoOpenTaskCenterCheck.IsChecked == true) ShowTaskCenter();
+        if (AutoOpenTaskCenterCheck.IsChecked == true) _ = ShowTaskCenterAsync();
     }
 
     private async Task<(ConversionPreflightReport Report, bool Reused)> GetPreflightReportAsync(
@@ -1600,6 +1643,9 @@ public partial class MainWindow : Window
             InitializeBookTasks(requests);
             foreach (var task in BookTasks) task.Update(BookTaskStage.Checking, 0.02, "正在检查");
             var (report, reusedPreflight) = await GetPreflightReportAsync(requests, cancellationToken);
+            _lastPreflightReport = report;
+            ApplyPreflightToWorklist(report);
+            _taskCenterWindow?.UpdatePreflight(report);
             if (reusedPreflight) StatusText.Text = "输入和选项未变化，已复用上次转换前检查结果";
             if (report.HasErrors)
             {
@@ -1656,6 +1702,7 @@ public partial class MainWindow : Window
             try
             {
                 await _historyStore.AppendAsync(historyEntries);
+                _taskCenterWindow?.UpdateHistory(await _historyStore.LoadAsync());
             }
             catch (Exception historyException)
             {
@@ -1823,6 +1870,45 @@ public partial class MainWindow : Window
             : $"已添加 {count} 本 · TXT {InputBooks.Count(book => !book.IsEpub)} · EPUB {InputBooks.Count(book => book.IsEpub)} · {InputBooks.Count(book => book.ChapterTree is not null)} 本有章节树";
     }
 
+    private void BookWorklistFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_bookWorklistView is null || BookFilterCombo is null || BookSortCombo is null) return;
+        _bookWorklistView.SortDescriptions.Clear();
+        var sort = (BookSortCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        if (sort == "Name") _bookWorklistView.SortDescriptions.Add(new SortDescription(nameof(InputBookItem.DisplayName), ListSortDirection.Ascending));
+        else if (sort == "Issues") _bookWorklistView.SortDescriptions.Add(new SortDescription(nameof(InputBookItem.ReadinessPriority), ListSortDirection.Descending));
+        _bookWorklistView.Refresh();
+    }
+
+    private bool FilterBookWorklist(object value)
+    {
+        if (value is not InputBookItem book) return false;
+        var search = BookSearchText?.Text.Trim() ?? string.Empty;
+        if (search.Length > 0 && !book.DisplayName.Contains(search, StringComparison.CurrentCultureIgnoreCase) && !book.InputPath.Contains(search, StringComparison.CurrentCultureIgnoreCase)) return false;
+        var filter = (BookFilterCombo?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "All";
+        return filter switch
+        {
+            "Issues" => book.HasPreflightIssues,
+            "Unchecked" => !book.HasBeenChecked,
+            "NoCover" => book.CoverImagePath is null,
+            "Txt" => !book.IsEpub,
+            "Epub" => book.IsEpub,
+            _ => true,
+        };
+    }
+
+    private void ApplyPreflightToWorklist(ConversionPreflightReport report)
+    {
+        foreach (var book in InputBooks)
+        {
+            var issues = report.Issues.Where(issue => issue.InputPath is null || string.Equals(issue.InputPath, book.InputPath, StringComparison.OrdinalIgnoreCase)).ToArray();
+            book.SetPreflightResult(
+                issues.Count(issue => issue.Severity == PreflightSeverity.Error),
+                issues.Count(issue => issue.Severity == PreflightSeverity.Warning));
+        }
+        _bookWorklistView?.Refresh();
+    }
+
     private void UpdateContextualControls()
     {
         if (FilesList is null) return;
@@ -1835,6 +1921,11 @@ public partial class MainWindow : Window
         RunPreflightButton.IsEnabled = count > 0;
         ConvertButton.IsEnabled = count > 0 && !CancelButton.IsEnabled;
         PreviewBookButton.IsEnabled = singleBook is { IsEpub: false };
+        QuickChapterButton.IsEnabled = singleBook is { IsEpub: false };
+        QuickCleanupButton.IsEnabled = singleBook is { IsEpub: false };
+        QuickMetadataButton.IsEnabled = singleBook is not null;
+        QuickIllustrationButton.IsEnabled = singleBook is { IsEpub: false };
+        QuickPreviewButton.IsEnabled = singleBook is { IsEpub: false };
         var showCover = singleBook is not null;
         CoverDropPanel.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
         CoverGapColumn.Width = new GridLength(showCover ? 14 : 0);
@@ -1845,7 +1936,10 @@ public partial class MainWindow : Window
     {
         if (_applyingProfile || PresetCombo.SelectedItem is not NamedConversionPreset preset) return;
         ApplyProfile(preset.Profile);
-        StatusText.Text = $"已应用预设：{preset.Name}";
+        _activeConversionPlanName = preset.Name;
+        _conversionPlanModified = false;
+        UpdateWorkspaceScope();
+        StatusText.Text = $"已应用转换方案：{preset.Name}";
     }
 
     private void InitializeOptionTracking()
@@ -1887,6 +1981,11 @@ public partial class MainWindow : Window
         var tab = FindVisualParent<TabItem>(source) ?? OptionsTabs.SelectedItem as TabItem;
         if (tab is null) return;
         MarkDirtyTab(tab);
+        if (!string.IsNullOrWhiteSpace(_activeConversionPlanName))
+        {
+            _conversionPlanModified = true;
+            UpdateWorkspaceScope();
+        }
         if (ReferenceEquals(tab, LayoutTab) || ReferenceEquals(source, FullWidthIndentCheck))
         {
             SwitchToCustomModeAfterManualLayoutChange();
@@ -1898,7 +1997,7 @@ public partial class MainWindow : Window
     {
         if (!_optionTabNames.TryGetValue(tab, out var name) || !_dirtyOptionTabs.Add(tab)) return;
         tab.Header = $"{name} ●";
-        tab.ToolTip = "本分页有尚未写入预设的修改";
+        tab.ToolTip = "本分页有尚未写入转换方案的修改";
     }
 
     private void ClearDirtyTab(TabItem tab)
@@ -1967,17 +2066,18 @@ public partial class MainWindow : Window
         HeaderLogo.Width = HeaderLogo.Height = compact ? 40 : 48;
         HeaderTitleText.FontSize = compact ? 22 : 27;
         HeaderSubtitleText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        PreviewBookButton.Content = compact ? "预览" : "整书预览";
-        TaskCenterButton.Content = compact ? "任务" : "任务与验收";
-        HistoryButton.Content = compact ? "历史" : "转换历史";
+        PreviewBookButton.Content = compact ? "预览" : "近似预览";
+        TaskCenterButton.Content = compact ? "任务" : "任务中心";
         ModeLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PresetLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PresetCombo.Width = compact ? 108 : 145;
-        ManagePresetButton.Content = compact ? "预设管理" : "管理预设";
-        RunPreflightButton.Content = compact ? "检查" : "转换前检查";
+        ManagePresetButton.Content = compact ? "方案管理" : "管理转换方案";
+        RunPreflightButton.Content = compact ? "检查" : "检查问题";
         ConvertButton.Content = compact ? "开始转换 →" : "开始批量转换  →";
         StatusText.FontSize = compact ? 11 : 12;
-        BookListRow.Height = new GridLength(compact ? 200 : 220);
+        BookListRow.Height = new GridLength(compact ? 180 : 205);
+        CoverPreviewBorder.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        WorkspaceScopeText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         foreach (var tab in OptionsTabs.Items.OfType<TabItem>()) tab.Padding = compact ? new Thickness(10, 8, 10, 8) : new Thickness(15, 8, 15, 8);
         UpdateContextualControls();
     }
@@ -2064,6 +2164,8 @@ public sealed class InputBookItem : INotifyPropertyChanged
     private BookMetadataOverrides _metadataOverrides = new();
     private string? _metadataRuleFolder;
     private ChapterTreePlan? _chapterTree;
+    private int? _preflightErrorCount;
+    private int _preflightWarningCount;
 
     public InputBookItem(string inputPath)
     {
@@ -2137,6 +2239,15 @@ public sealed class InputBookItem : INotifyPropertyChanged
     public ChapterTreePlan? ChapterTree => _chapterTree;
     public string ChapterTreeLabel => _chapterTree is null ? string.Empty : $"章节树 {_chapterTree.Entries.Count}";
     public Visibility ChapterTreeBadgeVisibility => _chapterTree is null ? Visibility.Collapsed : Visibility.Visible;
+    public bool HasBeenChecked => _preflightErrorCount is not null;
+    public bool HasPreflightIssues => (_preflightErrorCount ?? 0) > 0 || _preflightWarningCount > 0;
+    public int ReadinessPriority => (_preflightErrorCount ?? 0) > 0 ? 3 : _preflightWarningCount > 0 ? 2 : !HasBeenChecked ? 1 : 0;
+    public string ReadinessLabel => (_preflightErrorCount ?? 0) > 0
+        ? $"错误 {_preflightErrorCount}"
+        : _preflightWarningCount > 0 ? $"提醒 {_preflightWarningCount}" : HasBeenChecked ? "检查通过" : "未检查";
+    public Brush ReadinessForeground => (_preflightErrorCount ?? 0) > 0
+        ? Brushes.Firebrick
+        : _preflightWarningCount > 0 ? Brushes.DarkOrange : HasBeenChecked ? Brushes.SeaGreen : Brushes.SlateGray;
 
     public void SetIllustrations(IReadOnlyList<BookIllustration> illustrations)
     {
@@ -2167,6 +2278,14 @@ public sealed class InputBookItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChapterTreeLabel)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ChapterTreeBadgeVisibility)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibilityName)));
+    }
+
+    public void SetPreflightResult(int errors, int warnings)
+    {
+        _preflightErrorCount = Math.Max(0, errors);
+        _preflightWarningCount = Math.Max(0, warnings);
+        foreach (var name in new[] { nameof(HasBeenChecked), nameof(HasPreflightIssues), nameof(ReadinessPriority), nameof(ReadinessLabel), nameof(ReadinessForeground) })
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     public InputBookItem Clone()

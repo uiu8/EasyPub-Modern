@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -8,7 +9,11 @@ public sealed record TextCleanupChange(
     int LineNumber,
     string Rule,
     string Before,
-    string After);
+    string After)
+{
+    public string Key { get; init; } = TextCleanupPipeline.CreateChangeKey(LineNumber, Rule, Before);
+    public bool IsApplied { get; init; } = true;
+}
 
 public sealed record TextCleanupPreview(
     IReadOnlyList<string> Lines,
@@ -29,6 +34,7 @@ public static partial class TextCleanupPipeline
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
         var result = lines.ToArray();
         var changes = new List<TextCleanupChange>();
+        var exclusions = new HashSet<string>(options.ExcludedChangeKeys ?? [], StringComparer.Ordinal);
 
         for (var index = 0; index < result.Length; index++)
         {
@@ -45,8 +51,12 @@ public static partial class TextCleanupPipeline
                 current = NormalizeChinesePunctuation(current);
 
             if (!string.Equals(original, current, StringComparison.Ordinal))
-                changes.Add(new TextCleanupChange(index + 1, DescribeInlineRules(original, current, options), original, current));
-            result[index] = current;
+            {
+                var change = CreateChange(index + 1, DescribeInlineRules(original, current, options), original, current, exclusions);
+                changes.Add(change);
+                result[index] = change.IsApplied ? current : original;
+            }
+            else result[index] = current;
         }
 
         if (options.RemoveSiteNotices)
@@ -54,8 +64,9 @@ public static partial class TextCleanupPipeline
             for (var index = 0; index < result.Length; index++)
             {
                 if (result[index] == RemovedLine || !SiteNoticePattern().IsMatch(result[index].Trim())) continue;
-                changes.Add(new TextCleanupChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty));
-                result[index] = RemovedLine;
+                var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]);
+                changes.Add(change);
+                if (change.IsApplied) result[index] = RemovedLine;
             }
         }
 
@@ -67,9 +78,13 @@ public static partial class TextCleanupPipeline
                 while (nextIndex < result.Length && ShouldJoin(result[index], result[nextIndex]))
                 {
                     var before = result[index] + " ↵ " + result[nextIndex];
-                    result[index] = result[index].TrimEnd() + result[nextIndex].TrimStart();
+                    var after = result[index].TrimEnd() + result[nextIndex].TrimStart();
+                    var sourcePair = lines[index] + " ↵ " + lines[nextIndex];
+                    var change = CreateChange(index + 1, "修复正文硬换行", before, after, exclusions, sourcePair);
+                    changes.Add(change);
+                    if (!change.IsApplied) break;
+                    result[index] = after;
                     result[nextIndex] = RemovedLine;
-                    changes.Add(new TextCleanupChange(index + 1, "修复正文硬换行", before, result[index]));
                     nextIndex++;
                 }
             }
@@ -91,8 +106,9 @@ public static partial class TextCleanupPipeline
                     seenBlank = true;
                     continue;
                 }
-                changes.Add(new TextCleanupChange(index + 1, "合并连续空行", result[index], string.Empty));
-                result[index] = RemovedLine;
+                var change = CreateChange(index + 1, "合并连续空行", result[index], string.Empty, exclusions);
+                changes.Add(change);
+                if (change.IsApplied) result[index] = RemovedLine;
             }
         }
 
@@ -117,6 +133,27 @@ public static partial class TextCleanupPipeline
         }
         var preamble = encoding.GetPreamble();
         return encoding.GetString(bytes.AsSpan().StartsWith(preamble) ? bytes[preamble.Length..] : bytes);
+    }
+
+    public static string CreateChangeKey(int lineNumber, string rule, string before)
+    {
+        var payload = Encoding.UTF8.GetBytes($"{lineNumber}\n{rule}\n{before}");
+        return $"{lineNumber}:{Convert.ToHexString(SHA256.HashData(payload))[..16]}";
+    }
+
+    private static TextCleanupChange CreateChange(
+        int lineNumber,
+        string rule,
+        string before,
+        string after,
+        HashSet<string> exclusions,
+        string? keySource = null)
+    {
+        var change = new TextCleanupChange(lineNumber, rule, before, after)
+        {
+            Key = CreateChangeKey(lineNumber, rule, keySource ?? before),
+        };
+        return change with { IsApplied = !exclusions.Contains(change.Key) };
     }
 
     private static string NormalizeSpaces(string value)

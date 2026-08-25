@@ -12,22 +12,66 @@ namespace EasyPub.Desktop;
 public partial class TaskCenterWindow : Window
 {
     private readonly ObservableCollection<BookTaskViewModel> _tasks;
+    private ConversionPreflightReport? _preflightReport;
 
-    public TaskCenterWindow(ObservableCollection<BookTaskViewModel> tasks)
+    public TaskCenterWindow(
+        ObservableCollection<BookTaskViewModel> tasks,
+        IReadOnlyList<ConversionHistoryEntry>? history = null,
+        ConversionPreflightReport? preflight = null)
     {
         InitializeComponent();
         _tasks = tasks;
-        DataContext = tasks;
+        Tasks = tasks;
+        PreflightRows = [];
+        HistoryRows = [];
+        DataContext = this;
+        UpdateHistory(history ?? []);
+        UpdatePreflight(preflight);
         if (tasks.Count > 0) TasksGrid.SelectedIndex = 0;
         UpdateSummary();
     }
 
+    public ObservableCollection<BookTaskViewModel> Tasks { get; }
+    public ObservableCollection<PreflightIssueRow> PreflightRows { get; }
+    public ObservableCollection<ConversionHistoryRow> HistoryRows { get; }
     public event Action<string>? RetryRequested;
+    public event Action<IReadOnlyList<string>>? RetryHistoryRequested;
+    public event Action? PreflightRequested;
+    public event Action<ConversionPreflightIssue>? NavigatePreflightRequested;
 
     public void RefreshSummary()
     {
         UpdateSummary();
         UpdateSelectedDetails();
+    }
+
+    public void UpdatePreflight(ConversionPreflightReport? report)
+    {
+        _preflightReport = report;
+        PreflightRows.Clear();
+        if (report is null)
+        {
+            PreflightSummaryText.Text = "尚未执行转换前检查";
+            return;
+        }
+        var errors = report.Issues.Count(issue => issue.Severity == PreflightSeverity.Error);
+        PreflightSummaryText.Text = $"已检查 {report.Books.Count} 本 · {errors} 个错误 · {report.WarningCount} 个提醒";
+        var rows = report.Issues.Count == 0
+            ? [new PreflightIssueRow("通过", "全部书稿", "没有发现阻止转换的问题。", null)]
+            : report.Issues.Select(issue => new PreflightIssueRow(
+                issue.Severity == PreflightSeverity.Error ? "错误" : issue.Severity == PreflightSeverity.Warning ? "提醒" : "信息",
+                string.IsNullOrWhiteSpace(issue.InputPath) ? "批量任务" : Path.GetFileName(issue.InputPath),
+                issue.Message,
+                issue)).ToArray();
+        foreach (var row in rows) PreflightRows.Add(row);
+        UpdateSummary();
+    }
+
+    public void UpdateHistory(IReadOnlyList<ConversionHistoryEntry> history)
+    {
+        HistoryRows.Clear();
+        foreach (var entry in history.OrderByDescending(entry => entry.Timestamp)) HistoryRows.Add(new ConversionHistoryRow(entry));
+        UpdateSummary();
     }
 
     private BookTaskViewModel? Selected => TasksGrid.SelectedItem as BookTaskViewModel;
@@ -74,13 +118,40 @@ public partial class TaskCenterWindow : Window
         Close();
     }
 
+    private void RunPreflight_Click(object sender, RoutedEventArgs e) => PreflightRequested?.Invoke();
+    private void LocatePreflight_Click(object sender, RoutedEventArgs e) => LocateSelectedPreflight();
+    private void PreflightGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e) => LocateSelectedPreflight();
+
+    private void LocateSelectedPreflight()
+    {
+        if (PreflightGrid.SelectedItem is PreflightIssueRow { Issue: { } issue })
+            NavigatePreflightRequested?.Invoke(issue);
+    }
+
+    private void RetryHistory_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = HistoryGrid.SelectedItems.Cast<ConversionHistoryRow>().Where(row => !row.Entry.Succeeded).ToArray();
+        var candidates = selected.Length > 0 ? selected : HistoryRows.Where(row => !row.Entry.Succeeded).ToArray();
+        var paths = candidates.Select(row => row.Entry.InputPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (paths.Length == 0)
+        {
+            MessageBox.Show(this, "历史中没有可载入的失败项目。", "EasyPub Modern");
+            return;
+        }
+        RetryHistoryRequested?.Invoke(paths);
+        Close();
+    }
+
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void UpdateSummary()
     {
+        var checkText = _preflightReport is null
+            ? "未检查"
+            : _preflightReport.HasErrors ? $"检查错误 {_preflightReport.Issues.Count(issue => issue.Severity == PreflightSeverity.Error)}" : "检查通过";
         SummaryText.Text = _tasks.Count == 0
-            ? "等待任务"
-            : $"{_tasks.Count} 本 · 完成 {_tasks.Count(item => item.Stage is BookTaskStage.Completed or BookTaskStage.Warning)} · 失败 {_tasks.Count(item => item.Stage == BookTaskStage.Failed)}";
+            ? $"{checkText} · 历史 {HistoryRows.Count} 条"
+            : $"{checkText} · 当前 {_tasks.Count} 本 · 完成 {_tasks.Count(item => item.Stage is BookTaskStage.Completed or BookTaskStage.Warning)} · 失败 {_tasks.Count(item => item.Stage == BookTaskStage.Failed)}";
     }
 }
 
