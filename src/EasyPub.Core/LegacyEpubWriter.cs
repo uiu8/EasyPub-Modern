@@ -238,8 +238,6 @@ internal static class LegacyEpubWriter
             lines.Add($"<dc:subject>{Html(metadata.Category.Trim())}</dc:subject>");
         if (!string.IsNullOrWhiteSpace(metadata.Description))
             lines.Add($"<dc:description>{Html(metadata.Description.Trim())}</dc:description>");
-        foreach (var custom in CalibreCustomMetadata.NormalizeAll(metadata.CustomMetadata).Where(item => item.HasValue))
-            lines.Add($"<meta name=\"calibre:user_metadata:{Html(custom.CalibreLookupName)}\" content=\"{Html(CalibreCustomMetadata.BuildOpfMetadataContent(custom))}\"/>");
         if (hasImageCover)
             lines.Add("<meta name=\"cover\" content=\"cover-image\"/>");
         lines.AddRange([

@@ -36,13 +36,6 @@ public sealed class ProjectStoreTests
                         Category = "小说",
                         Language = "zh-CN",
                         Description = "简介",
-                        CustomMetadata = [new CalibreCustomMetadata
-                        {
-                            LookupName = "kindlecollections",
-                            ColumnHeading = "Kindle书架",
-                            Type = CalibreCustomMetadataType.TextList,
-                            Value = "起点, 完结",
-                        }],
                     },
                 },
             },
@@ -65,6 +58,22 @@ public sealed class ProjectStoreTests
         {
             var store = new EasyPubProjectStore(path);
             await store.SaveAsync(document);
+
+            // v0.21.2 曾把 Calibre 自定义元数据写入项目文件。功能取消后，
+            // 旧项目里的未知字段应被安全忽略，不能导致整个项目无法打开。
+            var legacyJson = await File.ReadAllTextAsync(path);
+            legacyJson = legacyJson
+                .Replace(
+                    "\"Metadata\": {",
+                    "\"Metadata\": {\n        \"CustomMetadata\": [{ \"LookupName\": \"kindlecollections\", \"Value\": \"起点\" }],",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "\"MetadataOverrides\": {",
+                    "\"CustomMetadata\": [{ \"LookupName\": \"kindlecollections\", \"Value\": \"起点\" }],\n      \"MetadataOverrides\": {",
+                    StringComparison.Ordinal);
+            Assert.Contains("CustomMetadata", legacyJson, StringComparison.Ordinal);
+            await File.WriteAllTextAsync(path, legacyJson);
+
             var loaded = await store.LoadAsync();
 
             Assert.Equal("mobi", loaded.Profile.OutputFormat);
@@ -74,7 +83,6 @@ public sealed class ProjectStoreTests
             Assert.Equal(50, loaded.Profile.Options.ArtifactValidation.MaxReportCount);
             Assert.Equal("译者", loaded.Profile.Options.Metadata.Translator);
             Assert.Equal(new DateOnly(2026, 8, 23), loaded.Profile.Options.Metadata.PublicationDate);
-            Assert.Equal("#kindlecollections", Assert.Single(loaded.Profile.Options.Metadata.CustomMetadata).CalibreLookupName);
             var book = Assert.Single(loaded.Books);
             Assert.Equal("书名", book.Title);
             Assert.Equal(12, Assert.Single(book.Illustrations).InsertAfterLine);
@@ -83,6 +91,9 @@ public sealed class ProjectStoreTests
             Assert.Equal("第一章", Assert.Single(book.ChapterTree!.Entries).Title);
             Assert.Equal(EasyPubProjectStore.Fingerprint(document), EasyPubProjectStore.Fingerprint(loaded));
             Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
+
+            await store.SaveAsync(loaded);
+            Assert.DoesNotContain("CustomMetadata", await File.ReadAllTextAsync(path), StringComparison.Ordinal);
         }
         finally
         {

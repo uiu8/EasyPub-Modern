@@ -6,16 +6,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v0.21.2-2563EB?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.2)
+[![当前版本](https://img.shields.io/badge/当前版本-v0.21.3-2563EB?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.3)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载最新版](https://github.com/uiu8/EasyPub-Modern/releases/download/v0.21.2/EasyPubModern-v0.21.2-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.2)
+**[下载最新版](https://github.com/uiu8/EasyPub-Modern/releases/download/v0.21.3/EasyPubModern-v0.21.3-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.3)
 
 </div>
 
-![EasyPub Modern v0.21.2 主界面](assets/readme/overview.png)
+![EasyPub Modern v0.21.3 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -36,7 +36,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.2) 下载并解压 Windows x64 压缩包。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.21.3) 下载并解压 Windows x64 压缩包。
 2. 运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -50,7 +50,7 @@
 | 能力 | 当前版本提供的功能 |
 |---|---|
 | 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、1–4 个并发任务、逐书进度、失败重试与转换历史 |
-| 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、Calibre 自定义元数据、插图和章节树 |
+| 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、插图和章节树 |
 | 封面与图片 | 拖放预览 JPG / PNG / WebP；PNG、WebP 解码后转为高质量 JPEG；插图可选择正文位置 |
 | 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关 |
 | 排版与样式 | 字号、行高、段距、缩进、对齐、四边页边距、嵌入 TTF 字体与定制 CSS |
@@ -59,20 +59,11 @@
 | 检查与验收 | 转换前检查输入、封面、插图、字体、输出冲突和 KindleGen；可选 EPUB/MOBI 结构验收与独立报告目录 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v0.21.2 重点优化
+## v0.21.3 重点调整
 
-新增 Calibre 自定义元数据与文件夹映射：
-
-- 自定义列的“字段定义”与“当前范围的值”已经分离，创建字段时不再强制填写固定值。
-- 定义“Kindle书架”后，逐书信息表和文件夹映射表会直接出现名为“Kindle书架”的可编辑列，不再使用笼统的“自定义列”汇总。
-- 新建或编辑文件夹规则时直接显示每个真实字段的输入框，可按文件夹填写不同值。
-- 在统一书籍信息、逐书填写和文件夹规则中复用已有字段，并按各自范围灵活填写不同值。
-- 检索名可填写 `kindlecollections` 或 `#kindlecollections`，内部统一匹配 `#kindlecollections`。
-- 列标题只负责显示，例如“Kindle书架”；匹配已有 Calibre 列时以检索名为准。
-- 支持单值文本与逗号分隔文本，文件夹值会按相同检索名覆盖统一值。
-- EPUB 中写入 Calibre 可识别的安全自定义元数据；不接受复合模板或可执行脚本。
-
-> MOBI 格式本身不能保存任意 Calibre 自定义列。EasyPub 会保存相关项目和映射设置，但需要输出 EPUB 才能让 Calibre 从电子书文件直接读取这些列。
+- 取消 Calibre 自定义元数据功能，避免 EPUB 与 MOBI 能力不一致造成误解。
+- 保留作者、译者、ISBN、出版社、出版日期、分类、语言和简介等标准书籍信息。
+- 文件夹元数据映射继续支持按来源目录自动填写标准书籍信息。
 
 ### 文本清理定位
 
@@ -105,11 +96,7 @@
 
 ### 为来源文件夹自动填写元数据
 
-在“书籍信息 → 文件夹元数据映射”中指定来源目录和出版社、分类、语言或 Calibre 自定义列。以后从该目录导入的书会自动带入对应元数据，也可以逐书覆盖。
-
-### 对接 Calibre 自定义列
-
-以 Calibre 中“检索名 `kindlecollections`、列标题 `Kindle书架`”为例：先在“管理字段 / 统一值”中定义该字段；之后“逐书填写书籍信息”和“文件夹元数据映射”都会直接增加“Kindle书架”列。检索名必须与 Calibre 一致，列标题就是 EasyPub 表格中显示的字段名。
+在“书籍信息 → 文件夹元数据映射”中指定来源目录和出版社、分类、语言等标准信息。以后从该目录导入的书会自动带入对应元数据，也可以逐书覆盖。
 
 ### 在正文中插入图片
 
@@ -148,4 +135,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v0.21.2**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v0.21.3**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

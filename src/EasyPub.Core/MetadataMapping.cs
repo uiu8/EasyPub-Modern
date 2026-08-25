@@ -12,12 +12,6 @@ public sealed record BookMetadataOverrides
     public string? Category { get; init; }
     public string? Language { get; init; }
     public string? Description { get; init; }
-    public IReadOnlyList<CalibreCustomMetadata> CustomMetadata { get; init; } = [];
-
-    [JsonIgnore]
-    public string CustomMetadataSummary => !CustomMetadata.Any(item => item.HasValue)
-        ? string.Empty
-        : string.Join("、", CustomMetadata.Where(item => item.HasValue).Select(item => item.DisplayHeading));
 
     [JsonIgnore]
     public bool IsEmpty =>
@@ -28,8 +22,7 @@ public sealed record BookMetadataOverrides
         string.IsNullOrWhiteSpace(Publisher) &&
         string.IsNullOrWhiteSpace(Category) &&
         string.IsNullOrWhiteSpace(Language) &&
-        string.IsNullOrWhiteSpace(Description) &&
-        !CustomMetadata.Any(item => item.HasValue);
+        string.IsNullOrWhiteSpace(Description);
 }
 
 public sealed record FolderMetadataRule(string FolderPath, BookMetadataOverrides Metadata);
@@ -67,7 +60,6 @@ public static class MetadataMappingResolver
             Category = Prefer(overrides.Category, baseMetadata.Category),
             Language = Prefer(overrides.Language, baseMetadata.Language) ?? "zh-CN",
             Description = Prefer(overrides.Description, baseMetadata.Description),
-            CustomMetadata = MergeCustomMetadata(baseMetadata.CustomMetadata, overrides.CustomMetadata),
         };
     }
 
@@ -88,24 +80,4 @@ public static class MetadataMappingResolver
 
     private static string? Prefer(string? preferred, string? fallback) =>
         string.IsNullOrWhiteSpace(preferred) ? fallback : preferred.Trim();
-
-    private static IReadOnlyList<CalibreCustomMetadata> MergeCustomMetadata(
-        IReadOnlyList<CalibreCustomMetadata>? baseValues,
-        IReadOnlyList<CalibreCustomMetadata>? overrides)
-    {
-        var merged = CalibreCustomMetadata.NormalizeAll(baseValues).ToList();
-        foreach (var item in CalibreCustomMetadata.NormalizeAll(overrides))
-        {
-            var index = merged.FindIndex(candidate => string.Equals(
-                candidate.CalibreLookupName,
-                item.CalibreLookupName,
-                StringComparison.OrdinalIgnoreCase));
-            if (index >= 0)
-            {
-                if (item.HasValue) merged[index] = merged[index] with { Value = item.Value };
-            }
-            else merged.Add(item);
-        }
-        return merged;
-    }
 }

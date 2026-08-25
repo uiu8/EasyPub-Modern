@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
-using System.Windows.Controls;
-using EasyPub.Core;
 
 namespace EasyPub.Desktop;
 
@@ -11,15 +9,10 @@ public partial class BatchMetadataWindow : Window
     private readonly IReadOnlyList<InputBookItem> _books;
     public ObservableCollection<MetadataEditRow> Rows { get; }
 
-    public BatchMetadataWindow(
-        IReadOnlyList<InputBookItem> books,
-        IReadOnlyList<CalibreCustomMetadata>? customMetadataDefinitions = null)
+    public BatchMetadataWindow(IReadOnlyList<InputBookItem> books)
     {
         InitializeComponent();
         _books = books;
-        var definitions = CustomMetadataColumnFactory.CollectDefinitions(
-            customMetadataDefinitions,
-            books.SelectMany(book => book.MetadataOverrides.CustomMetadata));
         Rows = new ObservableCollection<MetadataEditRow>(books.Select(book => new MetadataEditRow(
             book,
             Path.GetFileName(book.InputPath),
@@ -28,15 +21,8 @@ public partial class BatchMetadataWindow : Window
             book.MetadataOverrides.Publisher,
             book.MetadataOverrides.Category,
             book.MetadataOverrides.Language,
-            definitions,
-            book.MetadataOverrides.CustomMetadata,
             book.MetadataRuleFolder is null ? "手动/默认" : $"映射：{Path.GetFileName(book.MetadataRuleFolder)}",
             book.CoverImagePath is null ? "未设置" : "有封面")));
-        CustomMetadataColumnFactory.AddEditableColumns(
-            MetadataGrid,
-            definitions,
-            insertIndex: 6,
-            nameof(MetadataEditRow.CustomValues));
         MetadataGrid.ItemsSource = Rows;
     }
 
@@ -48,8 +34,6 @@ public partial class BatchMetadataWindow : Window
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        MetadataGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-        MetadataGrid.CommitEdit(DataGridEditingUnit.Row, true);
         foreach (var row in Rows)
         {
             row.Book.Title = EmptyToNull(row.Title);
@@ -60,7 +44,6 @@ public partial class BatchMetadataWindow : Window
                 Publisher = EmptyToNull(row.Publisher),
                 Category = EmptyToNull(row.Category),
                 Language = EmptyToNull(row.Language),
-                CustomMetadata = row.CustomValues.ToMetadata(),
             }, null);
         }
         DialogResult = true;
@@ -78,8 +61,6 @@ public sealed class MetadataEditRow(
     string? publisher,
     string? category,
     string? language,
-    IReadOnlyList<CalibreCustomMetadata> customMetadataDefinitions,
-    IReadOnlyList<CalibreCustomMetadata> customMetadataValues,
     string metadataSource,
     string coverState)
 {
@@ -90,7 +71,6 @@ public sealed class MetadataEditRow(
     public string? Publisher { get; set; } = publisher;
     public string? Category { get; set; } = category;
     public string? Language { get; set; } = language;
-    public CustomMetadataValueBag CustomValues { get; } = new(customMetadataDefinitions, customMetadataValues);
     public string MetadataSource { get; } = metadataSource;
     public string CoverState { get; } = coverState;
 }
