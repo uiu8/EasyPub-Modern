@@ -7,6 +7,22 @@ namespace EasyPub.Core.Tests;
 public sealed class MetadataMappingTests
 {
     [Fact]
+    public void Blank_custom_field_definition_does_not_make_a_mapping_rule_nonempty()
+    {
+        var metadata = new BookMetadataOverrides
+        {
+            CustomMetadata = [new CalibreCustomMetadata
+            {
+                LookupName = "kindlecollections",
+                ColumnHeading = "Kindle书架",
+            }],
+        };
+
+        Assert.True(metadata.IsEmpty);
+        Assert.Equal(string.Empty, metadata.CustomMetadataSummary);
+    }
+
+    [Fact]
     public void Most_specific_folder_rule_matches_imported_book()
     {
         var root = Path.Combine(Path.GetTempPath(), $"easypub-map-{Guid.NewGuid():N}");

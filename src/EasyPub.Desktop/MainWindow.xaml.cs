@@ -692,8 +692,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.21.0"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.0";
+            ? "EasyPub Modern v0.21.1"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.1";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -748,7 +748,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "请先添加至少一本小说。", "EasyPub Modern");
             return;
         }
-        var editor = new BatchMetadataWindow(InputBooks.ToArray()) { Owner = this };
+        var editor = new BatchMetadataWindow(InputBooks.ToArray(), _customMetadata) { Owner = this };
         if (editor.ShowDialog() == true)
         {
             MarkDirtyTab(MetadataTab);
@@ -767,24 +767,25 @@ public partial class MainWindow : Window
         MarkDirtyTab(MetadataTab);
         StatusText.Text = _customMetadata.Count == 0
             ? "已清除统一自定义元数据"
-            : $"已保存 {_customMetadata.Count} 项统一 Calibre 自定义元数据";
+            : $"已保存 {_customMetadata.Count} 个自定义字段定义，其中 {_customMetadata.Count(item => item.HasValue)} 项有统一值";
     }
 
     private void UpdateCustomMetadataSummary()
     {
         if (CustomMetadataStatusText is null) return;
+        var assignedCount = _customMetadata.Count(item => item.HasValue);
         CustomMetadataStatusText.Text = _customMetadata.Count == 0
             ? "未设置统一自定义元数据"
-            : $"统一自定义元数据：{_customMetadata.Count} 项";
+            : $"自定义字段：{_customMetadata.Count} 项；统一值：{assignedCount} 项";
         CustomMetadataStatusText.ToolTip = _customMetadata.Count == 0
             ? null
             : string.Join(Environment.NewLine, _customMetadata.Select(item =>
-                $"{item.CalibreLookupName}（{item.DisplayHeading}）：{item.Value}"));
+                $"{item.CalibreLookupName}（{item.DisplayHeading}）：{(item.HasValue ? item.Value : "未填写统一值")}"));
     }
 
     private async void EditMetadataMappings_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new MetadataMappingWindow(_metadataMappings) { Owner = this };
+        var editor = new MetadataMappingWindow(_metadataMappings, _customMetadata) { Owner = this };
         if (editor.ShowDialog() != true) return;
 
         try

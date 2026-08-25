@@ -10,13 +10,14 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="14"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="Calibre 自定义元数据" FontSize="25" FontWeight="SemiBold" Foreground="#172033"/>
-            <TextBlock Text="为电子书写入 Calibre 自定义列值。只提供安全的文本类型，不执行模板或脚本。" Margin="0,4,0,0" Foreground="#667085"/>
+            <TextBlock Text="定义 Calibre 自定义列，并可为当前范围填写值。只提供安全的文本类型，不执行模板或脚本。" Margin="0,4,0,0" Foreground="#667085"/>
             <TextBlock Text="EPUB 可由 Calibre 直接识别；MOBI 格式本身不支持任意自定义列，设置会保留但不会出现在 MOBI 元数据中。" Margin="0,3,0,0" Foreground="#B54708" TextWrapping="Wrap"/>
         </StackPanel>
         <Border Grid.Row="2" Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="10" Padding="12">
             <StackPanel>
                 <TextBlock Text="检索名填写 Calibre 的机器标识，例如 kindlecollections（也可以写 #kindlecollections）。" Foreground="#1D4ED8" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 <TextBlock Text="列标题填写人看到的名称，例如 Kindle书架。真正匹配现有列的是检索名；列类型也必须与 Calibre 一致。" Foreground="#475467" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                <TextBlock Text="值可以在统一信息、逐书信息或文件夹规则中分别填写；留空只保存字段定义，不会写入电子书。" Foreground="#00875A" Margin="0,3,0,0" FontWeight="SemiBold" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
         <Border Grid.Row="4" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="10">
@@ -25,7 +26,7 @@
                     <DataGridTextColumn Header="检索名（必须匹配 Calibre）" Binding="{Binding LookupName, UpdateSourceTrigger=PropertyChanged}" Width="230"/>
                     <DataGridTextColumn Header="列标题（仅用于显示）" Binding="{Binding ColumnHeading, UpdateSourceTrigger=PropertyChanged}" Width="190"/>
                     <DataGridComboBoxColumn x:Name="TypeColumn" Header="列类型（必须一致）" SelectedValueBinding="{Binding Type, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Value" DisplayMemberPath="Label" Width="170"/>
-                    <DataGridTextColumn Header="固定写入值" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                    <DataGridTextColumn Header="当前范围的值（可留空）" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
                 </DataGrid.Columns>
             </DataGrid>
         </Border>

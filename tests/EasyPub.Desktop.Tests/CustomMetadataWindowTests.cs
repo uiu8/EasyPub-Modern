@@ -43,6 +43,7 @@ public sealed class CustomMetadataWindowTests
                 Assert.Equal(CalibreCustomMetadataType.TextList, row.Type);
                 Assert.Equal("起点, 完结", row.Value);
                 Assert.True(grid.ActualWidth > 700);
+                Assert.Equal("当前范围的值（可留空）", grid.Columns[3].Header);
 
                 var add = Assert.IsType<Button>(window.FindName("AddButton"));
                 add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

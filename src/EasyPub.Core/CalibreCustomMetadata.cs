@@ -28,6 +28,9 @@ public sealed record CalibreCustomMetadata
     [JsonIgnore]
     public string TypeLabel => Type == CalibreCustomMetadataType.TextList ? "逗号分隔文本" : "单值文本";
 
+    [JsonIgnore]
+    public bool HasValue => !string.IsNullOrWhiteSpace(Value);
+
     public static string NormalizeLookupName(string lookupName)
     {
         var value = (lookupName ?? string.Empty).Trim();
@@ -48,13 +51,9 @@ public sealed record CalibreCustomMetadata
             if (definition is null) continue;
             var lookupName = NormalizeLookupName(definition.LookupName);
             var value = definition.Value?.Trim() ?? string.Empty;
-            if (value.Length == 0)
-                throw new ArgumentException($"自定义元数据 {lookupName} 的值不能为空。", nameof(definitions));
-            var normalizedValue = definition.Type == CalibreCustomMetadataType.TextList
+            var normalizedValue = value.Length > 0 && definition.Type == CalibreCustomMetadataType.TextList
                 ? string.Join(", ", SplitList(value))
                 : value;
-            if (normalizedValue.Length == 0)
-                throw new ArgumentException($"自定义元数据 {lookupName} 至少需要一个有效值。", nameof(definitions));
             var normalized = definition with
             {
                 LookupName = lookupName,
@@ -73,9 +72,31 @@ public sealed record CalibreCustomMetadata
         return result;
     }
 
+    public static IReadOnlyList<CalibreCustomMetadata> PrepareAssignments(
+        IEnumerable<CalibreCustomMetadata>? definitions,
+        IEnumerable<CalibreCustomMetadata>? assignments)
+    {
+        var result = NormalizeAll(definitions)
+            .Select(item => item with { Value = string.Empty })
+            .ToList();
+        foreach (var assignment in NormalizeAll(assignments))
+        {
+            var existingIndex = result.FindIndex(candidate => string.Equals(
+                candidate.CalibreLookupName,
+                assignment.CalibreLookupName,
+                StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+                result[existingIndex] = result[existingIndex] with { Value = assignment.Value };
+            else result.Add(assignment);
+        }
+        return result;
+    }
+
     internal static string BuildOpfMetadataContent(CalibreCustomMetadata definition)
     {
         var normalized = NormalizeAll([definition]).Single();
+        if (!normalized.HasValue)
+            throw new ArgumentException($"自定义元数据 {normalized.CalibreLookupName} 没有可写入的值。", nameof(definition));
         var label = normalized.CalibreLookupName.TrimStart('#');
         var isMultiple = normalized.Type == CalibreCustomMetadataType.TextList;
         object value = isMultiple ? SplitList(normalized.Value) : normalized.Value;

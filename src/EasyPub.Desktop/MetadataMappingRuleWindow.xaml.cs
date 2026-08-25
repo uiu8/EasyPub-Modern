@@ -9,9 +9,15 @@ public partial class MetadataMappingRuleWindow : Window
 {
     private IReadOnlyList<CalibreCustomMetadata> _customMetadata = [];
 
-    public MetadataMappingRuleWindow(FolderMetadataRule? existing)
+    public MetadataMappingRuleWindow(
+        FolderMetadataRule? existing,
+        IReadOnlyList<CalibreCustomMetadata>? customMetadataDefinitions = null)
     {
         InitializeComponent();
+        _customMetadata = CalibreCustomMetadata.PrepareAssignments(
+            customMetadataDefinitions,
+            existing?.Metadata.CustomMetadata);
+        UpdateCustomMetadataSummary();
         if (existing is null) return;
         FolderPathText.Text = existing.FolderPath;
         AuthorText.Text = existing.Metadata.Author ?? string.Empty;
@@ -22,8 +28,6 @@ public partial class MetadataMappingRuleWindow : Window
         PublicationDatePicker.SelectedDate = existing.Metadata.PublicationDate?.ToDateTime(TimeOnly.MinValue);
         LanguageCombo.Text = existing.Metadata.Language ?? string.Empty;
         DescriptionText.Text = existing.Metadata.Description ?? string.Empty;
-        _customMetadata = CalibreCustomMetadata.NormalizeAll(existing.Metadata.CustomMetadata);
-        UpdateCustomMetadataSummary();
     }
 
     public FolderMetadataRule? Rule { get; private set; }
@@ -62,7 +66,7 @@ public partial class MetadataMappingRuleWindow : Window
                 : null,
             Language = EmptyToNull(LanguageCombo.Text),
             Description = EmptyToNull(DescriptionText.Text),
-            CustomMetadata = _customMetadata,
+            CustomMetadata = _customMetadata.Where(item => item.HasValue).ToArray(),
         };
         if (metadata.IsEmpty)
         {
@@ -87,9 +91,12 @@ public partial class MetadataMappingRuleWindow : Window
     private void UpdateCustomMetadataSummary()
     {
         if (CustomMetadataSummaryText is null) return;
-        CustomMetadataSummaryText.Text = _customMetadata.Count == 0
-            ? "未设置；可固定映射到 #检索名"
-            : $"已设置 {_customMetadata.Count} 项：{string.Join("、", _customMetadata.Select(item => item.DisplayHeading))}";
+        var assigned = _customMetadata.Where(item => item.HasValue).ToArray();
+        CustomMetadataSummaryText.Text = assigned.Length == 0
+            ? _customMetadata.Count == 0
+                ? "尚未定义自定义字段"
+                : $"可填写 {_customMetadata.Count} 个已定义字段；当前规则均留空"
+            : $"当前规则已填写 {assigned.Length} 项：{string.Join("、", assigned.Select(item => item.DisplayHeading))}";
     }
 
     private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

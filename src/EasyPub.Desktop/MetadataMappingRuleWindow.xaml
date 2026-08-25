@@ -33,7 +33,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <StackPanel><TextBlock Style="{StaticResource Label}" Text="简介"/><TextBox x:Name="DescriptionText" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"/></StackPanel>
                     <Border Grid.Row="2" Background="#EEF4FF" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="8" Padding="10">
-                        <DockPanel><Button Content="编辑自定义元数据" DockPanel.Dock="Right" Margin="10,0,0,0" Click="EditCustomMetadata_Click"/><StackPanel VerticalAlignment="Center"><TextBlock Text="Calibre 自定义列" Foreground="#1D4ED8" FontWeight="SemiBold"/><TextBlock x:Name="CustomMetadataSummaryText" Text="未设置；可固定映射到 #检索名" Foreground="#667085" FontSize="11"/></StackPanel></DockPanel>
+                    <DockPanel><Button Content="填写自定义元数据" DockPanel.Dock="Right" Margin="10,0,0,0" Click="EditCustomMetadata_Click"/><StackPanel VerticalAlignment="Center"><TextBlock Text="Calibre 自定义列" Foreground="#1D4ED8" FontWeight="SemiBold"/><TextBlock x:Name="CustomMetadataSummaryText" Text="当前规则尚未填写自定义值" Foreground="#667085" FontSize="11"/></StackPanel></DockPanel>
                     </Border>
                 </Grid>
             </Grid>

@@ -9,7 +9,9 @@ public partial class BatchMetadataWindow : Window
     private readonly IReadOnlyList<InputBookItem> _books;
     public ObservableCollection<MetadataEditRow> Rows { get; }
 
-    public BatchMetadataWindow(IReadOnlyList<InputBookItem> books)
+    public BatchMetadataWindow(
+        IReadOnlyList<InputBookItem> books,
+        IReadOnlyList<EasyPub.Core.CalibreCustomMetadata>? customMetadataDefinitions = null)
     {
         InitializeComponent();
         _books = books;
@@ -21,7 +23,9 @@ public partial class BatchMetadataWindow : Window
             book.MetadataOverrides.Publisher,
             book.MetadataOverrides.Category,
             book.MetadataOverrides.Language,
-            book.MetadataOverrides.CustomMetadata,
+            EasyPub.Core.CalibreCustomMetadata.PrepareAssignments(
+                customMetadataDefinitions,
+                book.MetadataOverrides.CustomMetadata),
             book.MetadataRuleFolder is null ? "手动/默认" : $"映射：{Path.GetFileName(book.MetadataRuleFolder)}",
             book.CoverImagePath is null ? "未设置" : "有封面")));
         MetadataGrid.ItemsSource = Rows;
@@ -45,7 +49,7 @@ public partial class BatchMetadataWindow : Window
                 Publisher = EmptyToNull(row.Publisher),
                 Category = EmptyToNull(row.Category),
                 Language = EmptyToNull(row.Language),
-                CustomMetadata = row.CustomMetadata,
+                CustomMetadata = row.CustomMetadata.Where(item => item.HasValue).ToArray(),
             }, null);
         }
         DialogResult = true;
@@ -84,7 +88,14 @@ public sealed class MetadataEditRow(
     public string? Category { get; set; } = category;
     public string? Language { get; set; } = language;
     public IReadOnlyList<EasyPub.Core.CalibreCustomMetadata> CustomMetadata { get; set; } = customMetadata;
-    public string CustomMetadataLabel => CustomMetadata.Count == 0 ? "编辑" : $"编辑（{CustomMetadata.Count}）";
+    public string CustomMetadataLabel
+    {
+        get
+        {
+            var assignedCount = CustomMetadata.Count(item => item.HasValue);
+            return assignedCount == 0 ? "填写" : $"填写（{assignedCount}）";
+        }
+    }
     public string MetadataSource { get; } = metadataSource;
     public string CoverState { get; } = coverState;
 }

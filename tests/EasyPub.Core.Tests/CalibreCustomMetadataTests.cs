@@ -38,16 +38,47 @@ public sealed class CalibreCustomMetadataTests
     }
 
     [Fact]
-    public void Empty_text_list_is_rejected()
+    public void Empty_value_preserves_the_field_definition()
     {
-        Assert.Throws<ArgumentException>(() => CalibreCustomMetadata.NormalizeAll([
+        var item = Assert.Single(CalibreCustomMetadata.NormalizeAll([
             new CalibreCustomMetadata
             {
                 LookupName = "kindlecollections",
+                ColumnHeading = "Kindle书架",
                 Type = CalibreCustomMetadataType.TextList,
                 Value = "，,，",
             },
         ]));
+
+        Assert.Equal("#kindlecollections", item.CalibreLookupName);
+        Assert.Equal("Kindle书架", item.DisplayHeading);
+        Assert.False(item.HasValue);
+    }
+
+    [Fact]
+    public void Existing_field_definitions_are_reused_without_copying_unified_values()
+    {
+        var assignments = CalibreCustomMetadata.PrepareAssignments([
+            new CalibreCustomMetadata
+            {
+                LookupName = "kindlecollections",
+                ColumnHeading = "Kindle书架",
+                Type = CalibreCustomMetadataType.TextList,
+                Value = "统一值",
+            },
+        ], [new CalibreCustomMetadata
+        {
+            LookupName = "kindlecollections",
+            ColumnHeading = "旧标题",
+            Type = CalibreCustomMetadataType.Text,
+            Value = "逐书值",
+        }]);
+
+        var item = Assert.Single(assignments);
+        Assert.Equal("#kindlecollections", item.CalibreLookupName);
+        Assert.Equal("Kindle书架", item.DisplayHeading);
+        Assert.Equal(CalibreCustomMetadataType.TextList, item.Type);
+        Assert.Equal("逐书值", item.Value);
     }
 
     [Fact]
@@ -67,6 +98,23 @@ public sealed class CalibreCustomMetadataTests
         var custom = Assert.Single(result.CustomMetadata);
         Assert.Equal("#source", custom.CalibreLookupName);
         Assert.Equal("起点", custom.Value);
+    }
+
+    [Fact]
+    public void Blank_scoped_value_keeps_the_unified_fallback()
+    {
+        var unified = new PublicationMetadata
+        {
+            CustomMetadata = [new CalibreCustomMetadata { LookupName = "source", Value = "统一" }],
+        };
+        var scoped = new BookMetadataOverrides
+        {
+            CustomMetadata = [new CalibreCustomMetadata { LookupName = "source", Value = "" }],
+        };
+
+        var custom = Assert.Single(MetadataMappingResolver.Apply(unified, scoped).CustomMetadata);
+
+        Assert.Equal("统一", custom.Value);
     }
 
     [Fact]
@@ -114,6 +162,47 @@ public sealed class CalibreCustomMetadataTests
             Assert.Equal(["起点", "完结"], json.RootElement.GetProperty("#value#").EnumerateArray().Select(value => value.GetString()));
             Assert.False(content.Contains("composite", StringComparison.OrdinalIgnoreCase));
             Assert.False(content.Contains("template", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Epub_skips_defined_custom_columns_that_have_no_value()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-calibre-empty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "小说.txt");
+        var output = Path.Combine(directory, "小说.epub");
+        await File.WriteAllTextAsync(input, "第一章 雨夜\n正文", Encoding.UTF8);
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                input,
+                output,
+                "测试书",
+                "测试作者",
+                ConversionOptions.LegacyDefault with
+                {
+                    Metadata = new PublicationMetadata
+                    {
+                        CustomMetadata = [new CalibreCustomMetadata
+                        {
+                            LookupName = "kindlecollections",
+                            ColumnHeading = "Kindle书架",
+                            Type = CalibreCustomMetadataType.TextList,
+                        }],
+                    },
+                }));
+
+            using var archive = ZipFile.OpenRead(output);
+            var entry = Assert.Single(archive.Entries, candidate => candidate.FullName == "OEBPS/content.opf");
+            await using var stream = entry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var opf = await reader.ReadToEndAsync();
+            Assert.DoesNotContain("calibre:user_metadata:#kindlecollections", opf, StringComparison.Ordinal);
         }
         finally
         {

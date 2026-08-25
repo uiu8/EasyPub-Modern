@@ -7,9 +7,14 @@ namespace EasyPub.Desktop;
 
 public partial class MetadataMappingWindow : Window
 {
-    public MetadataMappingWindow(IReadOnlyList<FolderMetadataRule> rules)
+    private readonly IReadOnlyList<CalibreCustomMetadata> _customMetadataDefinitions;
+
+    public MetadataMappingWindow(
+        IReadOnlyList<FolderMetadataRule> rules,
+        IReadOnlyList<CalibreCustomMetadata>? customMetadataDefinitions = null)
     {
         InitializeComponent();
+        _customMetadataDefinitions = CalibreCustomMetadata.NormalizeAll(customMetadataDefinitions);
         Rules = new ObservableCollection<FolderMetadataRule>(rules);
         DataContext = this;
     }
@@ -18,7 +23,7 @@ public partial class MetadataMappingWindow : Window
 
     private void AddRule_Click(object sender, RoutedEventArgs e)
     {
-        var editor = new MetadataMappingRuleWindow(null) { Owner = this };
+        var editor = new MetadataMappingRuleWindow(null, _customMetadataDefinitions) { Owner = this };
         if (editor.ShowDialog() != true || editor.Rule is null) return;
         ReplaceSameFolder(editor.Rule);
         RulesGrid.SelectedItem = editor.Rule;
@@ -36,7 +41,7 @@ public partial class MetadataMappingWindow : Window
             return;
         }
 
-        var editor = new MetadataMappingRuleWindow(selected) { Owner = this };
+        var editor = new MetadataMappingRuleWindow(selected, _customMetadataDefinitions) { Owner = this };
         if (editor.ShowDialog() != true || editor.Rule is null) return;
         Rules.Remove(selected);
         ReplaceSameFolder(editor.Rule);

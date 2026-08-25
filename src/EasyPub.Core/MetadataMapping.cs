@@ -15,9 +15,9 @@ public sealed record BookMetadataOverrides
     public IReadOnlyList<CalibreCustomMetadata> CustomMetadata { get; init; } = [];
 
     [JsonIgnore]
-    public string CustomMetadataSummary => CustomMetadata.Count == 0
+    public string CustomMetadataSummary => !CustomMetadata.Any(item => item.HasValue)
         ? string.Empty
-        : string.Join("、", CustomMetadata.Select(item => item.DisplayHeading));
+        : string.Join("、", CustomMetadata.Where(item => item.HasValue).Select(item => item.DisplayHeading));
 
     [JsonIgnore]
     public bool IsEmpty =>
@@ -29,7 +29,7 @@ public sealed record BookMetadataOverrides
         string.IsNullOrWhiteSpace(Category) &&
         string.IsNullOrWhiteSpace(Language) &&
         string.IsNullOrWhiteSpace(Description) &&
-        CustomMetadata.Count == 0;
+        !CustomMetadata.Any(item => item.HasValue);
 }
 
 public sealed record FolderMetadataRule(string FolderPath, BookMetadataOverrides Metadata);
@@ -100,7 +100,10 @@ public static class MetadataMappingResolver
                 candidate.CalibreLookupName,
                 item.CalibreLookupName,
                 StringComparison.OrdinalIgnoreCase));
-            if (index >= 0) merged[index] = item;
+            if (index >= 0)
+            {
+                if (item.HasValue) merged[index] = merged[index] with { Value = item.Value };
+            }
             else merged.Add(item);
         }
         return merged;
