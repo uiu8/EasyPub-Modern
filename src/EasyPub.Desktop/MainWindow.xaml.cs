@@ -698,8 +698,8 @@ public partial class MainWindow : Window
     private void UpdateProjectTitle()
     {
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.22.0"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.22.0";
+            ? "EasyPub Modern v0.22.1"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.22.1";
         UpdateWorkspaceScope();
     }
 
@@ -1196,6 +1196,26 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) == true) await AssignCoverAsync(book, dialog.FileName);
     }
 
+    private void OpenCoverPreview_Click(object sender, RoutedEventArgs e)
+    {
+        var book = SelectedCoverBook();
+        if (book is null) return;
+        if (CoverPreviewImage.Source is not ImageSource cover)
+        {
+            BrowseCover_Click(sender, e);
+            return;
+        }
+
+        var preview = new CoverLightboxWindow(
+            book.DisplayName,
+            cover,
+            CoverPreviewImage.ToolTip?.ToString() ?? book.CoverImagePath)
+        {
+            Owner = this,
+        };
+        preview.ShowDialog();
+    }
+
     private async void ClearCover_Click(object sender, RoutedEventArgs e)
     {
         var book = SelectedCoverBook();
@@ -1258,6 +1278,8 @@ public partial class MainWindow : Window
         var version = ++_coverPreviewVersion;
         var book = SelectedCoverBook();
         BrowseCoverButton.IsEnabled = book is not null;
+        BrowseCoverButton.Content = book?.CoverImagePath is null ? "选择封面" : "更换封面";
+        OpenCoverPreviewButton.IsEnabled = book is not null;
         ClearCoverButton.IsEnabled = book?.CoverImagePath is not null;
         CoverPreviewImage.Source = null;
         CoverPreviewImage.ToolTip = null;
@@ -1280,7 +1302,7 @@ public partial class MainWindow : Window
             SelectedBookOptionsText.Text = $"当前小说：《{book.DisplayName}》· {book.Illustrations.Count} 张正文插图";
         if (string.IsNullOrWhiteSpace(book.CoverImagePath))
         {
-            CoverPlaceholderText.Text = "拖入 JPG、PNG、WebP\n或点击“选择封面”";
+            CoverPlaceholderText.Text = "拖入封面\n或点击选择";
             return;
         }
 
@@ -1325,10 +1347,12 @@ public partial class MainWindow : Window
         bitmap.EndInit();
         bitmap.Freeze();
         CoverPreviewImage.Source = bitmap;
+        book.SetCoverThumbnail(bitmap);
         CoverPreviewImage.ToolTip = $"{book.CoverImagePath}\n{prepared.PixelWidth} × {prepared.PixelHeight} · {prepared.SourceFormat}"
             + (prepared.WasConverted ? " → JPG" : string.Empty);
         CoverPlaceholderText.Visibility = Visibility.Collapsed;
         ClearCoverButton.IsEnabled = true;
+        BrowseCoverButton.Content = "更换封面";
     }
 
     private InputBookItem? SelectedCoverBook() =>
@@ -1929,7 +1953,7 @@ public partial class MainWindow : Window
         var showCover = singleBook is not null;
         CoverDropPanel.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
         CoverGapColumn.Width = new GridLength(showCover ? 14 : 0);
-        CoverColumn.Width = new GridLength(showCover ? (_compactLayout ? 230 : 278) : 0);
+        CoverColumn.Width = new GridLength(showCover ? (_compactLayout ? 270 : 330) : 0);
     }
 
     private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2075,8 +2099,8 @@ public partial class MainWindow : Window
         RunPreflightButton.Content = compact ? "检查" : "检查问题";
         ConvertButton.Content = compact ? "开始转换 →" : "开始批量转换  →";
         StatusText.FontSize = compact ? 11 : 12;
-        BookListRow.Height = new GridLength(compact ? 180 : 205);
-        CoverPreviewBorder.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        BookListRow.Height = new GridLength(compact ? 205 : 220);
+        CoverPreviewBorder.Visibility = Visibility.Visible;
         WorkspaceScopeText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         foreach (var tab in OptionsTabs.Items.OfType<TabItem>()) tab.Padding = compact ? new Thickness(10, 8, 10, 8) : new Thickness(15, 8, 15, 8);
         UpdateContextualControls();
@@ -2158,6 +2182,8 @@ public sealed class InputBookItem : INotifyPropertyChanged
 {
     private string _inputPath;
     private string? _coverImagePath;
+    private ImageSource? _coverThumbnail;
+    private int _coverThumbnailVersion;
     private string? _title;
     private string? _author;
     private IReadOnlyList<BookIllustration> _illustrations = [];
@@ -2210,16 +2236,39 @@ public sealed class InputBookItem : INotifyPropertyChanged
         get => _coverImagePath;
         set
         {
-            if (!SetField(ref _coverImagePath, value is null ? null : Path.GetFullPath(value))) return;
+            var normalized = value is null ? null : Path.GetFullPath(value);
+            if (!SetField(ref _coverImagePath, normalized)) return;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverLabel)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverBadgeVisibility)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibilityName)));
+            _ = RefreshCoverThumbnailAsync(normalized);
         }
     }
 
     public string CoverLabel => CoverImagePath is null ? string.Empty : "有封面";
 
     public Visibility CoverBadgeVisibility => CoverImagePath is null ? Visibility.Collapsed : Visibility.Visible;
+
+    public ImageSource? CoverThumbnail
+    {
+        get => _coverThumbnail;
+        private set
+        {
+            if (!SetField(ref _coverThumbnail, value)) return;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverThumbnailVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverThumbnailPlaceholderVisibility)));
+        }
+    }
+
+    public Visibility CoverThumbnailVisibility => CoverThumbnail is null ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility CoverThumbnailPlaceholderVisibility => CoverThumbnail is null ? Visibility.Visible : Visibility.Collapsed;
+
+    internal void SetCoverThumbnail(ImageSource? thumbnail)
+    {
+        if (thumbnail is Freezable freezable && freezable.CanFreeze && !freezable.IsFrozen) freezable.Freeze();
+        CoverThumbnail = thumbnail;
+    }
 
     public IReadOnlyList<BookIllustration> Illustrations => _illustrations;
 
@@ -2326,6 +2375,32 @@ public sealed class InputBookItem : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    private async Task RefreshCoverThumbnailAsync(string? coverPath)
+    {
+        var version = ++_coverThumbnailVersion;
+        CoverThumbnail = null;
+        if (string.IsNullOrWhiteSpace(coverPath)) return;
+
+        try
+        {
+            var prepared = await CoverImageConverter.PrepareJpegAsync(coverPath);
+            if (version != _coverThumbnailVersion || !string.Equals(CoverImagePath, coverPath, StringComparison.OrdinalIgnoreCase)) return;
+            using var stream = new MemoryStream(prepared.JpegBytes, writable: false);
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 120;
+            bitmap.StreamSource = stream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            CoverThumbnail = bitmap;
+        }
+        catch
+        {
+            if (version == _coverThumbnailVersion) CoverThumbnail = null;
+        }
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {

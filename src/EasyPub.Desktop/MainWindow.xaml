@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyPub Modern v0.22.0" Width="1180" Height="860" MinWidth="840" MinHeight="640"
+        Title="EasyPub Modern v0.22.1" Width="1180" Height="860" MinWidth="840" MinHeight="640"
         WindowStartupLocation="CenterScreen" Background="#F5F7FB" AllowDrop="True"
         FontFamily="Microsoft YaHei UI" TextOptions.TextFormattingMode="Display"
         Drop="Window_Drop" DragOver="Window_DragOver" SizeChanged="MainWindow_SizeChanged" PreviewKeyDown="MainWindow_PreviewKeyDown">
@@ -213,8 +213,13 @@
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Grid>
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                            <Border Width="32" Height="32" CornerRadius="8" Background="#EEF4FF" VerticalAlignment="Center"><TextBlock Text="文" Foreground="#2563EB" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <Border Width="38" Height="52" CornerRadius="6" Background="#EEF4FF" BorderBrush="#D6E4FF" BorderThickness="1" VerticalAlignment="Center" ClipToBounds="True">
+                                                <Grid>
+                                                    <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" Visibility="{Binding CoverThumbnailVisibility}" AutomationProperties.Name="书稿封面缩略图"/>
+                                                    <TextBlock Text="文" Foreground="#2563EB" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding CoverThumbnailPlaceholderVisibility}"/>
+                                                </Grid>
+                                            </Border>
                                             <StackPanel Grid.Column="1" Margin="8,0,12,0" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding DisplayName}" Foreground="#172033" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                                 <TextBlock Text="{Binding DirectoryPath}" Foreground="#98A2B3" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding InputPath}"/>
@@ -239,20 +244,39 @@
                         </Grid>
                     </Border>
 
-                    <Border x:Name="CoverDropPanel" Grid.Column="2" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="10" Background="#F8FAFF" Padding="10" AllowDrop="True" DragOver="CoverDrop_DragOver" Drop="CoverDrop_Drop" Visibility="Collapsed" AutomationProperties.Name="所选小说概览与封面">
+                    <Border x:Name="CoverDropPanel" Grid.Column="2" BorderBrush="#C7D7FE" BorderThickness="1" CornerRadius="10" Background="#F8FAFF" Padding="10" AllowDrop="True" DragOver="CoverDrop_DragOver" Drop="CoverDrop_Drop" Visibility="Collapsed" AutomationProperties.Name="所选小说概览与封面" AutomationProperties.HelpText="拖入 JPG、PNG 或 WebP 可替换所选小说封面">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                             <DockPanel><Border DockPanel.Dock="Right" Background="#EEF4FF" CornerRadius="10" Padding="7,3"><TextBlock x:Name="SelectedBookFormatText" Text="TXT" Foreground="#1D4ED8" FontSize="10"/></Border><TextBlock x:Name="SelectedBookNameText" Text="所选小说概览" FontWeight="SemiBold" Foreground="#344054" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
                             <TextBlock x:Name="SelectedBookSummaryText" Grid.Row="1" Margin="0,5,0,0" Text="封面：无 · 元数据：无 · 插图：0 · 章节树：无" Foreground="#667085" FontSize="10" TextWrapping="Wrap"/>
-                            <Border x:Name="CoverPreviewBorder" Grid.Row="2" Margin="0,6" Background="White" BorderBrush="#DCE3EC" BorderThickness="1" CornerRadius="7"><Grid><Image x:Name="CoverPreviewImage" Stretch="Uniform" Margin="5"/><TextBlock x:Name="CoverPlaceholderText" Text="选择一本小说后，将图片拖到这里" TextWrapping="Wrap" TextAlignment="Center" Foreground="#98A2B3" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="18"/></Grid></Border>
-                            <UniformGrid Grid.Row="3" Columns="3" Margin="0,0,0,6">
-                                <Button x:Name="QuickChapterButton" Content="章节树" Click="EditChapters_Click" Padding="7,5" Margin="0,0,5,5" AutomationProperties.Name="编辑所选书稿章节树"/>
-                                <Button x:Name="QuickCleanupButton" Content="文本清理" Click="EditTextCleanup_Click" Padding="7,5" Margin="0,0,5,5" AutomationProperties.Name="清理所选书稿文本"/>
-                                <Button x:Name="QuickMetadataButton" Content="书籍信息" Click="EditMetadata_Click" Padding="7,5" Margin="0,0,0,5" AutomationProperties.Name="填写逐书书籍信息"/>
-                                <Button x:Name="QuickIllustrationButton" Content="插图" Click="EditIllustrations_Click" Padding="7,5" Margin="0,0,5,0" AutomationProperties.Name="管理所选书稿插图"/>
-                                <Button x:Name="QuickPreviewButton" Content="近似预览" Click="PreviewBook_Click" Padding="7,5" Margin="0,0,5,0" AutomationProperties.Name="打开所选书稿近似版式预览"/>
-                            </UniformGrid>
-                            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center"><Button x:Name="BrowseCoverButton" Content="选择封面" Click="BrowseCover_Click" IsEnabled="False" Style="{StaticResource AccentButton}" AutomationProperties.Name="为所选小说选择封面"/><Button x:Name="ClearCoverButton" Content="清除" Click="ClearCover_Click" IsEnabled="False" Margin="0" AutomationProperties.Name="清除所选小说封面"/></StackPanel>
+                            <Grid Grid.Row="2" Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="88"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <Button x:Name="OpenCoverPreviewButton" Padding="0" BorderThickness="0" Background="Transparent" Click="OpenCoverPreview_Click" IsEnabled="False" Cursor="Hand" AutomationProperties.Name="查看所选小说封面大图" AutomationProperties.HelpText="没有封面时点击可选择封面">
+                                        <Border x:Name="CoverPreviewBorder" Width="82" Height="112" Background="White" BorderBrush="#DCE3EC" BorderThickness="1" CornerRadius="7" ClipToBounds="True">
+                                            <Grid>
+                                                <Image x:Name="CoverPreviewImage" Stretch="Uniform" Margin="4"/>
+                                                <TextBlock x:Name="CoverPlaceholderText" Text="拖入封面&#x0a;或点击选择" TextWrapping="Wrap" TextAlignment="Center" Foreground="#98A2B3" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="8" FontSize="10"/>
+                                            </Grid>
+                                        </Border>
+                                    </Button>
+                                    <TextBlock Text="点击大图&#x0a;拖入可替换" Margin="0,4,0,0" FontSize="9" Foreground="#98A2B3" TextAlignment="Center" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Grid Grid.Column="2">
+                                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <UniformGrid Columns="2" VerticalAlignment="Top">
+                                        <Button x:Name="QuickChapterButton" Content="章节树" Click="EditChapters_Click" Padding="6,5" Margin="0,0,5,5" AutomationProperties.Name="编辑所选书稿章节树"/>
+                                        <Button x:Name="QuickCleanupButton" Content="文本清理" Click="EditTextCleanup_Click" Padding="6,5" Margin="0,0,0,5" AutomationProperties.Name="清理所选书稿文本"/>
+                                        <Button x:Name="QuickMetadataButton" Content="书籍信息" Click="EditMetadata_Click" Padding="6,5" Margin="0,0,5,5" AutomationProperties.Name="填写逐书书籍信息"/>
+                                        <Button x:Name="QuickIllustrationButton" Content="插图" Click="EditIllustrations_Click" Padding="6,5" Margin="0,0,0,5" AutomationProperties.Name="管理所选书稿插图"/>
+                                        <Button x:Name="QuickPreviewButton" Content="近似预览" Click="PreviewBook_Click" Padding="6,5" Margin="0,0,5,0" AutomationProperties.Name="打开所选书稿近似版式预览"/>
+                                    </UniformGrid>
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button x:Name="BrowseCoverButton" Content="更换封面" Click="BrowseCover_Click" IsEnabled="False" Style="{StaticResource AccentButton}" Padding="10,6" AutomationProperties.Name="为所选小说选择或更换封面"/>
+                                        <Button x:Name="ClearCoverButton" Content="清除" Click="ClearCover_Click" IsEnabled="False" Margin="0" Padding="9,6" AutomationProperties.Name="清除所选小说封面"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>

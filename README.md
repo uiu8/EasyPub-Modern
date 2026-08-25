@@ -6,16 +6,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v0.22.0-2563EB?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.0)
+[![当前版本](https://img.shields.io/badge/当前版本-v0.22.1-2563EB?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.1)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载最新版](https://github.com/uiu8/EasyPub-Modern/releases/download/v0.22.0/EasyPubModern-v0.22.0-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.0)
+**[下载最新版](https://github.com/uiu8/EasyPub-Modern/releases/download/v0.22.1/EasyPubModern-v0.22.1-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.1)
 
 </div>
 
-![EasyPub Modern v0.22.0 主界面](assets/readme/overview.png)
+![EasyPub Modern v0.22.1 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -36,7 +36,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.0) 下载并解压 Windows x64 压缩包。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v0.22.1) 下载并解压 Windows x64 压缩包。
 2. 运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -51,7 +51,7 @@
 |---|---|
 | 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、问题优先排序、1–4 个并发任务与失败重试 |
 | 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、插图和章节树 |
-| 封面与图片 | 拖放预览 JPG / PNG / WebP；PNG、WebP 解码后转为高质量 JPEG；插图可选择正文位置 |
+| 封面与图片 | 书稿列表显示逐书缩略图；右侧封面卡片支持点击大图与拖入替换；PNG、WebP 解码后转为高质量 JPEG；插图可选择正文位置 |
 | 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关 |
 | 排版与样式 | 字号、行高、段距、缩进、对齐、四边页边距、嵌入 TTF 字体与定制 CSS |
 | 文本清理 | 空行、硬换行、全角空格、章节编号、网站说明、简繁转换与中文标点逐项预览、定位及单项排除 |
@@ -59,8 +59,11 @@
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v0.22.0 重点调整
+## v0.22.1 重点调整
 
+- 书稿列表直接显示每本书的封面缩略图，切换小说时更容易确认封面是否对应。
+- 所选小说的右侧卡片始终保留竖版封面预览；点击可查看大图，向卡片拖入 JPG、PNG 或 WebP 可直接替换。
+- 无封面时按钮显示“选择封面”，设置后自动变为“更换封面”；窄窗口也不再折叠封面预览。
 - 书稿列表加入搜索、状态/格式筛选和问题优先排序；每本书旁可直接进入章节树、文本清理、书籍信息、插图和近似预览。
 - “转换前检查”“当前任务与验收”“转换历史”合并到统一任务中心，检查结果会回写书稿状态并用于筛选。
 - 文本清理的每一条修改都可以单独排除或恢复，还能按规则筛选并搜索修改前后的文字。
@@ -141,4 +144,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v0.22.0**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v0.22.1**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

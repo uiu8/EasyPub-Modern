@@ -3,6 +3,9 @@ using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using EasyPub.Desktop;
 
 namespace EasyPub.Desktop.Tests;
@@ -16,6 +19,7 @@ public sealed class MainWindowLayoutTests
         var settingsPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-settings-{Guid.NewGuid():N}.json");
         var recoveryPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-recovery-{Guid.NewGuid():N}.json");
         var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-book-{Guid.NewGuid():N}.txt");
+        var coverPath = Path.Combine(Path.GetTempPath(), $"easypub-layout-cover-{Guid.NewGuid():N}.png");
         var previousSettingsPath = Environment.GetEnvironmentVariable("EASYPUB_APP_SETTINGS_PATH");
         var previousRecoveryPath = Environment.GetEnvironmentVariable("EASYPUB_RECOVERY_PATH");
         var previousDisableSave = Environment.GetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE");
@@ -26,7 +30,6 @@ public sealed class MainWindowLayoutTests
             Environment.SetEnvironmentVariable("EASYPUB_RECOVERY_PATH", recoveryPath);
             Environment.SetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE", "1");
             File.WriteAllText(inputPath, "第一章 雨夜\n正文");
-
             var thread = new Thread(() =>
             {
                 MainWindow? window = null;
@@ -102,13 +105,27 @@ public sealed class MainWindowLayoutTests
                     Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
                     Assert.IsType<Button>(window.FindName("QuickIllustrationButton"));
                     Assert.IsType<Button>(window.FindName("QuickPreviewButton"));
+                    var openCoverPreview = Assert.IsType<Button>(window.FindName("OpenCoverPreviewButton"));
+                    var coverPreviewBorder = Assert.IsType<Border>(window.FindName("CoverPreviewBorder"));
                     Assert.Equal(ScrollBarVisibility.Disabled, ScrollViewer.GetHorizontalScrollBarVisibility(filesList));
                     var selectedSummary = Assert.IsType<TextBlock>(window.FindName("SelectedBookSummaryText"));
+                    WriteTestCover(coverPath);
                     var book = new InputBookItem(inputPath);
                     window.InputBooks.Add(book);
                     filesList.SelectedItem = book;
                     window.UpdateLayout();
                     Assert.Contains("封面：无", selectedSummary.Text);
+                    Assert.True(openCoverPreview.IsEnabled);
+                    Assert.Equal(Visibility.Visible, coverPreviewBorder.Visibility);
+                    Assert.Equal(112, coverPreviewBorder.ActualHeight, 0.5);
+                    book.CoverImagePath = coverPath;
+                    PumpDispatcherUntil(() => book.CoverThumbnail is not null, TimeSpan.FromSeconds(3));
+                    Assert.NotNull(book.CoverThumbnail);
+                    Assert.Equal(Visibility.Visible, book.CoverThumbnailVisibility);
+                    Assert.Equal(Visibility.Collapsed, book.CoverThumbnailPlaceholderVisibility);
+                    window.Width = 840;
+                    window.UpdateLayout();
+                    Assert.Equal(Visibility.Visible, coverPreviewBorder.Visibility);
                     var item = Assert.IsType<ListBoxItem>(filesList.ItemContainerGenerator.ContainerFromItem(book));
                     Assert.Contains(Path.GetFileNameWithoutExtension(inputPath), System.Windows.Automation.AutomationProperties.GetName(item));
                 }
@@ -134,6 +151,42 @@ public sealed class MainWindowLayoutTests
             if (File.Exists(settingsPath)) File.Delete(settingsPath);
             if (File.Exists(recoveryPath)) File.Delete(recoveryPath);
             if (File.Exists(inputPath)) File.Delete(inputPath);
+            if (File.Exists(coverPath)) File.Delete(coverPath);
         }
+    }
+
+    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        if (condition()) return;
+        var frame = new DispatcherFrame();
+        var started = DateTime.UtcNow;
+        var timer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(15),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (!condition() && DateTime.UtcNow - started < timeout) return;
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        Dispatcher.PushFrame(frame);
+        Assert.True(condition(), "封面缩略图未在限定时间内加载完成。");
+    }
+
+    private static void WriteTestCover(string path)
+    {
+        var pixels = new byte[]
+        {
+            0x30, 0x60, 0xE0, 0xFF, 0x30, 0x60, 0xE0, 0xFF,
+            0x20, 0x40, 0xA0, 0xFF, 0x20, 0x40, 0xA0, 0xFF,
+            0x10, 0x20, 0x60, 0xFF, 0x10, 0x20, 0x60, 0xFF,
+        };
+        var source = BitmapSource.Create(2, 3, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
     }
 }
