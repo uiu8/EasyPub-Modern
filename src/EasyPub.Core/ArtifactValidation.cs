@@ -229,10 +229,37 @@ public sealed class ArtifactValidationService
             AddWarning(issues, "srcs_present", "MOBI 中仍存在 KindleGen 源文件归档 SRCS。");
 
         var coverOffset = ReadExthUInt32(bytes, 201);
-        if (!string.IsNullOrWhiteSpace(request.Options?.CoverImagePath) && coverOffset is null)
-            AddError(issues, "cover_missing", "配置了封面，但 MOBI 元数据中没有封面记录。");
+        var configuredCoverPath = request.Options?.CoverImagePath;
+        if (!string.IsNullOrWhiteSpace(configuredCoverPath))
+        {
+            var coverRecord = await FindConfiguredCoverRecordAsync(
+                bytes,
+                configuredCoverPath,
+                coverOffset,
+                cancellationToken).ConfigureAwait(false);
+            if (coverRecord is null)
+            {
+                AddError(
+                    issues,
+                    "cover_missing",
+                    "配置了封面，但 MOBI 中未找到与所选封面一致的图片记录（已检查 EXTH 201 与首图记录）。");
+            }
+            else
+            {
+                var location = coverOffset is null ? "首图" : "EXTH 201";
+                issues.Add(new ArtifactValidationIssue(
+                    ArtifactValidationSeverity.Information,
+                    "cover_present",
+                    $"MOBI 封面存在（{location}，图片记录 {coverRecord.Value}）。"));
+            }
+        }
         else if (coverOffset is not null)
-            issues.Add(new ArtifactValidationIssue(ArtifactValidationSeverity.Information, "cover_present", "MOBI 封面记录存在。"));
+        {
+            issues.Add(new ArtifactValidationIssue(
+                ArtifactValidationSeverity.Information,
+                "cover_present",
+                "MOBI EXTH 201 封面记录存在。"));
+        }
 
         issues.Add(new ArtifactValidationIssue(
             ArtifactValidationSeverity.Information,
@@ -269,6 +296,75 @@ public sealed class ArtifactValidationService
     {
         var value = ReadExthBytes(bytes, requestedType);
         return value is { Length: >= 4 } ? BinaryPrimitives.ReadUInt32BigEndian(value) : null;
+    }
+
+    private static async Task<int?> FindConfiguredCoverRecordAsync(
+        byte[] mobiBytes,
+        string coverPath,
+        uint? coverOffset,
+        CancellationToken cancellationToken)
+    {
+        PreparedCoverImage expectedCover;
+        try
+        {
+            expectedCover = await CoverImageConverter.PrepareJpegAsync(coverPath, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or NotSupportedException)
+        {
+            return null;
+        }
+
+        var firstImageRecord = ReadFirstImageRecordIndex(mobiBytes);
+        if (firstImageRecord is null) return null;
+
+        if (coverOffset is not null && coverOffset.Value <= int.MaxValue)
+        {
+            var exthRecord = (long)firstImageRecord.Value + coverOffset.Value;
+            if (exthRecord <= int.MaxValue
+                && PalmRecordMatches(mobiBytes, (int)exthRecord, expectedCover.JpegBytes))
+                return (int)exthRecord;
+        }
+
+        return PalmRecordMatches(mobiBytes, firstImageRecord.Value, expectedCover.JpegBytes)
+            ? firstImageRecord.Value
+            : null;
+    }
+
+    private static int? ReadFirstImageRecordIndex(byte[] bytes)
+    {
+        try
+        {
+            var record0 = checked((int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(78, 4)));
+            var firstImage = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(record0 + 108, 4));
+            return firstImage <= int.MaxValue ? (int)firstImage : null;
+        }
+        catch (Exception exception) when (exception is ArgumentOutOfRangeException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static bool PalmRecordMatches(byte[] bytes, int recordIndex, ReadOnlySpan<byte> expected)
+    {
+        try
+        {
+            var recordCount = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(76, 2));
+            if (recordIndex < 0 || recordIndex >= recordCount) return false;
+            var start = checked((int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(78 + (recordIndex * 8), 4)));
+            var end = recordIndex + 1 < recordCount
+                ? checked((int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(78 + ((recordIndex + 1) * 8), 4)))
+                : bytes.Length;
+            if (start < 0 || end < start || end > bytes.Length) return false;
+            var record = bytes.AsSpan(start, end - start);
+            if (record.SequenceEqual(expected)) return true;
+            if (record.Length < expected.Length || !record[..expected.Length].SequenceEqual(expected)) return false;
+            return record[expected.Length..].IndexOfAnyExcept((byte)0) < 0;
+        }
+        catch (Exception exception) when (exception is ArgumentOutOfRangeException or OverflowException)
+        {
+            return false;
+        }
     }
 
     private static byte[]? ReadExthBytes(byte[] bytes, uint requestedType)

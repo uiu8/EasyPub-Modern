@@ -1,4 +1,5 @@
 using EasyPub.Core;
+using SkiaSharp;
 
 namespace EasyPub.Core.Tests;
 
@@ -155,9 +156,93 @@ public sealed class ArtifactValidationTests
         }
     }
 
+    [Fact]
+    public async Task Mobi_validation_accepts_kindlegen_first_image_cover_without_exth_201()
+    {
+        var root = FindWorkspaceRoot();
+        var kindlegen = Path.Combine(root, "work", "easypub-compat", "legacy-capture", "bin", "kindlegen_v2.9.exe");
+        if (!File.Exists(kindlegen)) return;
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-mobi-cover-validate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "book.txt");
+        var cover = Path.Combine(directory, "cover.jpg");
+        var output = Path.Combine(directory, "book.mobi");
+        await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
+        WriteJpegCover(cover);
+        var request = new ConversionRequest(input, output, "MOBI 首图封面验收")
+        {
+            Options = new ConversionOptions
+            {
+                CoverImagePath = cover,
+                Mobi = new MobiOptions { KindleGenPath = kindlegen },
+            },
+        };
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(request);
+            var report = await new ArtifactValidationService().ValidateAndSaveAsync(request);
+
+            Assert.True(report.StructurePassed);
+            Assert.DoesNotContain(report.Issues, issue => issue.Code == "cover_missing");
+            Assert.Contains(report.Issues, issue => issue.Code == "cover_present" && issue.Message.Contains("首图"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Mobi_validation_still_rejects_a_configured_cover_when_no_cover_image_exists()
+    {
+        var root = FindWorkspaceRoot();
+        var kindlegen = Path.Combine(root, "work", "easypub-compat", "legacy-capture", "bin", "kindlegen_v2.9.exe");
+        if (!File.Exists(kindlegen)) return;
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-mobi-cover-missing-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "book.txt");
+        var configuredCover = Path.Combine(directory, "configured-cover.jpg");
+        var output = Path.Combine(directory, "book.mobi");
+        await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
+        WriteJpegCover(configuredCover);
+        var conversionRequest = new ConversionRequest(input, output, "MOBI 无封面验收")
+        {
+            Options = new ConversionOptions
+            {
+                Mobi = new MobiOptions { KindleGenPath = kindlegen },
+            },
+        };
+        var validationRequest = conversionRequest with
+        {
+            Options = conversionRequest.Options with { CoverImagePath = configuredCover },
+        };
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(conversionRequest);
+            var report = await new ArtifactValidationService().ValidateAndSaveAsync(validationRequest);
+
+            Assert.False(report.StructurePassed);
+            Assert.Contains(report.Issues, issue => issue.Code == "cover_missing" && issue.Severity == ArtifactValidationSeverity.Error);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private sealed class ImmediateProgress<T>(Action<T> handler) : IProgress<T>
     {
         public void Report(T value) => handler(value);
+    }
+
+    private static void WriteJpegCover(string path)
+    {
+        using var bitmap = new SKBitmap(40, 60);
+        bitmap.Erase(new SKColor(30, 90, 180));
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Jpeg, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
     }
 
 
