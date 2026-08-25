@@ -21,6 +21,7 @@ public partial class BatchMetadataWindow : Window
             book.MetadataOverrides.Publisher,
             book.MetadataOverrides.Category,
             book.MetadataOverrides.Language,
+            book.MetadataOverrides.CustomMetadata,
             book.MetadataRuleFolder is null ? "手动/默认" : $"映射：{Path.GetFileName(book.MetadataRuleFolder)}",
             book.CoverImagePath is null ? "未设置" : "有封面")));
         MetadataGrid.ItemsSource = Rows;
@@ -44,9 +45,19 @@ public partial class BatchMetadataWindow : Window
                 Publisher = EmptyToNull(row.Publisher),
                 Category = EmptyToNull(row.Category),
                 Language = EmptyToNull(row.Language),
+                CustomMetadata = row.CustomMetadata,
             }, null);
         }
         DialogResult = true;
+    }
+
+    private void EditCustomMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: MetadataEditRow row }) return;
+        var editor = new CustomMetadataWindow(row.CustomMetadata) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+        row.CustomMetadata = editor.Metadata;
+        MetadataGrid.Items.Refresh();
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
@@ -61,6 +72,7 @@ public sealed class MetadataEditRow(
     string? publisher,
     string? category,
     string? language,
+    IReadOnlyList<EasyPub.Core.CalibreCustomMetadata> customMetadata,
     string metadataSource,
     string coverState)
 {
@@ -71,6 +83,8 @@ public sealed class MetadataEditRow(
     public string? Publisher { get; set; } = publisher;
     public string? Category { get; set; } = category;
     public string? Language { get; set; } = language;
+    public IReadOnlyList<EasyPub.Core.CalibreCustomMetadata> CustomMetadata { get; set; } = customMetadata;
+    public string CustomMetadataLabel => CustomMetadata.Count == 0 ? "编辑" : $"编辑（{CustomMetadata.Count}）";
     public string MetadataSource { get; } = metadataSource;
     public string CoverState { get; } = coverState;
 }

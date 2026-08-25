@@ -7,6 +7,8 @@ namespace EasyPub.Desktop;
 
 public partial class MetadataMappingRuleWindow : Window
 {
+    private IReadOnlyList<CalibreCustomMetadata> _customMetadata = [];
+
     public MetadataMappingRuleWindow(FolderMetadataRule? existing)
     {
         InitializeComponent();
@@ -20,6 +22,8 @@ public partial class MetadataMappingRuleWindow : Window
         PublicationDatePicker.SelectedDate = existing.Metadata.PublicationDate?.ToDateTime(TimeOnly.MinValue);
         LanguageCombo.Text = existing.Metadata.Language ?? string.Empty;
         DescriptionText.Text = existing.Metadata.Description ?? string.Empty;
+        _customMetadata = CalibreCustomMetadata.NormalizeAll(existing.Metadata.CustomMetadata);
+        UpdateCustomMetadataSummary();
     }
 
     public FolderMetadataRule? Rule { get; private set; }
@@ -58,6 +62,7 @@ public partial class MetadataMappingRuleWindow : Window
                 : null,
             Language = EmptyToNull(LanguageCombo.Text),
             Description = EmptyToNull(DescriptionText.Text),
+            CustomMetadata = _customMetadata,
         };
         if (metadata.IsEmpty)
         {
@@ -70,5 +75,22 @@ public partial class MetadataMappingRuleWindow : Window
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+
+    private void EditCustomMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new CustomMetadataWindow(_customMetadata) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+        _customMetadata = editor.Metadata;
+        UpdateCustomMetadataSummary();
+    }
+
+    private void UpdateCustomMetadataSummary()
+    {
+        if (CustomMetadataSummaryText is null) return;
+        CustomMetadataSummaryText.Text = _customMetadata.Count == 0
+            ? "未设置；可固定映射到 #检索名"
+            : $"已设置 {_customMetadata.Count} 项：{string.Join("、", _customMetadata.Select(item => item.DisplayHeading))}";
+    }
+
     private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

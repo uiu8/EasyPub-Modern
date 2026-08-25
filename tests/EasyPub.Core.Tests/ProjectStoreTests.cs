@@ -36,6 +36,13 @@ public sealed class ProjectStoreTests
                         Category = "小说",
                         Language = "zh-CN",
                         Description = "简介",
+                        CustomMetadata = [new CalibreCustomMetadata
+                        {
+                            LookupName = "kindlecollections",
+                            ColumnHeading = "Kindle书架",
+                            Type = CalibreCustomMetadataType.TextList,
+                            Value = "起点, 完结",
+                        }],
                     },
                 },
             },
@@ -67,6 +74,7 @@ public sealed class ProjectStoreTests
             Assert.Equal(50, loaded.Profile.Options.ArtifactValidation.MaxReportCount);
             Assert.Equal("译者", loaded.Profile.Options.Metadata.Translator);
             Assert.Equal(new DateOnly(2026, 8, 23), loaded.Profile.Options.Metadata.PublicationDate);
+            Assert.Equal("#kindlecollections", Assert.Single(loaded.Profile.Options.Metadata.CustomMetadata).CalibreLookupName);
             var book = Assert.Single(loaded.Books);
             Assert.Equal("书名", book.Title);
             Assert.Equal(12, Assert.Single(book.Illustrations).InsertAfterLine);

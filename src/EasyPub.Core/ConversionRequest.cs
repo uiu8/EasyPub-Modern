@@ -87,6 +87,7 @@ public sealed record PublicationMetadata
     public string? Category { get; init; }
     public string Language { get; init; } = "zh-CN";
     public string? Description { get; init; }
+    public IReadOnlyList<CalibreCustomMetadata> CustomMetadata { get; init; } = [];
 }
 
 public sealed record EmbeddedFontOptions

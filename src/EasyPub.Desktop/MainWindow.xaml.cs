@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private string? _currentProjectPath;
     private CancellationTokenSource? _operationCancellation;
     private IReadOnlyList<FolderMetadataRule> _metadataMappings = [];
+    private IReadOnlyList<CalibreCustomMetadata> _customMetadata = [];
     private EasyPubProjectDocument? _pendingRecovery;
     private readonly Dictionary<TabItem, string> _optionTabNames = [];
     private readonly HashSet<TabItem> _dirtyOptionTabs = [];
@@ -318,6 +319,8 @@ public partial class MainWindow : Window
         CategoryCombo.Text = metadata.Category ?? string.Empty;
         LanguageCombo.Text = string.IsNullOrWhiteSpace(metadata.Language) ? "zh-CN" : metadata.Language;
         DescriptionText.Text = metadata.Description ?? string.Empty;
+        _customMetadata = CalibreCustomMetadata.NormalizeAll(metadata.CustomMetadata);
+        UpdateCustomMetadataSummary();
         var parallelItem = ParallelismCombo.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(item => item.Content?.ToString() == profile.Parallelism.ToString(CultureInfo.InvariantCulture));
         if (parallelItem is not null) ParallelismCombo.SelectedItem = parallelItem;
@@ -403,6 +406,7 @@ public partial class MainWindow : Window
                 Category = EmptyToNull(CategoryCombo.Text),
                 Language = EmptyToNull(LanguageCombo.Text) ?? "zh-CN",
                 Description = EmptyToNull(DescriptionText.Text),
+                CustomMetadata = _customMetadata,
             },
             Font = new EmbeddedFontOptions
             {
@@ -688,8 +692,8 @@ public partial class MainWindow : Window
     }
 
     private void UpdateProjectTitle() => Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.20.1"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.20.1";
+            ? "EasyPub Modern v0.21.0"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.21.0";
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -752,6 +756,30 @@ public partial class MainWindow : Window
             UpdateSelectedBookInspector(SelectedCoverBook());
             StatusText.Text = $"已保存 {InputBooks.Count} 本小说的逐书书籍信息";
         }
+    }
+
+    private void EditCustomMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new CustomMetadataWindow(_customMetadata) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+        _customMetadata = editor.Metadata;
+        UpdateCustomMetadataSummary();
+        MarkDirtyTab(MetadataTab);
+        StatusText.Text = _customMetadata.Count == 0
+            ? "已清除统一自定义元数据"
+            : $"已保存 {_customMetadata.Count} 项统一 Calibre 自定义元数据";
+    }
+
+    private void UpdateCustomMetadataSummary()
+    {
+        if (CustomMetadataStatusText is null) return;
+        CustomMetadataStatusText.Text = _customMetadata.Count == 0
+            ? "未设置统一自定义元数据"
+            : $"统一自定义元数据：{_customMetadata.Count} 项";
+        CustomMetadataStatusText.ToolTip = _customMetadata.Count == 0
+            ? null
+            : string.Join(Environment.NewLine, _customMetadata.Select(item =>
+                $"{item.CalibreLookupName}（{item.DisplayHeading}）：{item.Value}"));
     }
 
     private async void EditMetadataMappings_Click(object sender, RoutedEventArgs e)
@@ -2202,6 +2230,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
             Category = request.Options?.Metadata.Category,
             Language = request.Options?.Metadata.Language,
             Description = request.Options?.Metadata.Description,
+            CustomMetadata = request.Options?.Metadata.CustomMetadata ?? [],
         }, null);
         return item;
     }

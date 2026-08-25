@@ -116,6 +116,7 @@ public sealed class MetadataMappingStore
         Category = NormalizeOptional(metadata.Category),
         Language = NormalizeOptional(metadata.Language),
         Description = NormalizeOptional(metadata.Description),
+        CustomMetadata = CalibreCustomMetadata.NormalizeAll(metadata.CustomMetadata),
     };
 
     private static string? NormalizeOptional(string? value) =>

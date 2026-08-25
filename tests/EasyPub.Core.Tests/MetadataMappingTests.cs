@@ -47,7 +47,17 @@ public sealed class MetadataMappingTests
         {
             await new MetadataMappingStore(storagePath).SaveAsync([
                 new FolderMetadataRule(mappedFolder, new BookMetadataOverrides { Publisher = "旧值" }),
-                new FolderMetadataRule(mappedFolder + Path.DirectorySeparatorChar, new BookMetadataOverrides { Publisher = "起点" }),
+                new FolderMetadataRule(mappedFolder + Path.DirectorySeparatorChar, new BookMetadataOverrides
+                {
+                    Publisher = "起点",
+                    CustomMetadata = [new CalibreCustomMetadata
+                    {
+                        LookupName = "kindlecollections",
+                        ColumnHeading = "Kindle书架",
+                        Type = CalibreCustomMetadataType.TextList,
+                        Value = "起点, 完结",
+                    }],
+                }),
             ]);
 
             var restored = await new MetadataMappingStore(storagePath).LoadAsync();
@@ -55,6 +65,7 @@ public sealed class MetadataMappingTests
             var rule = Assert.Single(restored);
             Assert.Equal(MetadataMappingResolver.NormalizeFolder(mappedFolder), rule.FolderPath);
             Assert.Equal("起点", rule.Metadata.Publisher);
+            Assert.Equal("#kindlecollections", Assert.Single(rule.Metadata.CustomMetadata).CalibreLookupName);
         }
         finally
         {
