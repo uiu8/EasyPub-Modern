@@ -11,6 +11,7 @@ public partial class TextCleanupWindow : Window
     private TextCleanupPreview? _preview;
     private IReadOnlyList<TextCleanupChangeRow> _allRows = [];
     private readonly HashSet<string> _excludedKeys = new(StringComparer.Ordinal);
+    private IReadOnlyList<TextCleanupCustomRule> _customRules = [];
     private bool _loaded;
 
     private TextCleanupWindow(string inputPath, string sourceText, TextCleanupOptions initial)
@@ -47,6 +48,12 @@ public partial class TextCleanupWindow : Window
         NormalizeChapterNumbers = ChapterCheck.IsChecked == true,
         RemoveSiteNotices = NoticeCheck.IsChecked == true,
         NormalizePunctuation = PunctuationCheck.IsChecked == true,
+        RemoveInvisibleCharacters = InvisibleCheck.IsChecked == true,
+        RemoveDuplicateChapterTitles = DuplicateChapterCheck.IsChecked == true,
+        RepairParagraphBoundaries = ParagraphBoundaryCheck.IsChecked == true,
+        RemoveRepeatedHeaders = RepeatedHeaderCheck.IsChecked == true,
+        ApplyOcrCorrections = OcrCheck.IsChecked == true,
+        CustomRules = _customRules,
         ChineseVariant = Enum.Parse<ChineseVariantConversion>(((ComboBoxItem)ChineseVariantCombo.SelectedItem).Tag!.ToString()!),
         ExcludedChangeKeys = _excludedKeys.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
     };
@@ -59,6 +66,12 @@ public partial class TextCleanupWindow : Window
         ChapterCheck.IsChecked = options.NormalizeChapterNumbers;
         NoticeCheck.IsChecked = options.RemoveSiteNotices;
         PunctuationCheck.IsChecked = options.NormalizePunctuation;
+        InvisibleCheck.IsChecked = options.RemoveInvisibleCharacters;
+        DuplicateChapterCheck.IsChecked = options.RemoveDuplicateChapterTitles;
+        ParagraphBoundaryCheck.IsChecked = options.RepairParagraphBoundaries;
+        RepeatedHeaderCheck.IsChecked = options.RemoveRepeatedHeaders;
+        OcrCheck.IsChecked = options.ApplyOcrCorrections;
+        _customRules = options.CustomRules ?? [];
         _excludedKeys.Clear();
         foreach (var key in options.ExcludedChangeKeys ?? []) _excludedKeys.Add(key);
         ChineseVariantCombo.SelectedItem = ChineseVariantCombo.Items.OfType<ComboBoxItem>()
@@ -69,7 +82,12 @@ public partial class TextCleanupWindow : Window
     {
         if (!_loaded) return;
         Result = CaptureOptions();
-        _preview = TextCleanupPipeline.Apply(_sourceText, Result);
+        try { _preview = TextCleanupPipeline.Apply(_sourceText, Result); }
+        catch (Exception exception)
+        {
+            InkDialog.Show(this, exception.Message, "清理规则无法执行", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
         _allRows = _preview.Changes.Select(change => new TextCleanupChangeRow(change)).ToArray();
         var selectedRule = ChangeRuleFilterCombo.SelectedItem?.ToString() ?? "全部规则";
         var rules = _preview.Changes.Select(change => change.Rule).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.CurrentCulture).ToArray();
@@ -83,6 +101,7 @@ public partial class TextCleanupWindow : Window
         ChangeSummaryText.Text = _preview.Changes.Count == 0
             ? "没有检测到需要修改的内容"
             : $"检测到 {_preview.Changes.Count} 处 · 采用 {applied} · 排除 {_preview.Changes.Count - applied}";
+        CustomRuleSummaryText.Text = $"自定义规则：{_customRules.Count(rule => rule.Enabled)} 项启用";
         ShowPreview(TextCleanupPreviewNavigator.Create(_preview));
     }
 
@@ -128,6 +147,14 @@ public partial class TextCleanupWindow : Window
     private void Clear_Click(object sender, RoutedEventArgs e) { ApplyOptions(new TextCleanupOptions()); RefreshPreview(); }
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
     private void Apply_Click(object sender, RoutedEventArgs e) { Result = CaptureOptions(); DialogResult = true; }
+
+    private void ManageCustomRules_Click(object sender, RoutedEventArgs e)
+    {
+        var manager = new TextCleanupRuleManagerWindow(_customRules, _sourceText) { Owner = this };
+        if (manager.ShowDialog() != true) return;
+        _customRules = manager.Rules;
+        RefreshPreview();
+    }
 }
 
 public sealed class TextCleanupChangeRow(TextCleanupChange change)

@@ -84,7 +84,7 @@ public partial class IllustrationManagerWindow : Window
     {
         if (IllustrationsGrid.SelectedItem is not IllustrationEditorItem item)
         {
-            MessageBox.Show(this, "请先选中一张插图。", "EasyPub Modern");
+            InkDialog.Show(this, "请先选中一张插图。", "EasyPub Modern");
             return;
         }
 
@@ -108,7 +108,7 @@ public partial class IllustrationManagerWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法读取 TXT 正文", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法读取 TXT 正文", MessageBoxButton.OK, MessageBoxImage.Error);
             UpdateCount();
         }
     }
@@ -117,7 +117,7 @@ public partial class IllustrationManagerWindow : Window
     {
         if (IllustrationsGrid.SelectedItem is not IllustrationEditorItem item)
         {
-            MessageBox.Show(this, "请先选中一张插图。", "EasyPub Modern");
+            InkDialog.Show(this, "请先选中一张插图。", "EasyPub Modern");
             return;
         }
         item.InsertAfterLine = null;
@@ -128,7 +128,7 @@ public partial class IllustrationManagerWindow : Window
     {
         if (IllustrationsGrid.SelectedItem is not IllustrationEditorItem item)
         {
-            MessageBox.Show(this, "请先选中一张插图。", "EasyPub Modern");
+            InkDialog.Show(this, "请先选中一张插图。", "EasyPub Modern");
             return;
         }
         Clipboard.SetText(item.MarkerToken);
@@ -143,17 +143,17 @@ public partial class IllustrationManagerWindow : Window
         {
             if (string.IsNullOrWhiteSpace(item.Marker))
             {
-                MessageBox.Show(this, "插图标记不能为空。", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+                InkDialog.Show(this, "插图标记不能为空。", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (!duplicateCheck.Add(item.Marker.Trim()))
             {
-                MessageBox.Show(this, $"插图标记重复：{item.Marker.Trim()}", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+                InkDialog.Show(this, $"插图标记重复：{item.Marker.Trim()}", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
             if (!File.Exists(item.ImagePath))
             {
-                MessageBox.Show(this, $"找不到插图文件：\n{item.ImagePath}", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
+                InkDialog.Show(this, $"找不到插图文件：\n{item.ImagePath}", "无法保存", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
         }
@@ -207,6 +207,14 @@ public sealed class IllustrationEditorItem : INotifyPropertyChanged
     }
 
     public string ImagePath { get; }
+    public string DiagnosticLabel
+    {
+        get
+        {
+            try { return ImageDiagnostics.Inspect(ImagePath, cover: false).Summary; }
+            catch (Exception exception) { return $"无法读取：{exception.Message}"; }
+        }
+    }
     public int? InsertAfterLine
     {
         get => _insertAfterLine;

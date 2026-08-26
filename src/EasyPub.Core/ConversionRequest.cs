@@ -53,11 +53,40 @@ public sealed record TextCleanupOptions
     public bool RemoveSiteNotices { get; init; }
     public ChineseVariantConversion ChineseVariant { get; init; }
     public bool NormalizePunctuation { get; init; }
+    public bool RemoveInvisibleCharacters { get; init; }
+    public bool RemoveDuplicateChapterTitles { get; init; }
+    public bool RepairParagraphBoundaries { get; init; }
+    public bool RemoveRepeatedHeaders { get; init; }
+    public bool ApplyOcrCorrections { get; init; }
+    public IReadOnlyList<TextCleanupCustomRule> CustomRules { get; init; } = [];
     public IReadOnlyList<string> ExcludedChangeKeys { get; init; } = [];
 
     public bool Enabled => CollapseBlankLines || RepairHardWraps || NormalizeFullWidthSpaces
         || NormalizeChapterNumbers || RemoveSiteNotices
-        || ChineseVariant != ChineseVariantConversion.None || NormalizePunctuation;
+        || ChineseVariant != ChineseVariantConversion.None || NormalizePunctuation
+        || RemoveInvisibleCharacters || RemoveDuplicateChapterTitles || RepairParagraphBoundaries
+        || RemoveRepeatedHeaders || ApplyOcrCorrections || CustomRules.Any(rule => rule.Enabled);
+}
+
+public enum TextCleanupRuleScope
+{
+    All,
+    BodyOnly,
+    ChapterTitlesOnly,
+}
+
+public sealed record TextCleanupCustomRule
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+    public string Name { get; init; } = "自定义规则";
+    public string Pattern { get; init; } = string.Empty;
+    public string Replacement { get; init; } = string.Empty;
+    public bool IsRegex { get; init; }
+    public TextCleanupRuleScope Scope { get; init; }
+    public bool IgnoreCase { get; init; }
+    public bool Multiline { get; init; }
+    public int Order { get; init; }
+    public bool Enabled { get; init; } = true;
 }
 
 public enum ChineseVariantConversion

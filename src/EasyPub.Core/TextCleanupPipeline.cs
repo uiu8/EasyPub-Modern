@@ -41,6 +41,8 @@ public static partial class TextCleanupPipeline
             var original = result[index];
             var current = original;
 
+            if (options.RemoveInvisibleCharacters)
+                current = InvisibleCharacterPattern().Replace(current, string.Empty);
             if (options.NormalizeFullWidthSpaces)
                 current = NormalizeSpaces(current);
             if (options.NormalizeChapterNumbers && ChapterTitleNormalizer.TryNormalizeNumericTitle(current, out var title))
@@ -49,6 +51,10 @@ public static partial class TextCleanupPipeline
                 current = ChineseVariantMapper.Convert(current, options.ChineseVariant);
             if (options.NormalizePunctuation)
                 current = NormalizeChinesePunctuation(current);
+            if (options.ApplyOcrCorrections)
+                current = ApplySafeOcrCorrections(current);
+            if (options.RepairParagraphBoundaries)
+                current = ParagraphBoundaryPattern().Replace(current, "$1" + Environment.NewLine + "　　");
 
             if (!string.Equals(original, current, StringComparison.Ordinal))
             {
@@ -67,6 +73,35 @@ public static partial class TextCleanupPipeline
                 var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]);
                 changes.Add(change);
                 if (change.IsApplied) result[index] = RemovedLine;
+            }
+        }
+
+        if (options.RemoveRepeatedHeaders)
+        {
+            for (var index = 0; index < result.Length; index++)
+            {
+                if (result[index] == RemovedLine || !RepeatedHeaderPattern().IsMatch(result[index].Trim())) continue;
+                var change = CreateChange(index + 1, "删除重复页眉/页码", result[index], string.Empty, exclusions, lines[index]);
+                changes.Add(change);
+                if (change.IsApplied) result[index] = RemovedLine;
+            }
+        }
+
+        if (options.RemoveDuplicateChapterTitles)
+        {
+            string? previousTitle = null;
+            for (var index = 0; index < result.Length; index++)
+            {
+                if (result[index] == RemovedLine || string.IsNullOrWhiteSpace(result[index])) continue;
+                var currentTitle = result[index].Trim();
+                if (!ChapterLinePattern().IsMatch(currentTitle)) { previousTitle = null; continue; }
+                if (string.Equals(previousTitle, currentTitle, StringComparison.Ordinal))
+                {
+                    var change = CreateChange(index + 1, "删除连续重复章节标题", result[index], string.Empty, exclusions, lines[index]);
+                    changes.Add(change);
+                    if (change.IsApplied) result[index] = RemovedLine;
+                }
+                else previousTitle = currentTitle;
             }
         }
 
@@ -111,6 +146,8 @@ public static partial class TextCleanupPipeline
                 if (change.IsApplied) result[index] = RemovedLine;
             }
         }
+
+        result = ApplyCustomRules(result, changes, exclusions, options.CustomRules);
 
         return new TextCleanupPreview(result, changes.OrderBy(change => change.LineNumber).ToArray());
     }
@@ -171,9 +208,72 @@ public static partial class TextCleanupPipeline
             .Replace(',', '，').Replace('!', '！').Replace('?', '？')
             .Replace(';', '；').Replace(':', '：')
             .Replace("...", "……", StringComparison.Ordinal)
+            .Replace("--", "——", StringComparison.Ordinal)
+            .Replace("— —", "——", StringComparison.Ordinal)
+            .Replace("‘‘", "“", StringComparison.Ordinal)
+            .Replace("’’", "”", StringComparison.Ordinal)
             .Replace("““", "“", StringComparison.Ordinal)
             .Replace("””", "”", StringComparison.Ordinal);
     }
+
+    private static string ApplySafeOcrCorrections(string value) => OcrChineseGapPattern().Replace(value, string.Empty)
+        .Replace("．．．．．．", "……", StringComparison.Ordinal)
+        .Replace("。。。。。。", "……", StringComparison.Ordinal);
+
+    private static string[] ApplyCustomRules(
+        string[] result,
+        List<TextCleanupChange> changes,
+        HashSet<string> exclusions,
+        IReadOnlyList<TextCleanupCustomRule> rules)
+    {
+        foreach (var rule in rules.Where(rule => rule.Enabled && !string.IsNullOrEmpty(rule.Pattern)).OrderBy(rule => rule.Order).ThenBy(rule => rule.Name, StringComparer.CurrentCulture))
+        {
+            Regex? regex = null;
+            if (rule.IsRegex)
+            {
+                var regexOptions = RegexOptions.CultureInvariant;
+                if (rule.IgnoreCase) regexOptions |= RegexOptions.IgnoreCase;
+                if (rule.Multiline) regexOptions |= RegexOptions.Multiline | RegexOptions.Singleline;
+                regex = new Regex(rule.Pattern, regexOptions, TimeSpan.FromMilliseconds(250));
+            }
+
+            if (rule.Multiline)
+            {
+                var beforeDocument = string.Join('\n', result.Select(line => line == RemovedLine ? string.Empty : line));
+                var afterDocument = regex is null
+                    ? beforeDocument.Replace(rule.Pattern, rule.Replacement, rule.IgnoreCase ? StringComparison.CurrentCultureIgnoreCase : StringComparison.Ordinal)
+                    : regex.Replace(beforeDocument, rule.Replacement);
+                if (!string.Equals(beforeDocument, afterDocument, StringComparison.Ordinal))
+                {
+                    var firstDifference = 0;
+                    while (firstDifference < beforeDocument.Length && firstDifference < afterDocument.Length && beforeDocument[firstDifference] == afterDocument[firstDifference]) firstDifference++;
+                    var lineNumber = 1 + beforeDocument.AsSpan(0, Math.Min(firstDifference, beforeDocument.Length)).Count('\n');
+                    var change = CreateChange(lineNumber, $"自定义：{rule.Name}", Abbreviate(beforeDocument), Abbreviate(afterDocument), exclusions, $"{rule.Id}\n{beforeDocument}");
+                    changes.Add(change);
+                    if (change.IsApplied) result = afterDocument.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+                }
+                continue;
+            }
+
+            for (var index = 0; index < result.Length; index++)
+            {
+                if (result[index] == RemovedLine) continue;
+                var chapter = ChapterLinePattern().IsMatch(result[index].Trim());
+                if (rule.Scope == TextCleanupRuleScope.BodyOnly && chapter || rule.Scope == TextCleanupRuleScope.ChapterTitlesOnly && !chapter) continue;
+                var before = result[index];
+                var after = regex is null
+                    ? before.Replace(rule.Pattern, rule.Replacement, rule.IgnoreCase ? StringComparison.CurrentCultureIgnoreCase : StringComparison.Ordinal)
+                    : regex.Replace(before, rule.Replacement);
+                if (string.Equals(before, after, StringComparison.Ordinal)) continue;
+                var change = CreateChange(index + 1, $"自定义：{rule.Name}", before, after, exclusions, $"{rule.Id}\n{before}");
+                changes.Add(change);
+                if (change.IsApplied) result[index] = after;
+            }
+        }
+        return result;
+    }
+
+    private static string Abbreviate(string value) => value.Length <= 240 ? value : value[..237] + "…";
 
     private static bool ShouldJoin(string current, string next)
     {
@@ -199,7 +299,19 @@ public static partial class TextCleanupPipeline
     [GeneratedRegex("[　\\u00a0]+")]
     private static partial Regex FullWidthSpaceRun();
 
-    [GeneratedRegex(@"^\\s*(?:第[0-9一二三四五六七八九十百千零〇两]+[章回卷部篇集节]|\\d{1,6}(?:\\s+|[.．、:_：\\-—])).*")]
+    [GeneratedRegex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F\\u200B-\\u200D\\u2060\\uFEFF]")]
+    private static partial Regex InvisibleCharacterPattern();
+
+    [GeneratedRegex("([。！？!?])　{2,}")]
+    private static partial Regex ParagraphBoundaryPattern();
+
+    [GeneratedRegex(@"^(?:[-—_=]{2,}\s*)?(?:第\s*\d+\s*页|页码\s*[:：]?\s*\d+|www\.[^\s]+)(?:\s*[-—_=]{2,})?$", RegexOptions.IgnoreCase)]
+    private static partial Regex RepeatedHeaderPattern();
+
+    [GeneratedRegex(@"(?<=[\p{IsCJKUnifiedIdeographs}])[ \t]+(?=[\p{IsCJKUnifiedIdeographs}])")]
+    private static partial Regex OcrChineseGapPattern();
+
+    [GeneratedRegex(@"^\s*(?:第[0-9一二三四五六七八九十百千零〇两]+[章回卷部篇集节]|\d{1,6}(?:\s+|[.．、:_：\-—])).*")]
     private static partial Regex ChapterLinePattern();
 
     [GeneratedRegex(@"(?:本书来自|更多精彩.*访问|请记住本站|最新网址|手机用户请浏览|下载本书|txt电子书|小说下载|加入书签|投推荐票|章节错误.*举报|广告位)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

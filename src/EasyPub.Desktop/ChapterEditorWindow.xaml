@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:EasyPub.Desktop"
         Title="章节工作台 · EasyPub Modern" Width="1240" Height="820" MinWidth="920" MinHeight="620"
-        WindowStartupLocation="CenterOwner" Background="#F5F7FB" PreviewKeyDown="Window_PreviewKeyDown">
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource AppBackgroundBrush}" PreviewKeyDown="Window_PreviewKeyDown">
     <Window.Resources>
-        <Style TargetType="Button">
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Padding" Value="13,8"/><Setter Property="Margin" Value="0,0,8,0"/>
             <Setter Property="MinHeight" Value="36"/>
         </Style>
@@ -14,11 +14,11 @@
                 <Grid Width="500">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <CheckBox IsChecked="{Binding IncludeInToc}" ToolTip="是否显示在 Kindle 目录中" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <Border Grid.Column="1" Background="#E8F0FE" CornerRadius="8" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding LevelLabel}" Foreground="#174EA6" FontSize="11"/>
+                    <Border Grid.Column="1" Background="{DynamicResource SelectedSurfaceBrush}" CornerRadius="8" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding LevelLabel}" Foreground="{DynamicResource PrimaryTextBrush}" FontSize="11"/>
                     </Border>
                     <TextBox Grid.Column="2" Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" BorderThickness="0" Background="Transparent" Padding="2"/>
-                    <TextBlock Grid.Column="3" Text="{Binding LineCountLabel}" Foreground="#98A2B3" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    <TextBlock Grid.Column="3" Text="{Binding LineCountLabel}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
                 </Grid>
             </Border>
         </HierarchicalDataTemplate>
@@ -28,22 +28,22 @@
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="章节工作台" FontSize="26" FontWeight="SemiBold" Foreground="#172033"/>
-                <TextBlock x:Name="SourceText" Margin="0,5,0,0" Foreground="#667085" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="章节工作台" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+                <TextBlock x:Name="SourceText" Margin="0,5,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="#ECFDF3" CornerRadius="9" Padding="14,9" VerticalAlignment="Center">
-                <TextBlock x:Name="SummaryText" Foreground="#067647" FontWeight="SemiBold"/>
+            <Border Grid.Column="1" Background="{DynamicResource SubtleSurfaceBrush}" CornerRadius="9" Padding="14,9" VerticalAlignment="Center">
+                <TextBlock x:Name="SummaryText" Foreground="{DynamicResource PrimaryTextBrush}" FontWeight="SemiBold"/>
             </Border>
         </Grid>
-        <Expander Grid.Row="2" Header="识别与层级规则" Background="White" BorderBrush="#D8E0EC" BorderThickness="1" Padding="10">
+        <Expander Grid.Row="2" Header="识别与层级规则" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Padding="10">
             <Grid Margin="0,8,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <StackPanel Grid.ColumnSpan="3"><TextBlock Text="普通章节标题正则（留空使用原版默认）" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="ChapterPatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
-                <StackPanel Grid.Column="4" VerticalAlignment="Bottom"><CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,0,0,8"/><Button Content="按当前规则重新识别" Click="RebuildFromRules_Click" Margin="0" Background="#EEF4FF" Foreground="#1D4ED8"/></StackPanel>
-                <StackPanel Grid.Row="2"><TextBlock Text="一级（卷、部、篇）" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="Level1PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
-                <StackPanel Grid.Row="2" Grid.Column="2"><TextBlock Text="二级（章、回）" Foreground="#475467" FontWeight="SemiBold"/><TextBox x:Name="Level2PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
-                <StackPanel Grid.Row="2" Grid.Column="4"><TextBlock Text="三级（节）" Foreground="#475467" FontWeight="SemiBold"/><DockPanel Margin="0,5,0,0"><Button Content="默认规则" DockPanel.Dock="Right" Click="ResetRules_Click" Margin="8,0,0,0"/><TextBox x:Name="Level3PatternText" FontFamily="Consolas"/></DockPanel></StackPanel>
+                <StackPanel Grid.ColumnSpan="3"><TextBlock Text="普通章节标题正则（留空使用原版默认）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="ChapterPatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
+                <StackPanel Grid.Column="4" VerticalAlignment="Bottom"><CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,0,0,8"/><Button Content="按当前规则重新识别" Click="RebuildFromRules_Click" Margin="0" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/></StackPanel>
+                <StackPanel Grid.Row="2"><TextBlock Text="一级（卷、部、篇）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="Level1PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="2"><TextBlock Text="二级（章、回）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="Level2PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="4"><TextBlock Text="三级（节）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><DockPanel Margin="0,5,0,0"><Button Content="默认规则" DockPanel.Dock="Right" Click="ResetRules_Click" Margin="8,0,0,0"/><TextBox x:Name="Level3PatternText" FontFamily="Consolas"/></DockPanel></StackPanel>
             </Grid>
         </Expander>
         <WrapPanel Grid.Row="4">
@@ -52,34 +52,34 @@
             <Button x:Name="MoveUpButton" Content="上移" Click="MoveUp_Click" IsEnabled="False"/><Button x:Name="MoveDownButton" Content="下移" Click="MoveDown_Click" IsEnabled="False"/>
             <Button x:Name="PromoteButton" Content="移出父章节（提升）" ToolTip="让本章与当前父章节同级；后续同级章节仍保持原正文顺序" Click="Promote_Click" IsEnabled="False"/>
             <Button x:Name="DemoteButton" Content="归入上一章（降低）" ToolTip="让本章成为上一同级章节的最后一个子章节" Click="Demote_Click" IsEnabled="False"/>
-            <Button x:Name="MergeButton" Content="合并到上一章" Click="Merge_Click" IsEnabled="False"/><Button Content="一键规范化数字标题" Click="NormalizeAll_Click" Background="#E8F0FE" Foreground="#174EA6"/>
-            <Button Content="目录全部勾选" Click="SelectAll_Click" Background="#ECFDF3" Foreground="#067647"/>
+            <Button x:Name="MergeButton" Content="合并到上一章" Click="Merge_Click" IsEnabled="False"/><Button Content="一键规范化数字标题" Click="NormalizeAll_Click" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/>
+            <Button Content="目录全部勾选" Click="SelectAll_Click" Background="{DynamicResource SubtleSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/>
             <Button Content="目录全部取消" Click="ClearAll_Click"/>
         </WrapPanel>
         <Grid Grid.Row="6">
             <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
-            <Border Background="White" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="10" Padding="8">
+            <Border Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <DockPanel><TextBlock Text="目录结构" FontSize="16" FontWeight="SemiBold" Foreground="#172033"/><TextBlock DockPanel.Dock="Right" Text="拖到另一章下成为子章节；拖到空白处成为根章节" Foreground="#667085" FontSize="11" VerticalAlignment="Center"/></DockPanel>
+                    <DockPanel><TextBlock Text="目录结构" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/><TextBlock DockPanel.Dock="Right" Text="拖到另一章下成为子章节；拖到空白处成为根章节" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center"/></DockPanel>
                     <TreeView x:Name="ChapterTree" Grid.Row="2" ItemsSource="{Binding Roots}" BorderThickness="0" Background="Transparent"
                               SelectedItemChanged="ChapterTree_SelectedItemChanged" AllowDrop="True"
                               PreviewMouseLeftButtonDown="ChapterTree_PreviewMouseLeftButtonDown"
                               PreviewMouseMove="ChapterTree_PreviewMouseMove" Drop="ChapterTree_Drop"/>
                 </Grid>
             </Border>
-            <Border Grid.Column="2" Background="White" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="10" Padding="12">
+            <Border Grid.Column="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                    <DockPanel><TextBlock Text="本章原文" FontSize="16" FontWeight="SemiBold" Foreground="#172033"/><TextBlock x:Name="SelectionHint" DockPanel.Dock="Right" Foreground="#667085" FontSize="11" VerticalAlignment="Center"/></DockPanel>
-                    <ListBox x:Name="SourceLinesList" Grid.Row="2" ItemsSource="{Binding SelectedLines}" BorderThickness="0" Background="#F8FAFC" FontFamily="Consolas, Microsoft YaHei UI" ScrollViewer.HorizontalScrollBarVisibility="Auto" SelectionChanged="SourceLinesList_SelectionChanged">
-                        <ListBox.ItemTemplate><DataTemplate><Grid Margin="5,2"><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding LineNumber}" Foreground="#98A2B3"/><TextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap"/></Grid></DataTemplate></ListBox.ItemTemplate>
+                    <DockPanel><TextBlock Text="本章原文" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/><TextBlock x:Name="SelectionHint" DockPanel.Dock="Right" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center"/></DockPanel>
+                    <ListBox x:Name="SourceLinesList" Grid.Row="2" ItemsSource="{Binding SelectedLines}" BorderThickness="0" Background="{DynamicResource SubtleSurfaceBrush}" FontFamily="Consolas, Microsoft YaHei UI" ScrollViewer.HorizontalScrollBarVisibility="Auto" SelectionChanged="SourceLinesList_SelectionChanged">
+                <ListBox.ItemTemplate><DataTemplate><Grid Margin="5,2"><Grid.ColumnDefinitions><ColumnDefinition Width="52"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding LineNumber}" Foreground="{DynamicResource SecondaryTextBrush}"/><TextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap"/></Grid></DataTemplate></ListBox.ItemTemplate>
                     </ListBox>
-                    <Button x:Name="SplitButton" Grid.Row="4" Content="在所选正文行前拆分新章节" Click="Split_Click" Margin="0" Background="#FFF7ED" Foreground="#C2410C" IsEnabled="False"/>
+            <Button x:Name="SplitButton" Grid.Row="4" Content="在所选正文行前拆分新章节" Click="Split_Click" Margin="0" Background="{DynamicResource WarningSurfaceBrush}" Foreground="{DynamicResource WarningBrush}" BorderBrush="{DynamicResource WarningBrush}" IsEnabled="False"/>
                 </Grid>
             </Border>
         </Grid>
         <Grid Grid.Row="8">
-            <TextBlock Text="保存后只记录章节树，不会修改原始 TXT。正文顺序会按左侧树的顺序输出。" Foreground="#667085" VerticalAlignment="Center"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" Click="Close_Click"/><Button Content="保存章节树" Click="Save_Click" Margin="0" Padding="22,9" Background="#2563EB" Foreground="White" FontWeight="SemiBold"/></StackPanel>
+        <TextBlock Text="保存后只记录章节树，不会修改原始 TXT。正文顺序会按左侧树的顺序输出。" Foreground="{DynamicResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" Click="Close_Click"/><Button Content="保存章节树" Click="Save_Click" Margin="0" Padding="22,9" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" FontWeight="SemiBold"/></StackPanel>
         </Grid>
     </Grid>
 </Window>

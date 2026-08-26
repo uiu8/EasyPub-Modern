@@ -35,12 +35,12 @@ public sealed class BatchConverter(EasyPubConverter converter)
         IEnumerable<ConversionRequest> requests,
         int maxParallelism = 1,
         IProgress<BatchConversionProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        BatchExecutionControl? executionControl = null)
     {
         ArgumentNullException.ThrowIfNull(requests);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxParallelism, 1);
-
         var jobs = requests.ToArray();
+        maxParallelism = ConversionConcurrencyPolicy.Resolve(maxParallelism, jobs);
         EnsureUniqueOutputs(jobs);
         var outcomes = new BatchJobOutcome[jobs.Length];
         var fractions = new double[jobs.Length];
@@ -69,8 +69,12 @@ public sealed class BatchConverter(EasyPubConverter converter)
             var entered = false;
             try
             {
+                if (executionControl is not null)
+                    await executionControl.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
                 await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                 entered = true;
+                if (executionControl is not null)
+                    await executionControl.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
                 var validationEnabled = (job.Options?.ArtifactValidation ?? new ArtifactValidationOptions()).Enabled;
                 fractions[index] = 0.02;
                 Report(index, job.InputPath, "正在检查", BookTaskStage.Checking);

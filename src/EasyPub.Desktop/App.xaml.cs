@@ -9,5 +9,9 @@ namespace EasyPub.Desktop;
 /// </summary>
 public partial class App : Application
 {
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Window window) ThemeManager.ApplyWindowChrome(window);
+    }
 }
 

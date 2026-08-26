@@ -32,7 +32,7 @@ public partial class ConversionHistoryWindow : Window
             .ToArray();
         if (RetryInputPaths.Count == 0)
         {
-            MessageBox.Show(this, "历史中没有可载入的失败项目。", "EasyPub Modern");
+            InkDialog.Show(this, "历史中没有可载入的失败项目。", "EasyPub Modern");
             return;
         }
         DialogResult = true;

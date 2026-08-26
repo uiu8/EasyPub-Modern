@@ -29,6 +29,16 @@ public sealed class AppSettingsStoreTests
             UseLegacyConfig = false,
             LegacyConfigPath = null,
             AutoOpenTaskCenter = true,
+            Theme = "Dark",
+            UiDensity = "Compact",
+            UiScalePercent = 110,
+            RememberWindowPlacement = false,
+            ReduceMotion = true,
+            WindowLeft = 120,
+            WindowTop = 80,
+            WindowWidth = 1280,
+            WindowHeight = 820,
+            WindowState = "Maximized",
         };
 
         try
@@ -45,6 +55,16 @@ public sealed class AppSettingsStoreTests
             Assert.False(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
             Assert.True(restored.AutoOpenTaskCenter);
+            Assert.Equal("Dark", restored.Theme);
+            Assert.Equal("Compact", restored.UiDensity);
+            Assert.Equal(110, restored.UiScalePercent);
+            Assert.False(restored.RememberWindowPlacement);
+            Assert.True(restored.ReduceMotion);
+            Assert.Equal(120, restored.WindowLeft);
+            Assert.Equal(80, restored.WindowTop);
+            Assert.Equal(1280, restored.WindowWidth);
+            Assert.Equal(820, restored.WindowHeight);
+            Assert.Equal("Maximized", restored.WindowState);
         }
         finally
         {
@@ -82,6 +102,16 @@ public sealed class AppSettingsStoreTests
             Assert.False(restored.LastProfile.Options.ArtifactValidation.Enabled);
             Assert.Equal(10, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
             Assert.False(restored.AutoOpenTaskCenter);
+            Assert.Equal("Light", restored.Theme);
+            Assert.Equal("Comfortable", restored.UiDensity);
+            Assert.Equal(100, restored.UiScalePercent);
+            Assert.True(restored.RememberWindowPlacement);
+            Assert.False(restored.ReduceMotion);
+            Assert.Null(restored.WindowLeft);
+            Assert.Null(restored.WindowTop);
+            Assert.Null(restored.WindowWidth);
+            Assert.Null(restored.WindowHeight);
+            Assert.Equal("Normal", restored.WindowState);
         }
         finally
         {
@@ -117,7 +147,8 @@ public sealed class AppSettingsStoreTests
             {
                 finished.Set();
             }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
 
         thread.Start();
         var completed = finished.Wait(TimeSpan.FromSeconds(2));

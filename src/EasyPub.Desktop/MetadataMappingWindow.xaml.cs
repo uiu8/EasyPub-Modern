@@ -39,7 +39,7 @@ public partial class MetadataMappingWindow : Window
     {
         if (RulesGrid.SelectedItem is not FolderMetadataRule selected)
         {
-            MessageBox.Show(this, "请先选择一条映射规则。", "EasyPub Modern");
+            InkDialog.Show(this, "请先选择一条映射规则。", "EasyPub Modern");
             return;
         }
 

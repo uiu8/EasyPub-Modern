@@ -1,34 +1,34 @@
 <Window x:Class="EasyPub.Desktop.TaskCenterWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务中心 · EasyPub Modern v1.0.0" Width="1080" Height="700" MinWidth="820" MinHeight="520"
-        WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
+        Title="任务中心 · EasyPub Modern v1.1.0" Width="1080" Height="700" MinWidth="820" MinHeight="520"
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource AppBackgroundBrush}" FontFamily="Microsoft YaHei UI">
     <Grid Margin="18">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="任务中心" FontSize="24" FontWeight="SemiBold" Foreground="#172033"/>
-                <TextBlock Margin="0,5,0,0" Text="转换前问题、当前进度、成品验收和历史记录集中在这里。结构通过不等于 Kindle 真机确认。" Foreground="#667085"/>
+                <TextBlock Text="任务中心" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
+                <TextBlock Margin="0,5,0,0" Text="转换前问题、当前进度、成品验收和历史记录集中在这里。结构通过不等于 Kindle 真机确认。" Foreground="{DynamicResource SecondaryTextBrush}"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="#EEF4FF" CornerRadius="12" Padding="12,7" VerticalAlignment="Center"><TextBlock x:Name="SummaryText" Text="等待任务" Foreground="#1D4ED8" FontWeight="SemiBold"/></Border>
+            <Border Grid.Column="1" Background="{DynamicResource SelectedSurfaceBrush}" CornerRadius="12" Padding="12,7" VerticalAlignment="Center"><TextBlock x:Name="SummaryText" Text="等待任务" Foreground="{DynamicResource PrimaryTextBrush}" FontWeight="SemiBold"/></Border>
         </Grid>
 
-        <TabControl x:Name="WorkflowTabs" Grid.Row="2" Background="White" BorderBrush="#E2E8F0" Padding="0">
+        <TabControl x:Name="WorkflowTabs" Grid.Row="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" Padding="0">
             <TabItem Header="当前任务">
                 <Grid Margin="10"><Grid.RowDefinitions><RowDefinition Height="3*"/><RowDefinition Height="10"/><RowDefinition Height="2*"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <DataGrid x:Name="TasksGrid" ItemsSource="{Binding Tasks}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0" SelectionChanged="TasksGrid_SelectionChanged" AutomationProperties.Name="当前转换任务">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="书名" Binding="{Binding DisplayName}" Width="2*"/>
                             <DataGridTextColumn Header="状态" Binding="{Binding StatusText}" Width="145"/>
-                            <DataGridTemplateColumn Header="进度" Width="150"><DataGridTemplateColumn.CellTemplate><DataTemplate><ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay}" Height="8" Margin="8" Foreground="#2563EB"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="进度" Width="150"><DataGridTemplateColumn.CellTemplate><DataTemplate><ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay}" Height="8" Margin="8" Foreground="{DynamicResource PrimaryActionBrush}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                             <DataGridTextColumn Header="验收结果" Binding="{Binding ValidationText}" Width="200"/>
                             <DataGridTextColumn Header="输出" Binding="{Binding OutputName}" Width="170"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <Border Grid.Row="2" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="12">
+                    <Border Grid.Row="2" Background="{DynamicResource SubtleSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="12">
                         <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="7"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="IssueTitleText" Text="选择一本书查看结果" FontWeight="SemiBold" Foreground="#344054"/><TextBlock x:Name="HardwareText" Margin="0,3,0,0" Foreground="#B54708"/></StackPanel><TextBlock x:Name="ReportPathText" Grid.Column="1" Foreground="#667085" TextTrimming="CharacterEllipsis" MaxWidth="420"/></Grid>
+                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="IssueTitleText" Text="选择一本书查看结果" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/><TextBlock x:Name="HardwareText" Margin="0,3,0,0" Foreground="{DynamicResource WarningBrush}"/></StackPanel><TextBlock x:Name="ReportPathText" Grid.Column="1" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" MaxWidth="420"/></Grid>
                             <ListBox x:Name="IssuesList" Grid.Row="2" BorderThickness="0" Background="Transparent"/>
                         </Grid>
                     </Border>
@@ -38,7 +38,7 @@
 
             <TabItem Header="转换前检查">
                 <Grid Margin="10"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="*"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                    <DockPanel><Button Content="重新检查当前书稿" DockPanel.Dock="Right" Padding="14,8" Click="RunPreflight_Click" Background="#EEF4FF" Foreground="#1D4ED8" BorderBrush="#C7D7FE"/><StackPanel><TextBlock x:Name="PreflightSummaryText" Text="尚未执行转换前检查" FontWeight="SemiBold" Foreground="#344054"/><TextBlock Text="检查输入、章节、封面、字体、输出冲突和 KindleGen；双击问题可回到对应设置。" Margin="0,4,0,0" Foreground="#667085"/></StackPanel></DockPanel>
+                    <DockPanel><Button Content="重新检查当前书稿" DockPanel.Dock="Right" Padding="14,8" Click="RunPreflight_Click" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}" BorderBrush="{DynamicResource StrongBorderBrush}"/><StackPanel><TextBlock x:Name="PreflightSummaryText" Text="尚未执行转换前检查" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/><TextBlock Text="检查输入、章节、封面、字体、输出冲突和 KindleGen；双击问题可回到对应设置。" Margin="0,4,0,0" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel></DockPanel>
                     <DataGrid x:Name="PreflightGrid" Grid.Row="2" ItemsSource="{Binding PreflightRows}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" GridLinesVisibility="Horizontal" BorderThickness="0" MouseDoubleClick="PreflightGrid_MouseDoubleClick" AutomationProperties.Name="转换前检查结果">
                         <DataGrid.Columns><DataGridTextColumn Header="级别" Binding="{Binding SeverityText}" Width="80"/><DataGridTextColumn Header="书稿" Binding="{Binding BookName}" Width="170"/><DataGridTextColumn Header="检查结果" Binding="{Binding Message}" Width="*"/></DataGrid.Columns>
                     </DataGrid>
@@ -56,6 +56,6 @@
             </TabItem>
         </TabControl>
 
-        <Button Grid.Row="4" Content="关闭" HorizontalAlignment="Right" Padding="20,8" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" Click="Close_Click"/>
+        <Button Grid.Row="4" Content="关闭" HorizontalAlignment="Right" Padding="20,8" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" BorderBrush="{DynamicResource PrimaryActionBrush}" Click="Close_Click"/>
     </Grid>
 </Window>

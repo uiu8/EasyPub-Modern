@@ -58,7 +58,7 @@ public partial class IllustrationPositionWindow : Window
                         line.LineNumber <= start && line.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase));
         if (match is null)
         {
-            MessageBox.Show(this, $"没有找到：{query}", "查找正文", MessageBoxButton.OK, MessageBoxImage.Information);
+            InkDialog.Show(this, $"没有找到：{query}", "查找正文", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         SelectAndReveal(match.LineNumber);
@@ -87,7 +87,7 @@ public partial class IllustrationPositionWindow : Window
     {
         if (LinesGrid.SelectedItem is not TextSourceLine line)
         {
-            MessageBox.Show(this, "请先选择一行。", "EasyPub Modern");
+            InkDialog.Show(this, "请先选择一行。", "EasyPub Modern");
             return;
         }
         SelectedLineNumber = line.LineNumber;

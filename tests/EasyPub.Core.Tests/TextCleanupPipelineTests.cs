@@ -5,6 +5,40 @@ namespace EasyPub.Core.Tests;
 public sealed class TextCleanupPipelineTests
 {
     [Fact]
+    public void Multiline_custom_regex_replaces_across_line_boundaries()
+    {
+        var preview = TextCleanupPipeline.Apply("广告开始\n请访问 example.com\n广告结束\n正文。", new TextCleanupOptions
+        {
+            CustomRules = [new TextCleanupCustomRule
+            {
+                Name = "跨行广告",
+                Pattern = "广告开始.*?广告结束\\n?",
+                Replacement = string.Empty,
+                IsRegex = true,
+                Multiline = true,
+            }],
+        });
+
+        Assert.Equal("正文。", preview.Text);
+        Assert.Contains(preview.Changes, change => change.Rule == "自定义：跨行广告");
+    }
+
+    [Fact]
+    public void Invisible_characters_duplicate_titles_and_repeated_headers_can_be_cleaned()
+    {
+        var preview = TextCleanupPipeline.Apply("第一章 开始\n第一章 开始\n正\u200B文\n第 2 页", new TextCleanupOptions
+        {
+            RemoveInvisibleCharacters = true,
+            RemoveDuplicateChapterTitles = true,
+            RemoveRepeatedHeaders = true,
+        });
+
+        Assert.Equal(1, preview.Text.Split("第一章 开始").Length - 1);
+        Assert.Contains("正文", preview.Text);
+        Assert.DoesNotContain("第 2 页", preview.Text);
+    }
+
+    [Fact]
     public void Cleanup_keeps_source_line_numbers_and_previews_each_rule()
     {
         var text = "001 雨夜\n這是一段沒有句号\n接在上一行的正文。\n\n\n本书来自某某下载站";

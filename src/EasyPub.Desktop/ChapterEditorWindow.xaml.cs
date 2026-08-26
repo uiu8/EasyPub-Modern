@@ -241,7 +241,7 @@ public partial class ChapterEditorWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存章节树", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法保存章节树", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -297,7 +297,7 @@ public partial class ChapterEditorWindow : Window
 
     private async void RebuildFromRules_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = MessageBox.Show(
+        var confirm = InkDialog.Show(
             this,
             "重新识别会用当前规则重建章节树。你可以使用“撤销”恢复当前结构。是否继续？",
             "重新识别章节",
@@ -324,7 +324,7 @@ public partial class ChapterEditorWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -597,7 +597,7 @@ public partial class ChapterEditorWindow : Window
         return null;
     }
     private void ShowInfo(string message, string title) =>
-        MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
+        InkDialog.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
 }
 
 internal sealed record ChapterEditorSnapshot(

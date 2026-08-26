@@ -18,6 +18,16 @@ namespace EasyPub.Desktop;
 
 public partial class MainWindow : Window
 {
+    private enum WorkspacePage
+    {
+        Library,
+        Chapters,
+        Cover,
+        Layout,
+        Convert,
+        Tasks,
+    }
+
     private LegacyConfigImport? _legacyConfig;
     private bool _useLegacyConfig = true;
     private int _coverPreviewVersion;
@@ -26,6 +36,7 @@ public partial class MainWindow : Window
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
     private readonly ConversionHistoryStore _historyStore = ConversionHistoryStore.CreateDefault();
     private readonly ConversionPreflightCache _preflightCache = new();
+    private readonly SemaphoreSlim _chapterTreeBuildSemaphore = new(2, 2);
     private readonly EasyPubProjectStore _recoveryStore = EasyPubProjectStore.CreateRecoveryDefault();
     private readonly DispatcherTimer _recoveryTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private IReadOnlyList<string> _lastFailedInputPaths = [];
@@ -53,7 +64,24 @@ public partial class MainWindow : Window
     private ICollectionView? _bookWorklistView;
     private ConversionPreflightReport? _lastPreflightReport;
     private string? _activeConversionPlanName;
-    private bool _conversionPlanModified;
+    private WorkspacePage _workspacePage = WorkspacePage.Library;
+    private string _theme = ThemeManager.LightTheme;
+    private string _uiDensity = "Comfortable";
+    private int _uiScalePercent = 100;
+    private bool _rememberWindowPlacement = true;
+    private bool _reduceMotion;
+    private bool _syncingSelectedBook;
+    private bool _syncingVisibleLayout;
+    private bool _syncingFormat;
+    private bool _syncingLayoutMode;
+    private bool _syncingSelectedMetadata;
+    private string? _profileAuthor;
+    private PublicationMetadata _profileMetadata = new();
+    private IReadOnlyDictionary<string, string> _shortcutBindings = new Dictionary<string, string>();
+    private BatchExecutionControl? _batchExecutionControl;
+    private bool _brushSelecting;
+    private bool _brushSelectValue;
+    private readonly Stack<(string Label, EasyPubProjectDocument Snapshot)> _undoStack = new();
 
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
@@ -78,9 +106,260 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         _recoveryTimer.Tick += RecoveryTimer_Tick;
         InitializeOptionTracking();
+        KindleModelCombo.ItemsSource = KindleDeviceProfiles.BuiltIn.Concat([KindleDeviceProfiles.Custom(1264, 1680, 300)]).ToArray();
+        KindleModelCombo.SelectedItem = KindleDeviceProfiles.BuiltIn.First(item => item.Id == "kpw6");
+        SyncVisibleLayoutControls();
+        RefreshLayoutPreview();
         UpdateModeDescription();
-        UpdateWorkspaceScope();
+        UpdateProjectTitle();
         UpdateContextualControls();
+        ShowWorkspacePage(WorkspacePage.Library);
+    }
+
+    private void NavigateLibrary_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Library);
+    private void NavigateChapters_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Chapters);
+    private void NavigateCover_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Cover);
+    private void NavigateLayout_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Layout);
+    private void NavigateConvert_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Convert);
+
+    private void NavigateTasks_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Tasks);
+
+    private void ProjectMenu_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = ProjectMenuButton };
+        foreach (var (label, action) in new (string, RoutedEventHandler)[]
+        {
+            ("新建项目", NewProject_Click), ("打开项目…", OpenProject_Click),
+            ("保存项目", SaveProject_Click), ("项目另存为…", SaveProjectAs_Click),
+        })
+        {
+            var item = new MenuItem { Header = label };
+            item.Click += action;
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    private void ShowWorkspacePage(WorkspacePage page)
+    {
+        if (PageTitleText is null) return;
+        _workspacePage = page;
+        LibraryNavigationButton.IsChecked = page == WorkspacePage.Library;
+        ChaptersNavigationButton.IsChecked = page == WorkspacePage.Chapters;
+        CoverNavigationButton.IsChecked = page == WorkspacePage.Cover;
+        LayoutNavigationButton.IsChecked = page == WorkspacePage.Layout;
+        ConvertNavigationButton.IsChecked = page == WorkspacePage.Convert;
+        TasksNavigationButton.IsChecked = page == WorkspacePage.Tasks;
+
+        InkLibraryPage.Visibility = page == WorkspacePage.Library ? Visibility.Visible : Visibility.Collapsed;
+        InkChaptersPage.Visibility = page == WorkspacePage.Chapters ? Visibility.Visible : Visibility.Collapsed;
+        InkCoverPage.Visibility = page == WorkspacePage.Cover ? Visibility.Visible : Visibility.Collapsed;
+        InkLayoutPage.Visibility = page == WorkspacePage.Layout ? Visibility.Visible : Visibility.Collapsed;
+        InkConvertPage.Visibility = page == WorkspacePage.Convert ? Visibility.Visible : Visibility.Collapsed;
+        TaskCenterLanding.Visibility = page == WorkspacePage.Tasks ? Visibility.Visible : Visibility.Collapsed;
+        LibraryToolbarPanel.Visibility = page == WorkspacePage.Library ? Visibility.Visible : Visibility.Collapsed;
+        FileCountBadge.Visibility = page is WorkspacePage.Library or WorkspacePage.Convert ? Visibility.Visible : Visibility.Collapsed;
+
+        switch (page)
+        {
+            case WorkspacePage.Library:
+                PageTitleText.Text = "书库";
+                PageSubtitleText.Text = "导入、筛选并批量管理待转换书稿";
+                break;
+            case WorkspacePage.Chapters:
+                PageTitleText.Text = "章节正文";
+                PageSubtitleText.Text = "检查章节识别、调整目录层级并核对正文";
+                break;
+            case WorkspacePage.Cover:
+                PageTitleText.Text = "封面信息";
+                PageSubtitleText.Text = "为每本书分别设置封面与书籍元数据";
+                break;
+            case WorkspacePage.Layout:
+                PageTitleText.Text = "排版插图";
+                PageSubtitleText.Text = "设置版式、页边距、字体、CSS 与正文插图";
+                SyncVisibleLayoutControls();
+                RefreshLayoutPreview();
+                break;
+            case WorkspacePage.Convert:
+                PageTitleText.Text = "转换输出";
+                PageSubtitleText.Text = "选择目标格式与输出位置，然后开始批量转换";
+                break;
+            case WorkspacePage.Tasks:
+                PageTitleText.Text = "任务中心";
+                PageSubtitleText.Text = "查看转换进度、验收结果并处理失败项目";
+                break;
+        }
+
+        MainContentScrollViewer.ScrollToTop();
+        UpdateContextualControls();
+    }
+
+    private void UseLightTheme_Click(object sender, RoutedEventArgs e)
+    {
+        _theme = ThemeManager.LightTheme;
+        ThemeManager.Apply(_theme, this);
+    }
+
+    private void UseDarkTheme_Click(object sender, RoutedEventArgs e)
+    {
+        _theme = ThemeManager.DarkTheme;
+        ThemeManager.Apply(_theme, this);
+    }
+
+    private void MoreLibraryActions_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu();
+        var selectAll = new MenuItem { Header = "全选全部书稿", IsEnabled = InputBooks.Count > 0 };
+        selectAll.Click += SelectAllFiles_Click;
+        var clear = new MenuItem { Header = "清空书库", IsEnabled = InputBooks.Count > 0 };
+        clear.Click += ClearFiles_Click;
+        var favorites = new MenuItem { Header = "管理收藏文件夹" };
+        favorites.Click += ManageFavoriteFolders_Click;
+        var undo = new MenuItem { Header = _undoStack.TryPeek(out var entry) ? $"撤销：{entry.Label}" : "撤销批量操作", IsEnabled = _undoStack.Count > 0 };
+        undo.Click += UndoLastBatch_Click;
+        menu.Items.Add(selectAll);
+        menu.Items.Add(clear);
+        menu.Items.Add(undo);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(favorites);
+        menu.PlacementTarget = sender as UIElement;
+        menu.IsOpen = true;
+    }
+
+    private void BookActions_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: InputBookItem book } button) return;
+        SelectOnlyBook(book);
+
+        var menu = new ContextMenu { PlacementTarget = button };
+        var editChapters = new MenuItem { Header = "编辑章节正文", IsEnabled = !book.IsEpub };
+        editChapters.Click += (_, _) => ShowWorkspacePage(WorkspacePage.Chapters);
+        var editMetadata = new MenuItem { Header = "编辑封面信息" };
+        editMetadata.Click += (_, _) => ShowWorkspacePage(WorkspacePage.Cover);
+        var openFolder = new MenuItem { Header = "在资源管理器中显示" };
+        openFolder.Click += (_, _) => System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{book.InputPath}\"") { UseShellExecute = true });
+        var remove = new MenuItem { Header = "从书库移除" };
+        remove.Click += (_, _) =>
+        {
+            PushUndo("移除书稿");
+            InputBooks.Remove(book);
+            UpdateStatus();
+        };
+        menu.Items.Add(editChapters);
+        menu.Items.Add(editMetadata);
+        menu.Items.Add(openFolder);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(remove);
+        button.ContextMenu = menu;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void SelectOnlyBook(InputBookItem book)
+    {
+        _syncingSelectedBook = true;
+        FilesList.SelectedItems.Clear();
+        FilesList.SelectedItem = book;
+        FilesList.ScrollIntoView(book);
+        ChapterBookCombo.SelectedItem = book;
+        _syncingSelectedBook = false;
+        UpdateContextualControls();
+        _ = RefreshCoverPreviewAsync();
+    }
+
+    private void PushUndo(string label)
+    {
+        _undoStack.Push((label, CaptureProjectDocument()));
+    }
+
+    private void UndoLastBatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_undoStack.TryPop(out var item)) return;
+        ApplyProjectDocument(item.Snapshot);
+        StatusText.Text = $"已撤销：{item.Label}";
+    }
+
+    private void ChapterBookCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSelectedBook || ChapterBookCombo.SelectedItem is not InputBookItem book) return;
+        _syncingSelectedBook = true;
+        FilesList.SelectedItems.Clear();
+        FilesList.SelectedItem = book;
+        FilesList.ScrollIntoView(book);
+        _syncingSelectedBook = false;
+    }
+
+    private void FavoriteFolderMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: string folder }) return;
+        FavoriteFolderCombo.SelectedItem = FavoriteFolders.FirstOrDefault(item => string.Equals(item, folder, StringComparison.OrdinalIgnoreCase));
+        AddFromFavoriteFolder_Click(sender, e);
+        e.Handled = true;
+    }
+
+    private void ManageFavoriteFolders_Click(object sender, RoutedEventArgs e) => ManageFavoriteFoldersWindow(this);
+
+    private void ManageFavoriteFoldersWindow(Window owner)
+    {
+        var manager = new FavoriteFolderManagerWindow(FavoriteFolders) { Owner = owner };
+        if (manager.ShowDialog() != true) return;
+        ApplyFavoriteFolders(manager.Result);
+        StatusText.Text = $"收藏文件夹已更新，共 {FavoriteFolders.Count} 个";
+    }
+
+    private async void ShowSettings_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsWindow? settingsWindow = null;
+        settingsWindow = new SettingsWindow(
+            _theme,
+            _uiDensity,
+            _uiScalePercent,
+            _rememberWindowPlacement,
+            _reduceMotion,
+            OutputDirectoryText.Text,
+            KindleGenText.Text,
+            int.Parse((ParallelismCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "0", CultureInfo.InvariantCulture),
+            ArtifactValidationCheck.IsChecked == true,
+            int.Parse(((ComboBoxItem)ValidationRetentionCombo.SelectedItem).Tag!.ToString()!, CultureInfo.InvariantCulture),
+            AutoOpenTaskCenterCheck.IsChecked == true,
+            AutoOpenOutputDirectoryCheck.IsChecked == true,
+            _shortcutBindings,
+            FavoriteFolders.Count,
+            () => ManageFavoriteFoldersWindow(settingsWindow!))
+        {
+            Owner = this,
+        };
+        if (settingsWindow.ShowDialog() != true) return;
+
+        _theme = settingsWindow.Theme;
+        _uiDensity = settingsWindow.Density;
+        _uiScalePercent = settingsWindow.ScalePercent;
+        _rememberWindowPlacement = settingsWindow.RememberWindowPlacement;
+        _reduceMotion = settingsWindow.ReduceMotion;
+        OutputDirectoryText.Text = settingsWindow.OutputDirectory;
+        KindleGenText.Text = settingsWindow.KindleGenPath;
+        SelectComboItemByTag(ParallelismCombo, settingsWindow.Parallelism.ToString(CultureInfo.InvariantCulture));
+        ArtifactValidationCheck.IsChecked = settingsWindow.ValidationEnabled;
+        SelectComboItemByTag(ValidationRetentionCombo, settingsWindow.ReportRetention.ToString(CultureInfo.InvariantCulture));
+        ValidationRetentionCombo.IsEnabled = settingsWindow.ValidationEnabled;
+        AutoOpenTaskCenterCheck.IsChecked = settingsWindow.AutoOpenTaskCenter;
+        AutoOpenOutputDirectoryCheck.IsChecked = settingsWindow.AutoOpenOutputDirectory;
+        _shortcutBindings = settingsWindow.ShortcutBindings;
+        ApplyAppearanceSettings();
+        await _appSettingsStore.SaveAsync(CaptureAppSettings());
+        StatusText.Text = "全局设置已保存";
+    }
+
+    private void ApplyAppearanceSettings()
+    {
+        ThemeManager.Apply(_theme, this);
+        var compact = string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase);
+        SidebarColumn.Width = new GridLength(compact ? 166 : 184);
+        foreach (var button in new[] { LibraryNavigationButton, ChaptersNavigationButton, CoverNavigationButton, LayoutNavigationButton, ConvertNavigationButton, TasksNavigationButton })
+            button.Height = compact ? 42 : 48;
+        FontSize = Math.Clamp(12d * _uiScalePercent / 100d, 10.5, 15);
+        ShowWorkspacePage(_workspacePage);
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -219,7 +498,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存配置选择", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法保存配置选择", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -227,7 +506,7 @@ public partial class MainWindow : Window
     {
         if (_legacyConfig is null)
         {
-            MessageBox.Show(this, "尚未加载原版 config.xml。", "EasyPub Modern");
+            InkDialog.Show(this, "尚未加载原版 config.xml。", "EasyPub Modern");
             return;
         }
 
@@ -235,7 +514,7 @@ public partial class MainWindow : Window
             + string.Join("\n- ", _legacyConfig.AppliedSettings)
             + "\n\n尚未应用（配置值已保留在原文件中）：\n- "
             + string.Join("\n- ", _legacyConfig.UnsupportedSettings);
-        MessageBox.Show(this, message, "原版配置映射", MessageBoxButton.OK, MessageBoxImage.Information);
+        InkDialog.Show(this, message, "原版配置映射", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void LoadLegacyConfig(string path, bool showError)
@@ -256,7 +535,7 @@ public partial class MainWindow : Window
             LegacyConfigStatusText.ToolTip = null;
             UpdateLegacyConfigButtons();
             if (showError)
-                MessageBox.Show(this, exception.Message, "无法加载原版配置", MessageBoxButton.OK, MessageBoxImage.Error);
+                InkDialog.Show(this, exception.Message, "无法加载原版配置", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -307,6 +586,45 @@ public partial class MainWindow : Window
             ConversionPresets.Add(preset);
         ApplyProfile(settings.LastProfile);
         AutoOpenTaskCenterCheck.IsChecked = settings.AutoOpenTaskCenter;
+        AutoOpenOutputDirectoryCheck.IsChecked = settings.AutoOpenOutputDirectory;
+        SelectComboItemByTag(OutputCollisionCombo, settings.OutputCollisionPolicy.ToString());
+        _shortcutBindings = settings.ShortcutBindings ?? new Dictionary<string, string>();
+        CustomKindleWidthText.Text = settings.CustomKindleWidth.ToString(CultureInfo.InvariantCulture);
+        CustomKindleHeightText.Text = settings.CustomKindleHeight.ToString(CultureInfo.InvariantCulture);
+        CustomKindlePpiText.Text = settings.CustomKindlePpi.ToString(CultureInfo.InvariantCulture);
+        KindleModelCombo.SelectedItem = KindleModelCombo.Items.OfType<KindleDeviceProfile>().FirstOrDefault(item => item.Id == settings.KindlePreviewDeviceId) ?? KindleModelCombo.Items.OfType<KindleDeviceProfile>().First();
+        _theme = string.IsNullOrWhiteSpace(settings.Theme) ? ThemeManager.LightTheme : settings.Theme;
+        _uiDensity = string.IsNullOrWhiteSpace(settings.UiDensity) ? "Comfortable" : settings.UiDensity;
+        _uiScalePercent = Math.Clamp(settings.UiScalePercent, 90, 125);
+        _rememberWindowPlacement = settings.RememberWindowPlacement;
+        _reduceMotion = settings.ReduceMotion;
+        ApplyAppearanceSettings();
+        ApplyWindowPlacement(settings);
+    }
+
+    private void ApplyWindowPlacement(EasyPubAppSettings settings)
+    {
+        if (!settings.RememberWindowPlacement
+            || settings.WindowWidth is not double width
+            || settings.WindowHeight is not double height
+            || !double.IsFinite(width)
+            || !double.IsFinite(height)) return;
+
+        Width = Math.Clamp(width, MinWidth, Math.Max(MinWidth, SystemParameters.VirtualScreenWidth));
+        Height = Math.Clamp(height, MinHeight, Math.Max(MinHeight, SystemParameters.VirtualScreenHeight));
+        if (settings.WindowLeft is double left && settings.WindowTop is double top
+            && double.IsFinite(left) && double.IsFinite(top))
+        {
+            var visibleLeft = SystemParameters.VirtualScreenLeft;
+            var visibleTop = SystemParameters.VirtualScreenTop;
+            var visibleRight = visibleLeft + SystemParameters.VirtualScreenWidth;
+            var visibleBottom = visibleTop + SystemParameters.VirtualScreenHeight;
+            Left = Math.Clamp(left, visibleLeft, Math.Max(visibleLeft, visibleRight - 120));
+            Top = Math.Clamp(top, visibleTop, Math.Max(visibleTop, visibleBottom - 80));
+            WindowStartupLocation = WindowStartupLocation.Manual;
+        }
+        if (string.Equals(settings.WindowState, nameof(System.Windows.WindowState.Maximized), StringComparison.OrdinalIgnoreCase))
+            WindowState = System.Windows.WindowState.Maximized;
     }
 
     private void ApplyProfile(ConversionProfile profile)
@@ -317,8 +635,10 @@ public partial class MainWindow : Window
         ModernModeRadio.IsChecked = profile.Mode == ConversionMode.ModernLayout;
         CustomModeRadio.IsChecked = profile.Mode == ConversionMode.Custom;
         FormatCombo.SelectedIndex = string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _profileAuthor = profile.Author;
         AuthorText.Text = profile.Author ?? string.Empty;
         var metadata = profile.Options.Metadata ?? new PublicationMetadata();
+        _profileMetadata = metadata;
         TranslatorText.Text = metadata.Translator ?? string.Empty;
         IsbnText.Text = metadata.Isbn ?? string.Empty;
         PublicationDatePicker.SelectedDate = metadata.PublicationDate?.ToDateTime(TimeOnly.MinValue);
@@ -327,7 +647,7 @@ public partial class MainWindow : Window
         LanguageCombo.Text = string.IsNullOrWhiteSpace(metadata.Language) ? "zh-CN" : metadata.Language;
         DescriptionText.Text = metadata.Description ?? string.Empty;
         var parallelItem = ParallelismCombo.Items.OfType<ComboBoxItem>()
-            .FirstOrDefault(item => item.Content?.ToString() == profile.Parallelism.ToString(CultureInfo.InvariantCulture));
+            .FirstOrDefault(item => item.Tag?.ToString() == profile.Parallelism.ToString(CultureInfo.InvariantCulture));
         if (parallelItem is not null) ParallelismCombo.SelectedItem = parallelItem;
         var options = profile.Options;
         _customCss = options.AdditionalCss;
@@ -379,6 +699,10 @@ public partial class MainWindow : Window
         _applyingProfile = false;
         ClearAllDirtyTabs();
         UpdateModeDescription();
+        SyncLayoutModeCombo();
+        SyncVisibleLayoutControls();
+        RefreshLayoutPreview();
+        LoadSelectedBookMetadataFields(SelectedCoverBook());
     }
 
     private ConversionProfile CaptureProfile()
@@ -400,18 +724,7 @@ public partial class MainWindow : Window
             PageMarginLeftPx = ParseNonNegativeInt(PageMarginLeftText.Text, "左边距"),
             PageMarginRightPx = ParseNonNegativeInt(PageMarginRightText.Text, "右边距"),
             AdditionalCss = EmptyToNull(_customCss ?? string.Empty),
-            Metadata = new PublicationMetadata
-            {
-                Translator = EmptyToNull(TranslatorText.Text),
-                Isbn = EmptyToNull(IsbnText.Text),
-                PublicationDate = PublicationDatePicker.SelectedDate is DateTime publicationDate
-                    ? DateOnly.FromDateTime(publicationDate)
-                    : null,
-                Publisher = EmptyToNull(PublisherText.Text),
-                Category = EmptyToNull(CategoryCombo.Text),
-                Language = EmptyToNull(LanguageCombo.Text) ?? "zh-CN",
-                Description = EmptyToNull(DescriptionText.Text),
-            },
+            Metadata = _profileMetadata,
             Font = new EmbeddedFontOptions
             {
                 Enabled = EmbedFontCheck.IsChecked == true,
@@ -438,8 +751,8 @@ public partial class MainWindow : Window
         };
         return new ConversionProfile(
             FormatCombo.SelectedIndex == 1 ? "mobi" : "epub",
-            EmptyToNull(AuthorText.Text),
-            int.Parse(((ComboBoxItem)ParallelismCombo.SelectedItem).Content.ToString()!, CultureInfo.InvariantCulture),
+            _profileAuthor,
+            int.Parse((ParallelismCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "0", CultureInfo.InvariantCulture),
             EmptyToNull(_customCssSourcePath ?? string.Empty),
             options)
         {
@@ -447,15 +760,38 @@ public partial class MainWindow : Window
         };
     }
 
-    private EasyPubAppSettings CaptureAppSettings() => new(
-        EmptyToNull(OutputDirectoryText.Text),
-        CaptureProfile(),
-        ConversionPresets.ToArray())
+    private EasyPubAppSettings CaptureAppSettings()
     {
-        UseLegacyConfig = _useLegacyConfig,
-        LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
-        AutoOpenTaskCenter = AutoOpenTaskCenterCheck.IsChecked == true,
-    };
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
+        return new EasyPubAppSettings(
+            EmptyToNull(OutputDirectoryText.Text),
+            CaptureProfile(),
+            ConversionPresets.ToArray())
+        {
+            UseLegacyConfig = _useLegacyConfig,
+            LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
+            AutoOpenTaskCenter = AutoOpenTaskCenterCheck.IsChecked == true,
+            AutoOpenOutputDirectory = AutoOpenOutputDirectoryCheck.IsChecked == true,
+            OutputCollisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var collisionPolicy) ? collisionPolicy : OutputCollisionPolicy.AutoRename,
+            KindlePreviewDeviceId = (KindleModelCombo.SelectedItem as KindleDeviceProfile)?.Id ?? "kpw6",
+            CustomKindleWidth = int.TryParse(CustomKindleWidthText.Text, out var customWidth) ? customWidth : 1264,
+            CustomKindleHeight = int.TryParse(CustomKindleHeightText.Text, out var customHeight) ? customHeight : 1680,
+            CustomKindlePpi = int.TryParse(CustomKindlePpiText.Text, out var customPpi) ? customPpi : 300,
+            ShortcutBindings = _shortcutBindings,
+            Theme = _theme,
+            UiDensity = _uiDensity,
+            UiScalePercent = _uiScalePercent,
+            RememberWindowPlacement = _rememberWindowPlacement,
+            ReduceMotion = _reduceMotion,
+            WindowLeft = _rememberWindowPlacement && double.IsFinite(bounds.Left) ? bounds.Left : null,
+            WindowTop = _rememberWindowPlacement && double.IsFinite(bounds.Top) ? bounds.Top : null,
+            WindowWidth = _rememberWindowPlacement && double.IsFinite(bounds.Width) ? bounds.Width : null,
+            WindowHeight = _rememberWindowPlacement && double.IsFinite(bounds.Height) ? bounds.Height : null,
+            WindowState = this.WindowState == System.Windows.WindowState.Maximized
+                ? nameof(System.Windows.WindowState.Maximized)
+                : nameof(System.Windows.WindowState.Normal),
+        };
+    }
 
     private async void ManagePresets_Click(object sender, RoutedEventArgs e)
     {
@@ -469,7 +805,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法管理转换方案", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法管理转换方案", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -521,7 +857,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法打开项目", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法打开项目", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -566,7 +902,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存项目", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法保存项目", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }
@@ -578,7 +914,7 @@ public partial class MainWindow : Window
         catch { return true; }
         var fingerprint = EasyPubProjectStore.Fingerprint(current);
         if (fingerprint == _lastExplicitSaveFingerprint || InputBooks.Count == 0) return true;
-        var answer = MessageBox.Show(
+        var answer = InkDialog.Show(
             this,
             "当前项目有尚未保存的修改。\n\n是：先保存\n否：放弃修改\n取消：留在当前项目",
             "EasyPub Modern",
@@ -697,21 +1033,21 @@ public partial class MainWindow : Window
 
     private void UpdateProjectTitle()
     {
+        var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
+        if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v0.22.1"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v0.22.1";
+            ? "EasyPub Modern v1.1.0"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.0";
         UpdateWorkspaceScope();
     }
 
     private void UpdateWorkspaceScope()
     {
         if (WorkspaceScopeText is null) return;
-        var project = _currentProjectPath is null ? "未保存项目" : Path.GetFileName(_currentProjectPath);
-        var plan = string.IsNullOrWhiteSpace(_activeConversionPlanName)
-            ? "当前手动设置"
-            : _conversionPlanModified ? $"{_activeConversionPlanName}（已修改）" : _activeConversionPlanName;
-        WorkspaceScopeText.Text = $"当前工作：{project} · 转换方案：{plan}";
-        WorkspaceScopeText.ToolTip = "项目保存书稿和逐书内容；转换方案只保存整批通用转换参数。";
+        WorkspaceScopeText.Text = _currentProjectPath is null ? "▣  未保存" : "▣  已保存";
+        WorkspaceScopeText.ToolTip = _currentProjectPath is null
+            ? "当前工作尚未保存为项目"
+            : $"已保存到：{_currentProjectPath}";
     }
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
@@ -756,7 +1092,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法导入文件夹", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法导入文件夹", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -764,12 +1100,14 @@ public partial class MainWindow : Window
     {
         if (InputBooks.Count == 0)
         {
-            MessageBox.Show(this, "请先添加至少一本小说。", "EasyPub Modern");
+            InkDialog.Show(this, "请先添加至少一本小说。", "EasyPub Modern");
             return;
         }
+        var beforeEdit = CaptureProjectDocument();
         var editor = new BatchMetadataWindow(InputBooks.ToArray()) { Owner = this };
         if (editor.ShowDialog() == true)
         {
+            _undoStack.Push(("批量编辑书籍信息", beforeEdit));
             MarkDirtyTab(MetadataTab);
             UpdateMetadataMappingSummary();
             UpdateSelectedBookInspector(SelectedCoverBook());
@@ -795,7 +1133,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法保存元数据映射", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法保存元数据映射", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -819,7 +1157,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法添加收藏", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法添加收藏", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -835,7 +1173,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法移除收藏", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法移除收藏", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -844,7 +1182,7 @@ public partial class MainWindow : Window
         if (FavoriteFolderCombo.SelectedItem is not string selected) return;
         if (!Directory.Exists(selected))
         {
-            MessageBox.Show(
+            InkDialog.Show(
                 this,
                 $"收藏文件夹当前不可用，可能已移动或所在磁盘未连接：\n{selected}",
                 "找不到收藏文件夹",
@@ -901,12 +1239,12 @@ public partial class MainWindow : Window
                 : null;
         if (book is null)
         {
-            MessageBox.Show(this, "请在待转换文件中只选中一个 TXT，再打开章节编辑器。", "EasyPub Modern");
+            InkDialog.Show(this, "请在待转换文件中只选中一个 TXT，再打开章节编辑器。", "EasyPub Modern");
             return;
         }
         if (!string.Equals(Path.GetExtension(book.InputPath), ".txt", StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "EPUB 会直接读取原书目录；章节树编辑目前用于 TXT 书稿。", "EasyPub Modern");
+            InkDialog.Show(this, "EPUB 会直接读取原书目录；章节树编辑目前用于 TXT 书稿。", "EasyPub Modern");
             return;
         }
 
@@ -929,7 +1267,7 @@ public partial class MainWindow : Window
             }
             catch (InvalidDataException exception) when (book.ChapterTree is not null)
             {
-                var rebuild = MessageBox.Show(
+                var rebuild = InkDialog.Show(
                     this,
                     exception.Message + "\n\n是否丢弃旧章节树并按当前 TXT 重新识别？",
                     "章节树已失效",
@@ -961,7 +1299,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             StatusText.Text = "章节分析失败";
-            MessageBox.Show(this, exception.Message, "无法打开章节编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法打开章节编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -971,7 +1309,7 @@ public partial class MainWindow : Window
             ?? InputBooks.FirstOrDefault(book => !book.IsEpub);
         if (selected is null)
         {
-            MessageBox.Show(this, "请先添加并选择一本 TXT 小说。EPUB 输入不会使用 TXT 清理规则。", "EasyPub Modern");
+            InkDialog.Show(this, "请先添加并选择一本 TXT 小说。EPUB 输入不会使用 TXT 清理规则。", "EasyPub Modern");
             return;
         }
         try
@@ -990,7 +1328,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法预览文本清理", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法预览文本清理", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -1048,10 +1386,251 @@ public partial class MainWindow : Window
         }
         ClearDirtyTab(LayoutTab);
         UpdateModeDescription();
+        SyncLayoutModeCombo();
+        SyncVisibleLayoutControls();
+        RefreshLayoutPreview();
     }
+
+    private void LayoutModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingLayoutMode || LayoutModeCombo is null) return;
+        _syncingLayoutMode = true;
+        try
+        {
+            OriginalModeRadio.IsChecked = LayoutModeCombo.SelectedIndex == 0;
+            ModernModeRadio.IsChecked = LayoutModeCombo.SelectedIndex == 1;
+            CustomModeRadio.IsChecked = LayoutModeCombo.SelectedIndex == 2;
+        }
+        finally { _syncingLayoutMode = false; }
+    }
+
+    private void SyncLayoutModeCombo()
+    {
+        if (LayoutModeCombo is null) return;
+        _syncingLayoutMode = true;
+        LayoutModeCombo.SelectedIndex = _conversionMode switch
+        {
+            ConversionMode.ModernLayout => 1,
+            ConversionMode.Custom => 2,
+            _ => 0,
+        };
+        _syncingLayoutMode = false;
+    }
+
+    private void LayoutSection_Checked(object sender, RoutedEventArgs e)
+    {
+        if (LayoutBasePanel is null) return;
+        LayoutBasePanel.Visibility = LayoutBaseNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutMarginsPanel.Visibility = LayoutMarginsNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutFontPanel.Visibility = LayoutFontNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutChapterPanel.Visibility = LayoutChapterNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutCssPanel.Visibility = LayoutCssNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        LayoutIllustrationPanel.Visibility = LayoutIllustrationNav.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (LayoutMarginsNav.IsChecked == true || LayoutFontNav.IsChecked == true || LayoutChapterNav.IsChecked == true)
+            SyncVisibleLayoutControls();
+        if (LayoutCssNav.IsChecked == true) UpdateCssSummary();
+        if (LayoutIllustrationNav.IsChecked == true) UpdateLayoutIllustrationSummary();
+    }
+
+    private void SyncVisibleLayoutControls()
+    {
+        if (VisibleMarginTopText is null || PageMarginTopText is null) return;
+        _syncingVisibleLayout = true;
+        try
+        {
+            VisibleMarginTopText.Text = PageMarginTopText.Text;
+            VisibleMarginBottomText.Text = PageMarginBottomText.Text;
+            VisibleMarginLeftText.Text = PageMarginLeftText.Text;
+            VisibleMarginRightText.Text = PageMarginRightText.Text;
+            VisibleAlignmentCombo.SelectedIndex = Math.Max(0, AlignmentCombo.SelectedIndex);
+            VisibleEmbedFontCheck.IsChecked = EmbedFontCheck.IsChecked;
+            VisibleFontPathText.Text = FontPathText.Text;
+            VisibleFontFamilyText.Text = FontFamilyText.Text;
+            VisibleSubsetFontCheck.IsChecked = SubsetFontCheck.IsChecked;
+            VisibleFontStatusText.Text = FontStatusText.Text;
+            VisibleChapterRegexText.Text = ChapterRegexText.Text;
+            VisibleCssSummaryText.Text = CssSummaryText.Text;
+        }
+        finally
+        {
+            _syncingVisibleLayout = false;
+        }
+        UpdateLayoutIllustrationSummary();
+    }
+
+    private void VisibleMarginText_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingVisibleLayout || PageMarginTopText is null) return;
+        PageMarginTopText.Text = VisibleMarginTopText.Text;
+        PageMarginBottomText.Text = VisibleMarginBottomText.Text;
+        PageMarginLeftText.Text = VisibleMarginLeftText.Text;
+        PageMarginRightText.Text = VisibleMarginRightText.Text;
+        MarkVisibleLayoutChanged(LayoutTab);
+    }
+
+    private void VisibleAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingVisibleLayout || AlignmentCombo is null) return;
+        AlignmentCombo.SelectedIndex = Math.Max(0, VisibleAlignmentCombo.SelectedIndex);
+        MarkVisibleLayoutChanged(LayoutTab);
+    }
+
+    private void VisibleFontSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncingVisibleLayout || EmbedFontCheck is null) return;
+        EmbedFontCheck.IsChecked = VisibleEmbedFontCheck.IsChecked;
+        SubsetFontCheck.IsChecked = VisibleSubsetFontCheck.IsChecked;
+        UpdateFontSummary();
+        VisibleFontStatusText.Text = FontStatusText.Text;
+        MarkVisibleLayoutChanged(FontTab);
+    }
+
+    private void VisibleFontSetting_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingVisibleLayout || FontFamilyText is null) return;
+        FontFamilyText.Text = VisibleFontFamilyText.Text;
+        MarkVisibleLayoutChanged(FontTab);
+        RefreshLayoutPreview();
+    }
+
+    private void BrowseVisibleFont_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择允许嵌入电子书的 TrueType 字体",
+            Filter = "TrueType 字体 (*.ttf)|*.ttf",
+            CheckFileExists = true,
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        _syncingVisibleLayout = true;
+        try
+        {
+            VisibleFontPathText.Text = dialog.FileName;
+            VisibleFontFamilyText.Text = Path.GetFileNameWithoutExtension(dialog.FileName);
+            VisibleEmbedFontCheck.IsChecked = true;
+            FontPathText.Text = VisibleFontPathText.Text;
+            FontFamilyText.Text = VisibleFontFamilyText.Text;
+            EmbedFontCheck.IsChecked = true;
+        }
+        finally { _syncingVisibleLayout = false; }
+        UpdateFontSummary();
+        VisibleFontStatusText.Text = FontStatusText.Text;
+        MarkVisibleLayoutChanged(FontTab);
+        RefreshLayoutPreview();
+    }
+
+    private void ClearVisibleFont_Click(object sender, RoutedEventArgs e)
+    {
+        _syncingVisibleLayout = true;
+        try
+        {
+            VisibleEmbedFontCheck.IsChecked = false;
+            VisibleFontPathText.Clear();
+            VisibleFontFamilyText.Clear();
+            EmbedFontCheck.IsChecked = false;
+            FontPathText.Clear();
+            FontFamilyText.Clear();
+        }
+        finally { _syncingVisibleLayout = false; }
+        UpdateFontSummary();
+        VisibleFontStatusText.Text = FontStatusText.Text;
+        MarkVisibleLayoutChanged(FontTab);
+        RefreshLayoutPreview();
+    }
+
+    private void VisibleChapterRegexText_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingVisibleLayout || ChapterRegexText is null) return;
+        ChapterRegexText.Text = VisibleChapterRegexText.Text;
+        MarkVisibleLayoutChanged(AdvancedTab);
+    }
+
+    private void LayoutPreviewSetting_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (!IsLoaded || _applyingProfile) return;
+        SwitchToCustomModeAfterManualLayoutChange();
+        MarkVisibleLayoutChanged(LayoutTab);
+    }
+
+    private void LayoutPreviewSetting_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded || _applyingProfile) return;
+        SwitchToCustomModeAfterManualLayoutChange();
+        MarkVisibleLayoutChanged(LayoutTab);
+    }
+
+    private void MarkVisibleLayoutChanged(TabItem tab)
+    {
+        if (!_applyingProfile) MarkDirtyTab(tab);
+        RefreshLayoutPreview();
+    }
+
+    private void KindleModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PreviewDeviceFrame is null) return;
+        ApplySelectedKindleModel();
+        RefreshLayoutPreview();
+    }
+
+    private void ApplySelectedKindleModel()
+    {
+        if (PreviewDeviceFrame is null || KindleModelCombo?.SelectedItem is not KindleDeviceProfile selected) return;
+        var profile = selected;
+        CustomKindleSizePanel.Visibility = selected.Id == "custom" ? Visibility.Visible : Visibility.Collapsed;
+        if (selected.Id == "custom" && int.TryParse(CustomKindleWidthText.Text, out var width) && int.TryParse(CustomKindleHeightText.Text, out var height) && int.TryParse(CustomKindlePpiText.Text, out var ppi))
+        {
+            try { profile = KindleDeviceProfiles.Custom(width, height, ppi); }
+            catch (ArgumentOutOfRangeException) { return; }
+        }
+        PreviewDeviceFrame.Width = profile.ViewportWidth;
+        PreviewDeviceFrame.Height = profile.ViewportHeight;
+        PreviewDeviceStatusText.Text = $"{profile.DisplayName} · {profile.PixelWidth} × {profile.PixelHeight} · {profile.Ppi} PPI";
+    }
+
+    private void CustomKindleSize_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (!IsLoaded || KindleModelCombo.SelectedItem is not KindleDeviceProfile { Id: "custom" }) return;
+        ApplySelectedKindleModel();
+        RefreshLayoutPreview();
+    }
+
+    private void RefreshLayoutPreview()
+    {
+        if (LayoutPreviewBody is null || PreviewDeviceFrame is null) return;
+        var fontPercent = ParsePreviewNumber(FontSizeText?.Text, 110);
+        var linePercent = ParsePreviewNumber(LineHeightText?.Text, 120);
+        var fontSize = Math.Clamp(16 * fontPercent / 100, 12, 28);
+        LayoutPreviewBody.FontSize = fontSize;
+        LayoutPreviewBody.LineHeight = Math.Clamp(fontSize * linePercent / 100, fontSize * 1.05, fontSize * 2.4);
+        LayoutPreviewTitle.FontSize = Math.Clamp(fontSize * 1.35, 18, 34);
+        var top = ParsePreviewNumber(PageMarginTopText?.Text, 0);
+        var bottom = ParsePreviewNumber(PageMarginBottomText?.Text, 0);
+        var left = ParsePreviewNumber(PageMarginLeftText?.Text, 3);
+        var right = ParsePreviewNumber(PageMarginRightText?.Text, 3);
+        PreviewDeviceFrame.Padding = new Thickness(
+            Math.Clamp(24 + left, 18, 70),
+            Math.Clamp(26 + top, 18, 70),
+            Math.Clamp(24 + right, 18, 70),
+            Math.Clamp(26 + bottom, 18, 70));
+        LayoutPreviewBody.TextAlignment = AlignmentCombo?.SelectedIndex == 1 ? System.Windows.TextAlignment.Justify : System.Windows.TextAlignment.Left;
+        var family = VisibleEmbedFontCheck?.IsChecked == true && !string.IsNullOrWhiteSpace(VisibleFontFamilyText?.Text)
+            ? VisibleFontFamilyText.Text
+            : "SimSun";
+        try
+        {
+            LayoutPreviewBody.FontFamily = new FontFamily(family);
+            LayoutPreviewTitle.FontFamily = new FontFamily(family);
+        }
+        catch { }
+    }
+
+    private static double ParsePreviewNumber(string? text, double fallback) =>
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : fallback;
 
     private void RemoveSelected_Click(object sender, RoutedEventArgs e)
     {
+        if (FilesList.SelectedItems.Count == 0) return;
+        PushUndo("移除所选书稿");
         foreach (var item in FilesList.SelectedItems.Cast<InputBookItem>().ToArray())
             InputBooks.Remove(item);
         UpdateStatus();
@@ -1066,6 +1645,8 @@ public partial class MainWindow : Window
 
     private void ClearFiles_Click(object sender, RoutedEventArgs e)
     {
+        if (InputBooks.Count == 0) return;
+        PushUndo("清空书库");
         InputBooks.Clear();
         UpdateStatus();
     }
@@ -1100,6 +1681,11 @@ public partial class MainWindow : Window
                 ? $"已设置 · {_customCss.Length} 字符"
                 : $"已导入 · {Path.GetFileName(_customCssSourcePath)}";
         CssSummaryText.ToolTip = _customCssSourcePath ?? _customCss ?? "直接编辑 CSS，或从 .css 文件导入";
+        if (VisibleCssSummaryText is not null)
+        {
+            VisibleCssSummaryText.Text = CssSummaryText.Text;
+            VisibleCssSummaryText.ToolTip = CssSummaryText.ToolTip;
+        }
     }
 
     private void BrowseFont_Click(object sender, RoutedEventArgs e)
@@ -1147,6 +1733,7 @@ public partial class MainWindow : Window
         {
             FontStatusText.Text = $"字体不可用：{exception.Message}";
         }
+        if (VisibleFontStatusText is not null) VisibleFontStatusText.Text = FontStatusText.Text;
     }
 
     private void EditIllustrations_Click(object sender, RoutedEventArgs e)
@@ -1154,12 +1741,12 @@ public partial class MainWindow : Window
         var book = SelectedCoverBook();
         if (book is null)
         {
-            MessageBox.Show(this, "请只选中一本小说，再管理它的正文插图。", "EasyPub Modern");
+            InkDialog.Show(this, "请只选中一本小说，再管理它的正文插图。", "EasyPub Modern");
             return;
         }
         if (book.IsEpub)
         {
-            MessageBox.Show(this, "EPUB 内已有的正文图片会自动处理；手动插图位置编辑目前用于 TXT 书稿。", "EasyPub Modern");
+            InkDialog.Show(this, "EPUB 内已有的正文图片会自动处理；手动插图位置编辑目前用于 TXT 书稿。", "EasyPub Modern");
             return;
         }
 
@@ -1170,13 +1757,17 @@ public partial class MainWindow : Window
             book.InputPath,
             EmptyToNull(ChapterRegexText.Text),
             encoding,
-            book.Illustrations) { Owner = this };
+            book.Illustrations)
+        { Owner = this };
         if (editor.ShowDialog() != true) return;
         book.SetIllustrations(editor.Result);
         MarkDirtyTab(IllustrationsTab);
         UpdateSelectedBookInspector(book);
+        if (SelectedBookOptionsText is not null)
+            SelectedBookOptionsText.Text = $"当前小说：《{book.DisplayName}》· {book.Illustrations.Count} 张正文插图";
         UpdateStatus();
         StatusText.Text = $"已为《{book.DisplayName}》保存 {book.Illustrations.Count} 张正文插图";
+        UpdateLayoutIllustrationSummary();
     }
 
     private async void BrowseCover_Click(object sender, RoutedEventArgs e)
@@ -1184,7 +1775,7 @@ public partial class MainWindow : Window
         var book = SelectedCoverBook();
         if (book is null)
         {
-            MessageBox.Show(this, "请只选中一本小说，再为它选择封面。", "EasyPub Modern");
+            InkDialog.Show(this, "请只选中一本小说，再为它选择封面。", "EasyPub Modern");
             return;
         }
         var dialog = new OpenFileDialog
@@ -1228,9 +1819,105 @@ public partial class MainWindow : Window
 
     private async void FilesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!_syncingSelectedBook)
+        {
+            _syncingSelectedBook = true;
+            ChapterBookCombo.SelectedItem = FilesList.SelectedItems.Count == 1 ? FilesList.SelectedItem : null;
+            _syncingSelectedBook = false;
+        }
         UpdateContextualControls();
         UpdateMetadataMappingSummary();
         await RefreshCoverPreviewAsync();
+        await RefreshInlineChapterPreviewAsync(FilesList.SelectedItems.Count == 1 ? FilesList.SelectedItem as InputBookItem : null);
+    }
+
+    private void FilesList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindVisualParent<Button>((DependencyObject)e.OriginalSource) is not null) return;
+        if (ItemsControl.ContainerFromElement(FilesList, e.OriginalSource as DependencyObject) is not ListBoxItem item) return;
+        _brushSelecting = true;
+        _brushSelectValue = !item.IsSelected;
+        item.IsSelected = _brushSelectValue;
+        Mouse.Capture(FilesList);
+        e.Handled = true;
+    }
+
+    private void FilesList_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_brushSelecting || e.LeftButton != MouseButtonState.Pressed) return;
+        var point = e.GetPosition(FilesList);
+        var hit = FilesList.InputHitTest(point) as DependencyObject;
+        if (ItemsControl.ContainerFromElement(FilesList, hit) is ListBoxItem item) item.IsSelected = _brushSelectValue;
+    }
+
+    private void FilesList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _brushSelecting = false;
+        if (Mouse.Captured == FilesList) Mouse.Capture(null);
+    }
+
+    private async Task RefreshInlineChapterPreviewAsync(InputBookItem? book)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            await Dispatcher.InvokeAsync(() => RefreshInlineChapterPreviewAsync(book)).Task.Unwrap();
+            return;
+        }
+        if (ChapterPreviewText is null || ChapterPreviewStatsText is null || ChapterTreeSummaryText is null) return;
+        if (book is null || book.IsEpub)
+        {
+            ChapterPreviewText.Text = book?.IsEpub == true ? "EPUB 书稿保留原有目录；章节工作台仅用于 TXT。" : "请先在书库选择一本 TXT 书稿。";
+            ChapterPreviewStatsText.Text = "0 行 / 0 字";
+            ChapterTreeSummaryText.Text = "选择一本 TXT 后，可识别卷、章和前置章节。\n\n章节层级与目录勾选会保存在项目中，不修改原始 TXT。";
+            SetLayoutPreviewSample(
+                book?.IsEpub == true ? "EPUB 原有版式" : "第一章　书页预览",
+                book?.IsEpub == true
+                    ? "　　EPUB 输入会保留其正文与图片结构。右侧预览主要用于 TXT 排版参数校对。"
+                    : "　　这里会显示所选书稿的真实正文片段。\n\n　　调整字号、行高、段间距和页边距后，预览会立即更新。");
+            return;
+        }
+
+        try
+        {
+            var chapterRegex = string.IsNullOrWhiteSpace(ChapterRegexText.Text) ? null : ChapterRegexText.Text;
+            var document = await ChapterEditingDocument.LoadAsync(book.InputPath, chapterRegex).ConfigureAwait(false);
+            var lines = document.GetLines();
+            var previewText = string.Join(Environment.NewLine, lines.Take(32).Select(line => $"{line.LineNumber,4}    {line.Text}"));
+            var previewStats = $"{document.LineCount:N0} 行 / {lines.Sum(line => line.Text.Length):N0} 字";
+            var treeSummary = book.ChapterTree is null
+                ? $"检测到 {document.Candidates.Count} 个章节候选。\n\n点击“打开章节工作台”检查标题、前置章节和目录层级。"
+                : $"已保存章节树：{book.ChapterTree.Entries.Count} 项。\n\n点击“打开章节工作台”继续调整。";
+            var meaningfulLines = lines.Select(line => line.Text.Trim()).Where(text => !string.IsNullOrWhiteSpace(text)).ToArray();
+            var title = meaningfulLines.FirstOrDefault(text => text.Length <= 80 &&
+                (text.StartsWith("第", StringComparison.Ordinal) || text.Contains("序章", StringComparison.Ordinal)))
+                ?? book.DisplayName;
+            var body = string.Join("\n\n", meaningfulLines.Where(text => !string.Equals(text, title, StringComparison.Ordinal)).Take(6));
+            if (string.IsNullOrWhiteSpace(body)) body = "　　当前书稿没有可显示的正文片段。";
+            await Dispatcher.InvokeAsync(() =>
+            {
+                ChapterPreviewText.Text = previewText;
+                ChapterPreviewStatsText.Text = previewStats;
+                ChapterTreeSummaryText.Text = treeSummary;
+                SetLayoutPreviewSample(title, body);
+            });
+        }
+        catch (Exception exception)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                ChapterPreviewText.Text = $"无法读取正文预览：{exception.Message}";
+                ChapterPreviewStatsText.Text = "读取失败";
+            });
+        }
+    }
+
+    private void SetLayoutPreviewSample(string title, string body)
+    {
+        if (LayoutPreviewTitle is null || LayoutPreviewBody is null) return;
+        LayoutPreviewTitle.Text = title;
+        var indent = FullWidthIndentCheck?.IsChecked == true || ParsePreviewNumber(IndentText?.Text, 0) >= 1.5 ? "　　" : string.Empty;
+        LayoutPreviewBody.Text = string.Join("\n\n", body.Replace("\r", string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => indent + line.Trim()));
+        RefreshLayoutPreview();
     }
 
     private void CoverDrop_DragOver(object sender, DragEventArgs e)
@@ -1247,7 +1934,7 @@ public partial class MainWindow : Window
         var book = SelectedCoverBook();
         if (book is null || !TryGetSingleCoverPath(e.Data, out var path))
         {
-            MessageBox.Show(this, "请只选中一本小说，并拖入一个 JPG、PNG 或 WebP 图片。", "EasyPub Modern");
+            InkDialog.Show(this, "请只选中一本小说，并拖入一个 JPG、PNG 或 WebP 图片。", "EasyPub Modern");
             return;
         }
         await AssignCoverAsync(book, path);
@@ -1268,7 +1955,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法读取封面", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法读取封面", MessageBoxButton.OK, MessageBoxImage.Error);
             await RefreshCoverPreviewAsync();
         }
     }
@@ -1284,6 +1971,7 @@ public partial class MainWindow : Window
         CoverPreviewImage.Source = null;
         CoverPreviewImage.ToolTip = null;
         CoverPlaceholderText.Visibility = Visibility.Visible;
+        CoverDiagnosticsText.Text = "JPG / PNG / WebP";
 
         if (book is null)
         {
@@ -1328,6 +2016,8 @@ public partial class MainWindow : Window
             SelectedBookNameText.ToolTip = null;
             SelectedBookFormatText.Text = "—";
             SelectedBookSummaryText.Text = "请只选择一本小说查看封面、元数据、插图和章节树状态";
+            LoadSelectedBookMetadataFields(null);
+            UpdateLayoutIllustrationSummary();
             return;
         }
 
@@ -1335,6 +2025,67 @@ public partial class MainWindow : Window
         SelectedBookNameText.ToolTip = book.InputPath;
         SelectedBookFormatText.Text = book.FormatLabel;
         SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
+        LoadSelectedBookMetadataFields(book);
+        UpdateLayoutIllustrationSummary();
+    }
+
+    private void LoadSelectedBookMetadataFields(InputBookItem? book)
+    {
+        if (AuthorText is null) return;
+        _syncingSelectedMetadata = true;
+        try
+        {
+            var metadata = book?.MetadataOverrides;
+            AuthorText.Text = book?.Author ?? metadata?.Author ?? _profileAuthor ?? string.Empty;
+            TranslatorText.Text = metadata?.Translator ?? _profileMetadata.Translator ?? string.Empty;
+            IsbnText.Text = metadata?.Isbn ?? _profileMetadata.Isbn ?? string.Empty;
+            PublicationDatePicker.SelectedDate = (metadata?.PublicationDate ?? _profileMetadata.PublicationDate)?.ToDateTime(TimeOnly.MinValue);
+            PublisherText.Text = metadata?.Publisher ?? _profileMetadata.Publisher ?? string.Empty;
+            CategoryCombo.Text = metadata?.Category ?? _profileMetadata.Category ?? string.Empty;
+            LanguageCombo.Text = metadata?.Language ?? _profileMetadata.Language ?? "zh-CN";
+            DescriptionText.Text = metadata?.Description ?? _profileMetadata.Description ?? string.Empty;
+        }
+        finally
+        {
+            _syncingSelectedMetadata = false;
+        }
+    }
+
+    private void SelectedMetadataField_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSelectedMetadata || _applyingProfile || SelectedCoverBook() is not { } book) return;
+        book.Author = EmptyToNull(AuthorText.Text);
+        book.SetMetadataOverrides(new BookMetadataOverrides
+        {
+            Translator = EmptyToNull(TranslatorText.Text),
+            Isbn = EmptyToNull(IsbnText.Text),
+            PublicationDate = PublicationDatePicker.SelectedDate is DateTime date ? DateOnly.FromDateTime(date) : null,
+            Publisher = EmptyToNull(PublisherText.Text),
+            Category = EmptyToNull(CategoryCombo.Text),
+            Language = EmptyToNull(LanguageCombo.Text),
+            Description = EmptyToNull(DescriptionText.Text),
+        }, null);
+        UpdateMetadataMappingSummary();
+        UpdateSelectedBookInspectorSummaryOnly(book);
+    }
+
+    private void UpdateSelectedBookInspectorSummaryOnly(InputBookItem book)
+    {
+        SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
+    }
+
+    private void UpdateLayoutIllustrationSummary()
+    {
+        if (VisibleIllustrationSummaryText is null || InkManageIllustrationsButton is null) return;
+        var book = SelectedCoverBook();
+        InkManageIllustrationsButton.IsEnabled = book is { IsEpub: false };
+        VisibleIllustrationSummaryText.Text = book switch
+        {
+            null when FilesList?.SelectedItems.Count > 1 => "当前选中了多本书。插图位置属于单本正文，请只选择一本 TXT。",
+            null => "请先在书库中只选中一本 TXT 书稿。",
+            { IsEpub: true } => "EPUB 会保留并处理书内原有图片；手动定位插图目前用于 TXT。",
+            _ => $"《{book.DisplayName}》当前有 {book.Illustrations.Count} 张正文插图。点击下方按钮可选择图片并定位到正文段落。",
+        };
     }
 
     private void ShowCoverPreview(InputBookItem book, PreparedCoverImage prepared)
@@ -1350,6 +2101,8 @@ public partial class MainWindow : Window
         book.SetCoverThumbnail(bitmap);
         CoverPreviewImage.ToolTip = $"{book.CoverImagePath}\n{prepared.PixelWidth} × {prepared.PixelHeight} · {prepared.SourceFormat}"
             + (prepared.WasConverted ? " → JPG" : string.Empty);
+        try { CoverDiagnosticsText.Text = ImageDiagnostics.Inspect(book.CoverImagePath!, cover: true).Summary; }
+        catch (Exception exception) { CoverDiagnosticsText.Text = $"图片诊断失败：{exception.Message}"; }
         CoverPlaceholderText.Visibility = Visibility.Collapsed;
         ClearCoverButton.IsEnabled = true;
         BrowseCoverButton.Content = "更换封面";
@@ -1378,10 +2131,25 @@ public partial class MainWindow : Window
 
     private void FormatCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!_syncingFormat && ConvertFormatCombo is not null && ConvertFormatCombo.SelectedIndex != FormatCombo.SelectedIndex)
+        {
+            _syncingFormat = true;
+            ConvertFormatCombo.SelectedIndex = FormatCombo.SelectedIndex;
+            _syncingFormat = false;
+        }
         if (StatusText is not null && FormatCombo.SelectedIndex == 1 && InputBooks.Count == 0)
             StatusText.Text = "已选择 MOBI；KindleGen 设置位于“MOBI 选项”分页";
         if (StatusText is not null && FormatCombo?.SelectedIndex == 0 && InputBooks.Any(book => book.IsEpub))
             StatusText.Text = "当前含 EPUB 输入；EPUB 输入只能转换为 MOBI";
+    }
+
+    private void ConvertFormatCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingFormat || FormatCombo is null || ConvertFormatCombo is null) return;
+        _syncingFormat = true;
+        FormatCombo.SelectedIndex = ConvertFormatCombo.SelectedIndex;
+        _syncingFormat = false;
+        FormatCombo_SelectionChanged(FormatCombo, e);
     }
 
     private void Window_DragOver(object sender, DragEventArgs e)
@@ -1403,12 +2171,12 @@ public partial class MainWindow : Window
         var book = SelectedCoverBook();
         if (book is null)
         {
-            MessageBox.Show(this, "请只选中一本小说，再打开近似版式预览。", "EasyPub Modern");
+            InkDialog.Show(this, "请只选中一本小说，再打开近似版式预览。", "EasyPub Modern");
             return;
         }
         if (book.IsEpub)
         {
-            MessageBox.Show(this, "EPUB 输入可直接转换为 MOBI；当前近似版式预览用于 TXT 重排结果。", "EasyPub Modern");
+            InkDialog.Show(this, "EPUB 输入可直接转换为 MOBI；当前近似版式预览用于 TXT 重排结果。", "EasyPub Modern");
             return;
         }
 
@@ -1442,7 +2210,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法生成近似版式预览", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法生成近似版式预览", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1479,7 +2247,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法执行转换前检查", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法执行转换前检查", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -1521,7 +2289,8 @@ public partial class MainWindow : Window
                     EmptyToNull(ChapterRegexText.Text),
                     encoding,
                     book.Illustrations,
-                    issue.RelatedValue) { Owner = this };
+                    issue.RelatedValue)
+                { Owner = this };
                 if (editor.ShowDialog() == true) book.SetIllustrations(editor.Result);
                 break;
             case PreflightTargetKind.Mobi:
@@ -1550,7 +2319,7 @@ public partial class MainWindow : Window
             var entries = await _historyStore.LoadAsync();
             if (entries.Count == 0)
             {
-                MessageBox.Show(this, "还没有转换历史。", "EasyPub Modern");
+                InkDialog.Show(this, "还没有转换历史。", "EasyPub Modern");
                 return;
             }
             var window = new ConversionHistoryWindow(entries) { Owner = this };
@@ -1558,7 +2327,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法加载转换历史", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法加载转换历史", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -1657,6 +2426,9 @@ public partial class MainWindow : Window
         var cancellationToken = _operationCancellation.Token;
         ConvertButton.IsEnabled = false;
         CancelButton.IsEnabled = true;
+        PauseButton.IsEnabled = true;
+        PauseButton.Content = "暂停";
+        _batchExecutionControl = new BatchExecutionControl();
         Progress.IsIndeterminate = false;
         Progress.Value = 0;
 
@@ -1697,9 +2469,7 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(OutputDirectoryText.Text.Trim());
             ShowTaskCenterWhenRequested();
             StatusText.Text = $"正在转换 {requests.Count} 本小说…";
-            var parallelism = int.Parse(
-                ((ComboBoxItem)ParallelismCombo.SelectedItem).Content.ToString()!,
-                CultureInfo.InvariantCulture);
+            var parallelism = int.Parse((ParallelismCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "0", CultureInfo.InvariantCulture);
             var batchProgress = new Progress<BatchConversionProgress>(value =>
             {
                 Progress.Value = value.Fraction;
@@ -1711,7 +2481,7 @@ public partial class MainWindow : Window
                 _taskCenterWindow?.RefreshSummary();
             });
             var outcomes = await new BatchConverter(new EasyPubConverter())
-                .ConvertWithReportAsync(requests, parallelism, batchProgress, cancellationToken);
+                .ConvertWithReportAsync(requests, parallelism, batchProgress, cancellationToken, _batchExecutionControl);
             var timestamp = DateTimeOffset.Now;
             var historyEntries = outcomes.Select(outcome => new ConversionHistoryEntry(
                 Guid.NewGuid(),
@@ -1756,6 +2526,9 @@ public partial class MainWindow : Window
             _taskCenterWindow?.RefreshSummary();
             StatusText.Text = $"已完成：成功 {successes.Length} 本，失败 {failures.Length - cancelled} 本，取消 {cancelled} 本，合计 {totalBytes / 1024d:F1} KB";
 
+            if (successes.Length > 0 && AutoOpenOutputDirectoryCheck.IsChecked == true)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", OutputDirectoryText.Text.Trim()) { UseShellExecute = true });
+
             if (failures.Length > 0)
             {
                 var historyWindow = new ConversionHistoryWindow(historyEntries) { Owner = this };
@@ -1764,7 +2537,7 @@ public partial class MainWindow : Window
             else
             {
                 var validated = outcomes.Count(outcome => outcome.Validation is not null);
-                MessageBox.Show(this,
+                InkDialog.Show(this,
                     validated == 0
                         ? $"批量转换完成。结构验收未启用。\n输出目录：{OutputDirectoryText.Text.Trim()}"
                         : $"批量转换与结构验收完成（{validated} 本）。\n报告目录：{Path.Combine(OutputDirectoryText.Text.Trim(), ArtifactValidationService.ReportDirectoryName)}",
@@ -1778,13 +2551,33 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             StatusText.Text = "转换失败";
-            MessageBox.Show(this, exception.Message, "EasyPub Modern", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "EasyPub Modern", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
             Progress.Value = 0;
             CancelButton.IsEnabled = false;
+            PauseButton.IsEnabled = false;
+            PauseButton.Content = "暂停";
+            _batchExecutionControl = null;
             ConvertButton.IsEnabled = InputBooks.Count > 0;
+        }
+    }
+
+    private void PauseResume_Click(object sender, RoutedEventArgs e)
+    {
+        if (_batchExecutionControl is null) return;
+        if (_batchExecutionControl.IsPaused)
+        {
+            _batchExecutionControl.Resume();
+            PauseButton.Content = "暂停";
+            StatusText.Text = "转换已继续";
+        }
+        else
+        {
+            _batchExecutionControl.Pause();
+            PauseButton.Content = "继续";
+            StatusText.Text = "已暂停派发新任务；正在运行的转换会安全完成";
         }
     }
 
@@ -1810,7 +2603,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(options.AdditionalCss) &&
             !string.IsNullOrWhiteSpace(profile.AdditionalCssFilePath))
             options = options with { AdditionalCss = await File.ReadAllTextAsync(profile.AdditionalCssFilePath) };
-        return BatchConversionRequestFactory.Create(
+        var requests = BatchConversionRequestFactory.Create(
             InputBooks.Select(book => new BookConversionSource(
                 book.InputPath,
                 book.CoverImagePath,
@@ -1823,11 +2616,26 @@ public partial class MainWindow : Window
             profile.OutputFormat,
             profile.Author,
             options);
+        var collisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var parsedPolicy)
+            ? parsedPolicy : OutputCollisionPolicy.AutoRename;
+        var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolved = new List<ConversionRequest>(requests.Count);
+        var skipped = 0;
+        foreach (var request in requests)
+        {
+            var decision = OutputPathPolicy.Resolve(request.OutputPath, collisionPolicy, reserved);
+            if (decision.Skipped) { skipped++; continue; }
+            resolved.Add(request with { OutputPath = decision.Path! });
+        }
+        if (resolved.Count == 0) throw new InvalidOperationException(skipped > 0 ? "所有输出文件都已存在，已按设置跳过。" : "没有可转换的书稿。");
+        if (skipped > 0) StatusText.Text = $"已按同名文件策略跳过 {skipped} 本";
+        return resolved;
     }
 
     private void AddFiles(IEnumerable<string> paths)
     {
         InputBookItem? firstAdded = null;
+        var addedBooks = new List<InputBookItem>();
         foreach (var path in paths
                      .Where(IsSupportedInput)
                      .Select(Path.GetFullPath)
@@ -1838,12 +2646,52 @@ public partial class MainWindow : Window
             var book = new InputBookItem(path);
             ApplyMetadataMapping(book);
             InputBooks.Add(book);
+            addedBooks.Add(book);
             firstAdded ??= book;
         }
         if (firstAdded is not null && InputBooks.Any(book => book.IsEpub)) FormatCombo.SelectedIndex = 1;
         if (FilesList.SelectedItems.Count == 0 && firstAdded is not null)
             FilesList.SelectedItem = firstAdded;
         UpdateStatus();
+        foreach (var book in addedBooks.Where(book => !book.IsEpub))
+            _ = BuildDefaultChapterTreeAsync(book);
+    }
+
+    private async Task BuildDefaultChapterTreeAsync(InputBookItem book)
+    {
+        if (book.IsEpub || book.ChapterTree is not null) return;
+
+        await _chapterTreeBuildSemaphore.WaitAsync();
+        try
+        {
+            var encoding = Enum.Parse<TextEncodingMode>(
+                ((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!);
+            var chapterPattern = EmptyToNull(ChapterRegexText.Text);
+            var hierarchy = _tocHierarchy;
+            if (ReferenceEquals(FilesList.SelectedItem, book))
+                StatusText.Text = $"正在自动建立章节树：{Path.GetFileName(book.InputPath)}";
+
+            var document = await Task.Run(() => ChapterTreeDocument.LoadAsync(
+                book.InputPath,
+                chapterPattern,
+                hierarchy,
+                encoding));
+
+            if (!InputBooks.Contains(book) || book.ChapterTree is not null) return;
+            book.SetChapterTree(document.CreatePlan(document.Entries));
+            if (ReferenceEquals(FilesList.SelectedItem, book))
+                UpdateSelectedBookInspector(book);
+            UpdateStatus();
+        }
+        catch (Exception exception)
+        {
+            if (ReferenceEquals(FilesList.SelectedItem, book))
+                StatusText.Text = $"章节树自动识别失败，可在“章节正文”中重试：{exception.Message}";
+        }
+        finally
+        {
+            _chapterTreeBuildSemaphore.Release();
+        }
     }
 
     private void ApplyMetadataMapping(InputBookItem book)
@@ -1892,6 +2740,10 @@ public partial class MainWindow : Window
         StatusText.Text = count == 0
             ? "准备就绪，可添加或拖入多个 TXT / EPUB 文件"
             : $"已添加 {count} 本 · TXT {InputBooks.Count(book => !book.IsEpub)} · EPUB {InputBooks.Count(book => book.IsEpub)} · {InputBooks.Count(book => book.ChapterTree is not null)} 本有章节树";
+        if (LibrarySelectionSummaryText is not null)
+            LibrarySelectionSummaryText.Text = FilesList.SelectedItems.Count == 0
+                ? $"共 {count} 本书稿"
+                : $"已选择 {FilesList.SelectedItems.Count} 本，共 {count} 本书稿";
     }
 
     private void BookWorklistFilter_Changed(object sender, RoutedEventArgs e)
@@ -1939,6 +2791,10 @@ public partial class MainWindow : Window
         var count = InputBooks.Count;
         var selectedCount = FilesList.SelectedItems.Count;
         var singleBook = selectedCount == 1 ? FilesList.SelectedItem as InputBookItem : null;
+        if (LibrarySelectionSummaryText is not null)
+            LibrarySelectionSummaryText.Text = selectedCount == 0
+                ? $"共 {count} 本书稿"
+                : $"已选择 {selectedCount} 本，共 {count} 本书稿";
         SelectAllFilesButton.IsEnabled = count > 0 && selectedCount < count;
         RemoveSelectedButton.IsEnabled = selectedCount > 0;
         ClearFilesButton.IsEnabled = count > 0;
@@ -1950,10 +2806,11 @@ public partial class MainWindow : Window
         QuickMetadataButton.IsEnabled = singleBook is not null;
         QuickIllustrationButton.IsEnabled = singleBook is { IsEpub: false };
         QuickPreviewButton.IsEnabled = singleBook is { IsEpub: false };
-        var showCover = singleBook is not null;
+        var showCover = singleBook is not null && _workspacePage is WorkspacePage.Library or WorkspacePage.Cover;
         CoverDropPanel.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
         CoverGapColumn.Width = new GridLength(showCover ? 14 : 0);
         CoverColumn.Width = new GridLength(showCover ? (_compactLayout ? 270 : 330) : 0);
+        UpdateLayoutIllustrationSummary();
     }
 
     private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1961,7 +2818,6 @@ public partial class MainWindow : Window
         if (_applyingProfile || PresetCombo.SelectedItem is not NamedConversionPreset preset) return;
         ApplyProfile(preset.Profile);
         _activeConversionPlanName = preset.Name;
-        _conversionPlanModified = false;
         UpdateWorkspaceScope();
         StatusText.Text = $"已应用转换方案：{preset.Name}";
     }
@@ -2007,7 +2863,6 @@ public partial class MainWindow : Window
         MarkDirtyTab(tab);
         if (!string.IsNullOrWhiteSpace(_activeConversionPlanName))
         {
-            _conversionPlanModified = true;
             UpdateWorkspaceScope();
         }
         if (ReferenceEquals(tab, LayoutTab) || ReferenceEquals(source, FullWidthIndentCheck))
@@ -2092,14 +2947,26 @@ public partial class MainWindow : Window
         HeaderSubtitleText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PreviewBookButton.Content = compact ? "预览" : "近似预览";
         TaskCenterButton.Content = compact ? "任务" : "任务中心";
+        SettingsButton.Content = compact ? string.Empty : "设置";
+        SidebarColumn.Width = new GridLength(compact ? 132 : string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase) ? 166 : 184);
+        SidebarPanel.Padding = compact ? new Thickness(7) : new Thickness(10);
+        LibraryNavigationButton.Content = "书库";
+        ChaptersNavigationButton.Content = compact ? "章节" : "章节正文";
+        CoverNavigationButton.Content = compact ? "封面" : "封面信息";
+        LayoutNavigationButton.Content = compact ? "排版" : "排版插图";
+        ConvertNavigationButton.Content = compact ? "转换" : "转换输出";
+        TasksNavigationButton.Content = compact ? "任务" : "任务中心";
         ModeLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PresetLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        PresetCombo.Width = compact ? 108 : 145;
-        ManagePresetButton.Content = compact ? "方案管理" : "管理转换方案";
-        RunPreflightButton.Content = compact ? "检查" : "检查问题";
-        ConvertButton.Content = compact ? "开始转换 →" : "开始批量转换  →";
+        LayoutModeCombo.Width = compact ? 128 : 178;
+        ManagePresetButton.Content = string.Empty;
+        RunPreflightButton.Content = compact ? string.Empty : "检查问题";
+        ConvertButton.Content = compact ? "开始转换" : "开始批量转换";
         StatusText.FontSize = compact ? 11 : 12;
-        BookListRow.Height = new GridLength(compact ? 205 : 220);
+        var showsBooks = _workspacePage is WorkspacePage.Library or WorkspacePage.Chapters or WorkspacePage.Cover or WorkspacePage.Layout;
+        BookListRow.Height = showsBooks
+            ? new GridLength(_workspacePage == WorkspacePage.Library ? (compact ? 300 : 430) : (compact ? 180 : 220))
+            : new GridLength(0);
         CoverPreviewBorder.Visibility = Visibility.Visible;
         WorkspaceScopeText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         foreach (var tab in OptionsTabs.Items.OfType<TabItem>()) tab.Padding = compact ? new Thickness(10, 8, 10, 8) : new Thickness(15, 8, 15, 8);
@@ -2108,39 +2975,53 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        var modifiers = Keyboard.Modifiers;
         var textEditing = Keyboard.FocusedElement is TextBoxBase or PasswordBox;
-        if (modifiers == ModifierKeys.Control && e.Key == Key.O)
+        if (ShortcutCatalog.Matches(_shortcutBindings, "add-files", e))
         {
             AddFiles_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.O)
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "import-folder", e))
         {
             ImportFolder_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (!textEditing && modifiers == ModifierKeys.Control && e.Key == Key.A && InputBooks.Count > 0)
+        else if (!textEditing && ShortcutCatalog.Matches(_shortcutBindings, "select-all", e) && InputBooks.Count > 0)
         {
             SelectAllFiles_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (modifiers == ModifierKeys.Control && e.Key == Key.Enter && ConvertButton.IsEnabled)
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "convert", e) && ConvertButton.IsEnabled)
         {
             Convert_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.P && RunPreflightButton.IsEnabled)
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "preflight", e) && RunPreflightButton.IsEnabled)
         {
             RunPreflight_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (modifiers == ModifierKeys.Control && e.Key == Key.S)
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "save-project", e))
         {
             SaveProject_Click(this, new RoutedEventArgs());
             e.Handled = true;
         }
-        else if (modifiers == ModifierKeys.None && e.Key == Key.F6)
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "settings", e))
+        {
+            ShowSettings_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "pause", e) && PauseButton.IsEnabled)
+        {
+            PauseResume_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "focus-search", e))
+        {
+            BookSearchText.Focus();
+            e.Handled = true;
+        }
+        else if (ShortcutCatalog.Matches(_shortcutBindings, "cycle-focus", e))
         {
             if (FilesList.IsKeyboardFocusWithin) OutputDirectoryText.Focus();
             else if (OutputDirectoryText.IsKeyboardFocusWithin) OptionsTabs.Focus();

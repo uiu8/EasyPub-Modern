@@ -8,16 +8,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.0.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.1.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.0.0/EasyPubModern-Setup-v1.0.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.0.0/EasyPubModern-v1.0.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.0/EasyPubModern-Setup-v1.1.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.0/EasyPubModern-v1.1.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0)
 
 </div>
 
-![EasyPub Modern v1.0.0 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.1.0 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.0.0) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -51,17 +51,17 @@
 
 | 能力 | 当前版本提供的功能 |
 |---|---|
-| 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、问题优先排序、1–4 个并发任务与失败重试 |
+| 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、拖拽刷选、资源自适应并发（手动最高 32）、暂停/继续与失败重试 |
 | 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、插图和章节树 |
-| 封面与图片 | 书稿列表显示逐书缩略图；右侧封面卡片支持点击大图与拖入替换；PNG、WebP 解码后转为高质量 JPEG；插图可选择正文位置 |
+| 封面与图片 | 书稿列表显示逐书缩略图；封面支持点击大图与拖入替换；PNG、WebP 转为 Kindle 兼容 JPEG；封面和插图显示分辨率、格式、体积诊断 |
 | 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关 |
 | 排版与样式 | 字号、行高、段距、缩进、对齐、四边页边距、嵌入 TTF 字体与定制 CSS |
-| 文本清理 | 空行、硬换行、全角空格、章节编号、网站说明、简繁转换与中文标点逐项预览、定位及单项排除 |
+| 文本清理 | 空行、硬换行、不可见字符、重复标题/页眉、OCR 空格、章节编号、广告、简繁和标点；支持普通/正则自定义规则、跨行、作用范围、顺序、导入导出与逐项排除 |
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v1.0.0 正式版
+## v1.1.0 正式版
 
 - 全新黑白品牌图标覆盖程序、窗口、任务栏、安装程序、卸载程序和快捷方式。
 - 提供 Windows x64 离线安装包，默认安装到 `D:\software\EasyPub Modern`，并提供开始菜单与可选桌面快捷方式。
@@ -79,6 +79,12 @@
 - 明确区分项目与转换方案：项目保存书稿和逐书内容，转换方案只保存整批通用转换参数。
 - 预览统一标为“近似版式预览”，明确它不是 Kindle 真机显示确认。
 - Release 剔除全部 `.pdb` 调试符号，在不影响转换和运行的前提下降低下载与解压体积。
+- Kindle 预览集中为真实设备档案，补齐 KPW3–KPW6、基础款、Voyage、Oasis、Scribe、Colorsoft，并支持自定义分辨率与 PPI。
+- 输出新增自动改名、覆盖、跳过三种同名文件策略，可选转换完成后自动打开输出目录。
+- 默认并发改为按电脑资源自动计算，也可手动选择 1–32；批量转换可暂停或继续派发任务。
+- 快捷键可在设置中集中管理；书库支持 Ctrl 单击切换选择和按住鼠标滑动批量选择。
+- 设置页可直接查看最近验收报告、打开报告目录和访问 GitHub；项目选择器与其余按钮统一为同一套黑白圆角风格。
+- 批量移除、清空书库和批量书籍信息支持撤销；转换前问题可直接跳转到对应书稿和设置区域。
 
 ### 文本清理定位
 
@@ -152,4 +158,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v1.0.0**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v1.1.0**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

@@ -96,7 +96,7 @@ public partial class TaskCenterWindow : Window
         var path = Selected?.ReportPath;
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
-            MessageBox.Show(this, "所选任务还没有可打开的成品报告。", "EasyPub Modern");
+            InkDialog.Show(this, "所选任务还没有可打开的成品报告。", "EasyPub Modern");
             return;
         }
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
@@ -135,7 +135,7 @@ public partial class TaskCenterWindow : Window
         var paths = candidates.Select(row => row.Entry.InputPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length == 0)
         {
-            MessageBox.Show(this, "历史中没有可载入的失败项目。", "EasyPub Modern");
+            InkDialog.Show(this, "历史中没有可载入的失败项目。", "EasyPub Modern");
             return;
         }
         RetryHistoryRequested?.Invoke(paths);

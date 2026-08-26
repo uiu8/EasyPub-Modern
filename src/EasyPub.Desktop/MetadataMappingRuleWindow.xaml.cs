@@ -42,7 +42,7 @@ public partial class MetadataMappingRuleWindow : Window
         var folder = FolderPathText.Text.Trim();
         if (!Directory.Exists(folder))
         {
-            MessageBox.Show(this, "请选择一个当前存在的来源文件夹。", "EasyPub Modern");
+            InkDialog.Show(this, "请选择一个当前存在的来源文件夹。", "EasyPub Modern");
             return;
         }
 
@@ -61,7 +61,7 @@ public partial class MetadataMappingRuleWindow : Window
         };
         if (metadata.IsEmpty)
         {
-            MessageBox.Show(this, "请至少填写一个需要自动写入的元数据字段。", "EasyPub Modern");
+            InkDialog.Show(this, "请至少填写一个需要自动写入的元数据字段。", "EasyPub Modern");
             return;
         }
 

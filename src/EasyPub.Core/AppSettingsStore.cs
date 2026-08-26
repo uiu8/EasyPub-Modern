@@ -34,6 +34,23 @@ public sealed record EasyPubAppSettings(
     public bool UseLegacyConfig { get; init; } = true;
     public string? LegacyConfigPath { get; init; }
     public bool AutoOpenTaskCenter { get; init; }
+    public bool AutoOpenOutputDirectory { get; init; }
+    public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
+    public string KindlePreviewDeviceId { get; init; } = "kpw6";
+    public int CustomKindleWidth { get; init; } = 1264;
+    public int CustomKindleHeight { get; init; } = 1680;
+    public int CustomKindlePpi { get; init; } = 300;
+    public IReadOnlyDictionary<string, string> ShortcutBindings { get; init; } = new Dictionary<string, string>();
+    public string Theme { get; init; } = "Light";
+    public string UiDensity { get; init; } = "Comfortable";
+    public int UiScalePercent { get; init; } = 100;
+    public bool RememberWindowPlacement { get; init; } = true;
+    public bool ReduceMotion { get; init; }
+    public double? WindowLeft { get; init; }
+    public double? WindowTop { get; init; }
+    public double? WindowWidth { get; init; }
+    public double? WindowHeight { get; init; }
+    public string WindowState { get; init; } = "Normal";
 
     public static EasyPubAppSettings Default { get; } = new(null, ConversionProfile.Default, []);
 }

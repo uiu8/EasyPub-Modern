@@ -35,7 +35,7 @@ public partial class CustomCssWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法导入 CSS", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法导入 CSS", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -58,7 +58,7 @@ public partial class CustomCssWindow : Window
         }
         catch (Exception exception)
         {
-            MessageBox.Show(this, exception.Message, "无法导出 CSS", MessageBoxButton.OK, MessageBoxImage.Error);
+            InkDialog.Show(this, exception.Message, "无法导出 CSS", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

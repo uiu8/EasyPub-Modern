@@ -2,11 +2,11 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="管理转换方案 · EasyPub Modern" Width="620" Height="460" MinWidth="520" MinHeight="380"
-        WindowStartupLocation="CenterOwner" Background="#F5F7FB" FontFamily="Microsoft YaHei UI">
+        WindowStartupLocation="CenterOwner" Background="{DynamicResource AppBackgroundBrush}" FontFamily="Microsoft YaHei UI">
     <Grid Margin="18">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel><TextBlock Text="管理转换方案" FontSize="23" FontWeight="SemiBold"/><TextBlock Margin="0,4,0,0" Text="转换方案只保存整批通用参数，不包含书稿、逐书封面、章节树、插图或逐书元数据。" Foreground="#667085" TextWrapping="Wrap"/></StackPanel>
-        <Border Grid.Row="2" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="12" Padding="14">
+        <StackPanel><TextBlock Text="管理转换方案" FontSize="23" FontWeight="SemiBold"/><TextBlock Margin="0,4,0,0" Text="转换方案只保存整批通用参数，不包含书稿、逐书封面、章节树、插图或逐书元数据。" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/></StackPanel>
+        <Border Grid.Row="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">
             <Grid><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <ListBox x:Name="PresetList" DisplayMemberPath="Name" SelectionChanged="PresetList_SelectionChanged"/>
                 <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -16,6 +16,6 @@
                 </Grid>
             </Grid>
         </Border>
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="完成" Padding="20,8" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" Click="Done_Click"/></StackPanel>
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="完成" Padding="20,8" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" BorderBrush="{DynamicResource PrimaryActionBrush}" Click="Done_Click"/></StackPanel>
     </Grid>
 </Window>

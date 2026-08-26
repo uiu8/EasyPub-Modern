@@ -28,7 +28,7 @@ public partial class PresetManagerWindow : Window
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         var name = NameText.Text.Trim();
-        if (name.Length == 0) { MessageBox.Show(this, "请输入转换方案名称。", "EasyPub Modern"); return; }
+        if (name.Length == 0) { InkDialog.Show(this, "请输入转换方案名称。", "EasyPub Modern"); return; }
         var existing = _presets.FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.CurrentCultureIgnoreCase));
         if (existing is not null) _presets.Remove(existing);
         var preset = new NamedConversionPreset(name, _currentProfile);
