@@ -8,16 +8,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.1.3-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.1.4-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.4)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.3/EasyPubModern-Setup-v1.1.3-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.3/EasyPubModern-v1.1.3-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.4/EasyPubModern-Setup-v1.1.4-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.4/EasyPubModern-v1.1.4-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.4)
 
 </div>
 
-![EasyPub Modern v1.1.3 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.1.4 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -38,11 +38,11 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.4) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
-5. 点击“检查问题”，确认无阻断问题后开始批量转换。
+5. 在书库中单击选择一本书；按住 `Ctrl` 单击或拖过书稿可增选、取消多选。点击“检查问题”并开始转换时，只处理当前选中的书稿。
 6. 在“任务中心”查看每本书的进度、检查问题、成品验收和历史记录。
 
 程序完全在本机处理文件。文本清理、章节树和插图设置都不会改写原始 TXT。
@@ -51,7 +51,7 @@
 
 | 能力 | 当前版本提供的功能 |
 |---|---|
-| 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、拖拽刷选、资源自适应并发（手动最高 32）、暂停/继续与失败重试 |
+| 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、`Ctrl` 单击/拖拽批选、右键批量编辑与仅转换所选、资源自适应并发（手动最高 32）、暂停/继续与失败重试 |
 | 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、插图和章节树 |
 | 封面与图片 | 书稿列表显示逐书缩略图；封面支持点击大图与拖入替换；PNG、WebP 转为 Kindle 兼容 JPEG；封面和插图显示分辨率、格式、体积诊断 |
 | 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关 |
@@ -61,17 +61,14 @@
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v1.1.3 正式版
+## v1.1.4 正式版
 
-- 批量转换采用增量总进度与 100ms 界面节流，避免任务数增加时反复汇总和刷新整个列表。
-- 转换前检查会根据电脑资源自动并行，最高 8 路，并保持书稿与检查结果的原始顺序。
-- 封面预览、检查、写入和成品验收共享有界图片缓存，减少重复读取、解码和 PNG／WebP 转换。
-- 章节树建立复用同一次 TXT 读取；正式转换不再为 BOM 和清理结果复制整本正文。
-- 文本清理改为可取消的后台分析；超长小说只构建当前修改位置附近的预览文本。
-- 书库和转换页启用回收式列表虚拟化，搜索、章节状态与转换进度采用合并刷新。
-- 项目恢复只在内容真正变化时生成快照，撤销历史限制为最近 10 次，控制长期内存占用。
-- 统一 TXT 编码检测模块，正确区分 UTF-8、GBK、UTF-16 与 UTF-32 BOM，并修复 UTF-32 LE 误判风险。
-- 提供可配置全角空格缩进、Kindle 设备预览、快捷键管理和统一的黑白圆角界面。
+- 修正书库选择规则：普通左键切换到单本，`Ctrl` 单击或拖动用于增选、取消和连续批选。
+- 转换前检查和正式转换只处理当前选中的书稿；“本次转换”列表同步显示真实处理范围。
+- 多选书稿后可从右键菜单批量编辑元数据、检查、转换或移除。
+- 收紧所选书稿、封面和快捷工具的垂直布局，常用窗口高度下无需向下滚动即可操作。
+- 删除顶部冗余说明和无功能的列表视图按钮，并让表头、底部的全选控件实际生效。
+- 延续 v1.1.3 的批量性能优化、编码修复、Kindle 设备预览、文本清理和成品验收能力。
 
 ### 文本清理定位
 
@@ -145,4 +142,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v1.1.3**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v1.1.4**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

@@ -22,11 +22,13 @@ public sealed class MainWindowLayoutTests
         {
             Assert.IsType<TextBox>(window.FindName("BookSearchText"));
             Assert.IsType<Button>(window.FindName("SettingsButton"));
+            Assert.Null(window.FindName("HeaderSubtitleText"));
             var shortcutManagerButton = Assert.IsType<Button>(window.FindName("ShortcutManagerButton"));
             Assert.IsType<Menu>(window.FindName("AddBooksMenu"));
             Assert.IsType<MenuItem>(window.FindName("FavoriteFoldersMenu"));
             Assert.IsType<Border>(window.FindName("SidebarPanel"));
             Assert.IsType<Border>(window.FindName("BottomOperationBar"));
+            Assert.DoesNotContain(FindVisualDescendants<Button>(window), button => Equals(button.Content, "☷") || Equals(button.Content, "▦"));
             Assert.IsType<Button>(window.FindName("InkManageIllustrationsButton"));
             var bottomFormat = Assert.IsType<ComboBox>(window.FindName("FormatCombo"));
             var bottomPreset = Assert.IsType<ComboBox>(window.FindName("LayoutModeCombo"));
@@ -194,6 +196,11 @@ public sealed class MainWindowLayoutTests
                 Assert.Contains("封面：无", selectedSummary.Text);
                 Assert.True(openCoverPreview.IsEnabled);
                 Assert.Equal(Visibility.Visible, coverPreview.Visibility);
+                var coverPanel = Assert.IsType<Border>(window.FindName("CoverDropPanel"));
+                var quickMetadata = Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
+                var quickMetadataBottom = quickMetadata.TranslatePoint(new Point(0, quickMetadata.ActualHeight), coverPanel).Y;
+                Assert.True(quickMetadataBottom < Math.Min(560, coverPanel.ActualHeight),
+                    $"右侧工具距离所选书稿信息过远：按钮底部位于 {quickMetadataBottom:F1}px。 ");
 
                 book.CoverImagePath = coverPath;
                 PumpDispatcherUntil(() => book.CoverThumbnail is not null, TimeSpan.FromSeconds(3));
@@ -300,6 +307,156 @@ public sealed class MainWindowLayoutTests
         finally
         {
             if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
+    public void Library_plain_left_click_replaces_the_previous_selection()
+    {
+        var firstPath = Path.Combine(Path.GetTempPath(), $"easypub-selection-a-{Guid.NewGuid():N}.txt");
+        var secondPath = Path.Combine(Path.GetTempPath(), $"easypub-selection-b-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(firstPath, "第一章 A\r\n正文");
+            File.WriteAllText(secondPath, "第一章 B\r\n正文");
+            RunInWindow(window =>
+            {
+                var first = new InputBookItem(firstPath);
+                var second = new InputBookItem(secondPath);
+                window.InputBooks.Add(first);
+                window.InputBooks.Add(second);
+
+                var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                list.SelectedItem = first;
+                list.ScrollIntoView(second);
+                window.UpdateLayout();
+                var secondRow = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(second));
+                var click = new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    System.Windows.Input.MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent,
+                    Source = secondRow,
+                };
+                var clickHandler = typeof(MainWindow).GetMethod(
+                    "FilesList_PreviewMouseLeftButtonDown",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.NotNull(clickHandler);
+                clickHandler!.Invoke(window, [list, click]);
+
+                Assert.Single(list.SelectedItems);
+                Assert.Same(second, list.SelectedItem);
+            });
+        }
+        finally
+        {
+            if (File.Exists(firstPath)) File.Delete(firstPath);
+            if (File.Exists(secondPath)) File.Delete(secondPath);
+        }
+    }
+
+    [Fact]
+    public void Library_ctrl_left_click_adds_and_removes_books_without_losing_other_selections()
+    {
+        RunInWindow(window =>
+        {
+            var first = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-ctrl-selection-a.txt"));
+            var second = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-ctrl-selection-b.txt"));
+            window.InputBooks.Add(first);
+            window.InputBooks.Add(second);
+            var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+            list.SelectedItem = first;
+            list.ScrollIntoView(second);
+            window.UpdateLayout();
+            var secondRow = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(second));
+
+            MainWindow.ApplyLibrarySelection(list, secondRow, extendSelection: true);
+            Assert.Equal(2, list.SelectedItems.Count);
+            Assert.Contains(first, list.SelectedItems.Cast<InputBookItem>());
+            Assert.Contains(second, list.SelectedItems.Cast<InputBookItem>());
+
+            MainWindow.ApplyLibrarySelection(list, secondRow, extendSelection: true);
+            Assert.Single(list.SelectedItems);
+            Assert.Contains(first, list.SelectedItems.Cast<InputBookItem>());
+        });
+    }
+
+    [Fact]
+    public void Library_multi_selection_right_click_exposes_batch_actions()
+    {
+        RunInWindow(window =>
+        {
+            var first = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-context-a.txt"));
+            var second = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-context-b.txt"));
+            window.InputBooks.Add(first);
+            window.InputBooks.Add(second);
+            var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+            list.SelectAll();
+            list.ScrollIntoView(second);
+            window.UpdateLayout();
+            var secondRow = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(second));
+            var rightClick = new System.Windows.Input.MouseButtonEventArgs(
+                System.Windows.Input.Mouse.PrimaryDevice,
+                Environment.TickCount,
+                System.Windows.Input.MouseButton.Right)
+            {
+                RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent,
+                Source = secondRow,
+            };
+            var handler = typeof(MainWindow).GetMethod(
+                "FilesList_PreviewMouseRightButtonDown",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(handler);
+            handler!.Invoke(window, [list, rightClick]);
+
+            Assert.NotNull(secondRow.ContextMenu);
+            var labels = secondRow.ContextMenu!.Items.OfType<MenuItem>().Select(item => item.Header?.ToString()).ToArray();
+            Assert.Contains(labels, label => label?.StartsWith("批量编辑元数据", StringComparison.Ordinal) == true);
+            Assert.Contains(labels, label => label?.StartsWith("检查所选", StringComparison.Ordinal) == true);
+            Assert.Contains(labels, label => label?.StartsWith("转换所选", StringComparison.Ordinal) == true);
+            secondRow.ContextMenu.IsOpen = false;
+        });
+    }
+
+    [Fact]
+    public void Conversion_requests_include_only_selected_library_books()
+    {
+        var firstPath = Path.Combine(Path.GetTempPath(), $"easypub-convert-a-{Guid.NewGuid():N}.txt");
+        var secondPath = Path.Combine(Path.GetTempPath(), $"easypub-convert-b-{Guid.NewGuid():N}.txt");
+        var outputPath = Path.Combine(Path.GetTempPath(), $"easypub-convert-output-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllText(firstPath, "第一章 A\r\n正文");
+            File.WriteAllText(secondPath, "第一章 B\r\n正文");
+            RunInWindow(window =>
+            {
+                var first = new InputBookItem(firstPath);
+                var second = new InputBookItem(secondPath);
+                window.InputBooks.Add(first);
+                window.InputBooks.Add(second);
+                Assert.IsType<TextBox>(window.FindName("OutputDirectoryText")).Text = outputPath;
+
+                var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                list.SelectedItem = second;
+                var buildRequests = typeof(MainWindow).GetMethod(
+                    "BuildConversionRequestsAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.NotNull(buildRequests);
+                var task = Assert.IsAssignableFrom<Task<IReadOnlyList<ConversionRequest>>>(buildRequests!.Invoke(window, null));
+                var requests = task.GetAwaiter().GetResult();
+
+                var request = Assert.Single(requests);
+                Assert.Equal(secondPath, request.InputPath);
+                Assert.Single(Assert.IsType<ListBox>(window.FindName("ConversionSelectionList")).Items);
+                Assert.True(Assert.IsType<Button>(window.FindName("ConvertButton")).IsEnabled);
+            });
+        }
+        finally
+        {
+            if (File.Exists(firstPath)) File.Delete(firstPath);
+            if (File.Exists(secondPath)) File.Delete(secondPath);
+            if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
         }
     }
 

@@ -1184,8 +1184,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.1.3"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.3";
+            ? "EasyPub Modern v1.1.4"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.4";
         UpdateWorkspaceScope();
     }
 
@@ -1251,15 +1251,27 @@ public partial class MainWindow : Window
             InkDialog.Show(this, "请先添加至少一本小说。", "EasyPub Modern");
             return;
         }
+        EditMetadataBooks(InputBooks.ToArray());
+    }
+
+    private void EditSelectedMetadata_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedBooksForOperation();
+        if (selected.Count == 0) return;
+        EditMetadataBooks(selected);
+    }
+
+    private void EditMetadataBooks(IReadOnlyList<InputBookItem> books)
+    {
         var beforeEdit = CaptureProjectDocument();
-        var editor = new BatchMetadataWindow(InputBooks.ToArray()) { Owner = this };
+        var editor = new BatchMetadataWindow(books) { Owner = this };
         if (editor.ShowDialog() == true)
         {
             _undoStack.Push(("批量编辑书籍信息", beforeEdit));
             MarkDirtyTab(MetadataTab);
             UpdateMetadataMappingSummary();
             UpdateSelectedBookInspector(SelectedCoverBook());
-            StatusText.Text = $"已保存 {InputBooks.Count} 本小说的逐书书籍信息";
+            StatusText.Text = $"已保存 {books.Count} 本小说的逐书书籍信息";
         }
     }
 
@@ -2066,13 +2078,39 @@ public partial class MainWindow : Window
 
     private void FilesList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (FindVisualParent<Button>((DependencyObject)e.OriginalSource) is not null) return;
-        if (ItemsControl.ContainerFromElement(FilesList, e.OriginalSource as DependencyObject) is not ListBoxItem item) return;
+        var source = e.OriginalSource as DependencyObject ?? e.Source as DependencyObject;
+        if (source is null || FindVisualParent<Button>(source) is not null) return;
+        var item = source as ListBoxItem
+            ?? ItemsControl.ContainerFromElement(FilesList, source) as ListBoxItem
+            ?? (source is null ? null : FindVisualParent<ListBoxItem>(source));
+        if (item is null) return;
+
+        var extendSelection = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        ApplyLibrarySelection(FilesList, item, extendSelection);
+        if (!extendSelection)
+        {
+            _brushSelecting = false;
+            e.Handled = true;
+            return;
+        }
+
         _brushSelecting = true;
-        _brushSelectValue = !item.IsSelected;
-        item.IsSelected = _brushSelectValue;
+        _brushSelectValue = item.IsSelected;
         Mouse.Capture(FilesList);
         e.Handled = true;
+    }
+
+    internal static void ApplyLibrarySelection(ListBox list, ListBoxItem item, bool extendSelection)
+    {
+        if (extendSelection)
+        {
+            item.IsSelected = !item.IsSelected;
+            return;
+        }
+
+        if (item.IsSelected && list.SelectedItems.Count == 1) return;
+        list.SelectedItems.Clear();
+        item.IsSelected = true;
     }
 
     private void FilesList_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -2087,6 +2125,63 @@ public partial class MainWindow : Window
     {
         _brushSelecting = false;
         if (Mouse.Captured == FilesList) Mouse.Capture(null);
+    }
+
+    private void FilesList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var source = e.OriginalSource as DependencyObject ?? e.Source as DependencyObject;
+        var item = source as ListBoxItem
+            ?? ItemsControl.ContainerFromElement(FilesList, source) as ListBoxItem
+            ?? (source is null ? null : FindVisualParent<ListBoxItem>(source));
+        if (item is null) return;
+        if (!item.IsSelected)
+        {
+            FilesList.SelectedItems.Clear();
+            item.IsSelected = true;
+        }
+
+        var selected = SelectedBooksForOperation();
+        var menu = new ContextMenu { PlacementTarget = item };
+        if (selected.Count > 1)
+        {
+            var editMetadata = new MenuItem { Header = $"批量编辑元数据（{selected.Count} 本）" };
+            editMetadata.Click += EditSelectedMetadata_Click;
+            menu.Items.Add(editMetadata);
+        }
+        else
+        {
+            var book = selected[0];
+            var editChapters = new MenuItem { Header = "编辑章节正文", IsEnabled = !book.IsEpub };
+            editChapters.Click += (_, _) => ShowWorkspacePage(WorkspacePage.Chapters);
+            var editMetadata = new MenuItem { Header = "编辑封面信息" };
+            editMetadata.Click += (_, _) => ShowWorkspacePage(WorkspacePage.Cover);
+            menu.Items.Add(editChapters);
+            menu.Items.Add(editMetadata);
+        }
+
+        menu.Items.Add(new Separator());
+        var preflight = new MenuItem { Header = $"检查所选（{selected.Count} 本）" };
+        preflight.Click += RunPreflight_Click;
+        var convert = new MenuItem { Header = $"转换所选（{selected.Count} 本）" };
+        convert.Click += Convert_Click;
+        var remove = new MenuItem { Header = $"从书库移除（{selected.Count} 本）" };
+        remove.Click += RemoveSelected_Click;
+        menu.Items.Add(preflight);
+        menu.Items.Add(convert);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(remove);
+        item.ContextMenu = menu;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void SelectVisibleBooks_Click(object sender, RoutedEventArgs e)
+    {
+        var selectAll = sender is CheckBox checkBox && checkBox.IsChecked == true;
+        if (selectAll)
+            FilesList.SelectAll();
+        else
+            FilesList.UnselectAll();
     }
 
     private async Task RefreshInlineChapterPreviewAsync(InputBookItem? book, CancellationToken cancellationToken = default)
@@ -2465,7 +2560,7 @@ public partial class MainWindow : Window
         finally
         {
             CancelButton.IsEnabled = false;
-            ConvertButton.IsEnabled = InputBooks.Count > 0;
+            ConvertButton.IsEnabled = FilesList.SelectedItems.Count > 0;
             Progress.Value = 0;
         }
     }
@@ -2814,7 +2909,7 @@ public partial class MainWindow : Window
             PauseButton.IsEnabled = false;
             PauseButton.Content = "暂停";
             _batchExecutionControl = null;
-            ConvertButton.IsEnabled = InputBooks.Count > 0;
+            ConvertButton.IsEnabled = FilesList.SelectedItems.Count > 0;
         }
     }
 
@@ -2845,20 +2940,21 @@ public partial class MainWindow : Window
 
     private async Task<IReadOnlyList<ConversionRequest>> BuildConversionRequestsAsync()
     {
-        if (InputBooks.Count == 0) throw new InvalidOperationException("请先添加至少一个 TXT 或 EPUB 文件。");
+        var operationBooks = SelectedBooksForOperation();
+        if (operationBooks.Count == 0) throw new InvalidOperationException("请先在书库中选择至少一本要转换的书稿。");
         var outputDirectory = OutputDirectoryText.Text.Trim();
         if (outputDirectory.Length == 0) throw new InvalidOperationException("请选择输出目录。");
 
         var profile = CaptureProfile();
         if (!string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase)
-            && InputBooks.Any(book => book.IsEpub))
+            && operationBooks.Any(book => book.IsEpub))
             throw new InvalidOperationException("EPUB 输入只能输出 MOBI。请把输出格式切换为 MOBI。");
         var options = profile.Options;
         if (string.IsNullOrWhiteSpace(options.AdditionalCss) &&
             !string.IsNullOrWhiteSpace(profile.AdditionalCssFilePath))
             options = options with { AdditionalCss = await File.ReadAllTextAsync(profile.AdditionalCssFilePath) };
         var requests = BatchConversionRequestFactory.Create(
-            InputBooks.Select(book => new BookConversionSource(
+            operationBooks.Select(book => new BookConversionSource(
                 book.InputPath,
                 book.CoverImagePath,
                 book.Title,
@@ -2885,6 +2981,9 @@ public partial class MainWindow : Window
         if (skipped > 0) StatusText.Text = $"已按同名文件策略跳过 {skipped} 本";
         return resolved;
     }
+
+    private IReadOnlyList<InputBookItem> SelectedBooksForOperation() =>
+        FilesList?.SelectedItems.Cast<InputBookItem>().ToArray() ?? [];
 
     private void AddFiles(IEnumerable<string> paths)
     {
@@ -3077,8 +3176,13 @@ public partial class MainWindow : Window
         SelectAllFilesButton.IsEnabled = count > 0 && selectedCount < count;
         RemoveSelectedButton.IsEnabled = selectedCount > 0;
         ClearFilesButton.IsEnabled = count > 0;
-        RunPreflightButton.IsEnabled = count > 0;
-        ConvertButton.IsEnabled = count > 0 && !CancelButton.IsEnabled;
+        RunPreflightButton.IsEnabled = selectedCount > 0;
+        ConvertButton.IsEnabled = selectedCount > 0 && !CancelButton.IsEnabled;
+        var allVisibleSelected = count > 0 && selectedCount == FilesList.Items.Count;
+        if (SelectVisibleBooksCheckBox is not null) SelectVisibleBooksCheckBox.IsChecked = allVisibleSelected;
+        if (SelectAllHeaderCheckBox is not null) SelectAllHeaderCheckBox.IsChecked = allVisibleSelected;
+        if (ConversionSelectionList is not null)
+            ConversionSelectionList.ItemsSource = SelectedBooksForOperation();
         PreviewBookButton.IsEnabled = singleBook is { IsEpub: false };
         QuickChapterButton.IsEnabled = singleBook is { IsEpub: false };
         QuickCleanupButton.IsEnabled = singleBook is { IsEpub: false };
@@ -3225,7 +3329,6 @@ public partial class MainWindow : Window
         MainContentGrid.Margin = compact ? new Thickness(12, 14, 8, 10) : new Thickness(18, 18, 12, 12);
         HeaderLogo.Width = HeaderLogo.Height = compact ? 40 : 48;
         HeaderTitleText.FontSize = compact ? 22 : 27;
-        HeaderSubtitleText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PreviewBookButton.Content = compact ? "预览" : "近似预览";
         TaskCenterButton.Content = compact ? "任务" : "任务中心";
         SettingsButton.Content = compact ? string.Empty : "设置";
