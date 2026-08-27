@@ -22,6 +22,7 @@ public sealed class MainWindowLayoutTests
         {
             Assert.IsType<TextBox>(window.FindName("BookSearchText"));
             Assert.IsType<Button>(window.FindName("SettingsButton"));
+            var shortcutManagerButton = Assert.IsType<Button>(window.FindName("ShortcutManagerButton"));
             Assert.IsType<Menu>(window.FindName("AddBooksMenu"));
             Assert.IsType<MenuItem>(window.FindName("FavoriteFoldersMenu"));
             Assert.IsType<Border>(window.FindName("SidebarPanel"));
@@ -61,6 +62,23 @@ public sealed class MainWindowLayoutTests
             var settingsButton = Assert.IsType<Button>(window.FindName("SettingsButton"));
             settingsButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, settingsButton));
             Assert.True(settingsOpenedFromWorkspace, "从工作区点击设置按钮后应打开设置窗口。");
+
+            var shortcutManagerOpened = false;
+            var closeShortcutTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(100),
+            };
+            closeShortcutTimer.Tick += (_, _) =>
+            {
+                var opened = window.OwnedWindows.OfType<ShortcutManagerWindow>().FirstOrDefault(candidate => candidate.IsVisible);
+                if (opened is null) return;
+                shortcutManagerOpened = true;
+                closeShortcutTimer.Stop();
+                opened.DialogResult = false;
+            };
+            closeShortcutTimer.Start();
+            shortcutManagerButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, shortcutManagerButton));
+            Assert.True(shortcutManagerOpened, "主界面应提供可见且可用的快捷键管理入口。");
 
             (string Navigation, string Title, string Page)[] cases =
             {
@@ -105,6 +123,21 @@ public sealed class MainWindowLayoutTests
             Assert.IsType<TextBox>(window.FindName("CustomKindleHeightText")).Text = "1200";
             window.UpdateLayout();
             Assert.Contains("900 × 1200", Assert.IsType<TextBlock>(window.FindName("PreviewDeviceStatusText")).Text);
+
+            var setPreview = typeof(MainWindow).GetMethod("SetLayoutPreviewSample", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            setPreview.Invoke(window, ["第一章 分页测试", string.Join("\n\n", Enumerable.Repeat("这是一段用于验证 Kindle 书页翻页功能的较长正文。", 80))]);
+            window.UpdateLayout();
+            var nextPage = Assert.IsType<Button>(window.FindName("NextLayoutPreviewPageButton"));
+            var pageText = Assert.IsType<TextBlock>(window.FindName("LayoutPreviewPageText"));
+            var previewBody = Assert.IsType<TextBlock>(window.FindName("LayoutPreviewBody"));
+            var firstPageBody = previewBody.Text;
+            Assert.True(nextPage.IsEnabled);
+            Assert.StartsWith("第 1 / ", pageText.Text);
+            Assert.NotEqual("第 1 / 1 页", pageText.Text);
+            nextPage.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, nextPage));
+            window.UpdateLayout();
+            Assert.StartsWith("第 2 / ", pageText.Text);
+            Assert.NotEqual(firstPageBody, previewBody.Text);
 
             var convertFormat = Assert.IsType<ComboBox>(window.FindName("ConvertFormatCombo"));
             bottomFormat.SelectedIndex = 0;

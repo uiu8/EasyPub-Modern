@@ -82,6 +82,10 @@ public partial class MainWindow : Window
     private bool _brushSelecting;
     private bool _brushSelectValue;
     private readonly Stack<(string Label, EasyPubProjectDocument Snapshot)> _undoStack = new();
+    private string _layoutPreviewDocumentTitle = "第一章　书页预览";
+    private IReadOnlyList<string> _layoutPreviewParagraphs = ["这里会显示所选书稿的真实正文片段。", "调整字号、行高、段间距和页边距后，预览会立即更新。"];
+    private IReadOnlyList<LayoutPreviewPage> _layoutPreviewPages = [];
+    private int _layoutPreviewPageIndex;
 
     public ObservableCollection<InputBookItem> InputBooks { get; } = [];
     public ObservableCollection<string> FavoriteFolders { get; } = [];
@@ -123,6 +127,15 @@ public partial class MainWindow : Window
     private void NavigateConvert_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Convert);
 
     private void NavigateTasks_Click(object sender, RoutedEventArgs e) => ShowWorkspacePage(WorkspacePage.Tasks);
+
+    private async void ManageShortcuts_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new ShortcutManagerWindow(_shortcutBindings) { Owner = this };
+        if (window.ShowDialog() != true) return;
+        _shortcutBindings = window.Bindings;
+        await _appSettingsStore.SaveAsync(CaptureAppSettings());
+        StatusText.Text = "快捷键设置已保存";
+    }
 
     private void ProjectMenu_Click(object sender, RoutedEventArgs e)
     {
@@ -1036,8 +1049,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.1.0"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.0";
+            ? "EasyPub Modern v1.1.1"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.1";
         UpdateWorkspaceScope();
     }
 
@@ -1622,6 +1635,49 @@ public partial class MainWindow : Window
             LayoutPreviewTitle.FontFamily = new FontFamily(family);
         }
         catch { }
+        RebuildLayoutPreviewPages();
+    }
+
+    private void RebuildLayoutPreviewPages()
+    {
+        if (PreviewDeviceFrame is null || LayoutPreviewBody is null) return;
+        var availableWidth = PreviewDeviceFrame.Width - PreviewDeviceFrame.Padding.Left - PreviewDeviceFrame.Padding.Right;
+        var availableHeight = PreviewDeviceFrame.Height - PreviewDeviceFrame.Padding.Top - PreviewDeviceFrame.Padding.Bottom;
+        _layoutPreviewPages = LayoutPreviewPaginator.Paginate(
+            _layoutPreviewDocumentTitle,
+            _layoutPreviewParagraphs,
+            availableWidth,
+            availableHeight,
+            LayoutPreviewBody.FontSize,
+            LayoutPreviewBody.LineHeight);
+        _layoutPreviewPageIndex = Math.Clamp(_layoutPreviewPageIndex, 0, Math.Max(0, _layoutPreviewPages.Count - 1));
+        ShowLayoutPreviewPage();
+    }
+
+    private void ShowLayoutPreviewPage()
+    {
+        if (_layoutPreviewPages.Count == 0 || LayoutPreviewTitle is null || LayoutPreviewBody is null) return;
+        var page = _layoutPreviewPages[_layoutPreviewPageIndex];
+        LayoutPreviewTitle.Text = page.Title ?? string.Empty;
+        LayoutPreviewTitle.Visibility = page.Title is null ? Visibility.Collapsed : Visibility.Visible;
+        LayoutPreviewBody.Text = page.Body;
+        LayoutPreviewPageText.Text = $"第 {_layoutPreviewPageIndex + 1} / {_layoutPreviewPages.Count} 页";
+        PreviousLayoutPreviewPageButton.IsEnabled = _layoutPreviewPageIndex > 0;
+        NextLayoutPreviewPageButton.IsEnabled = _layoutPreviewPageIndex + 1 < _layoutPreviewPages.Count;
+    }
+
+    private void PreviousLayoutPreviewPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layoutPreviewPageIndex <= 0) return;
+        _layoutPreviewPageIndex--;
+        ShowLayoutPreviewPage();
+    }
+
+    private void NextLayoutPreviewPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layoutPreviewPageIndex + 1 >= _layoutPreviewPages.Count) return;
+        _layoutPreviewPageIndex++;
+        ShowLayoutPreviewPage();
     }
 
     private static double ParsePreviewNumber(string? text, double fallback) =>
@@ -1888,17 +1944,18 @@ public partial class MainWindow : Window
                 ? $"检测到 {document.Candidates.Count} 个章节候选。\n\n点击“打开章节工作台”检查标题、前置章节和目录层级。"
                 : $"已保存章节树：{book.ChapterTree.Entries.Count} 项。\n\n点击“打开章节工作台”继续调整。";
             var meaningfulLines = lines.Select(line => line.Text.Trim()).Where(text => !string.IsNullOrWhiteSpace(text)).ToArray();
-            var title = meaningfulLines.FirstOrDefault(text => text.Length <= 80 &&
-                (text.StartsWith("第", StringComparison.Ordinal) || text.Contains("序章", StringComparison.Ordinal)))
-                ?? book.DisplayName;
-            var body = string.Join("\n\n", meaningfulLines.Where(text => !string.Equals(text, title, StringComparison.Ordinal)).Take(6));
-            if (string.IsNullOrWhiteSpace(body)) body = "　　当前书稿没有可显示的正文片段。";
+            var titleIndex = Array.FindIndex(meaningfulLines, LooksLikeChapterHeading);
+            var title = titleIndex >= 0 ? meaningfulLines[titleIndex] : book.DisplayName;
+            var chapterBody = (titleIndex >= 0 ? meaningfulLines.Skip(titleIndex + 1) : meaningfulLines)
+                .TakeWhile(text => !LooksLikeChapterHeading(text))
+                .ToArray();
+            if (chapterBody.Length == 0) chapterBody = ["当前书稿没有可显示的正文片段。"];
             await Dispatcher.InvokeAsync(() =>
             {
                 ChapterPreviewText.Text = previewText;
                 ChapterPreviewStatsText.Text = previewStats;
                 ChapterTreeSummaryText.Text = treeSummary;
-                SetLayoutPreviewSample(title, body);
+                SetLayoutPreviewSample(title, string.Join("\n\n", chapterBody));
             });
         }
         catch (Exception exception)
@@ -1914,10 +1971,23 @@ public partial class MainWindow : Window
     private void SetLayoutPreviewSample(string title, string body)
     {
         if (LayoutPreviewTitle is null || LayoutPreviewBody is null) return;
-        LayoutPreviewTitle.Text = title;
         var indent = FullWidthIndentCheck?.IsChecked == true || ParsePreviewNumber(IndentText?.Text, 0) >= 1.5 ? "　　" : string.Empty;
-        LayoutPreviewBody.Text = string.Join("\n\n", body.Replace("\r", string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => indent + line.Trim()));
+        _layoutPreviewDocumentTitle = title;
+        _layoutPreviewParagraphs = body.Replace("\r", string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => indent + line.Trim())
+            .ToArray();
+        _layoutPreviewPageIndex = 0;
         RefreshLayoutPreview();
+    }
+
+    private static bool LooksLikeChapterHeading(string text)
+    {
+        if (text.Length is < 2 or > 80) return false;
+        return text.Contains("序章", StringComparison.Ordinal)
+            || text.Contains("楔子", StringComparison.Ordinal)
+            || (text.StartsWith("第", StringComparison.Ordinal) &&
+                (text.Contains('章') || text.Contains('节') || text.Contains('卷') || text.Contains('回')));
     }
 
     private void CoverDrop_DragOver(object sender, DragEventArgs e)

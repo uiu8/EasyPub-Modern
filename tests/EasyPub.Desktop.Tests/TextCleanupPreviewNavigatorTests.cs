@@ -97,4 +97,5 @@ public sealed class TextCleanupPreviewNavigatorTests
             File.Delete(path);
         }
     }
+
 }

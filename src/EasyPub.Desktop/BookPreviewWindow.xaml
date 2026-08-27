@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.BookPreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="近似版式预览 · EasyPub Modern v1.1.0" Width="1120" Height="760" MinWidth="820" MinHeight="560"
+        Title="近似版式预览 · EasyPub Modern v1.1.1" Width="1120" Height="760" MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterOwner" Background="{DynamicResource AppBackgroundBrush}" FontFamily="Microsoft YaHei UI">
     <Grid Margin="18">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

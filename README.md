@@ -8,16 +8,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.1.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.1.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.1)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.0/EasyPubModern-Setup-v1.1.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.0/EasyPubModern-v1.1.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.1/EasyPubModern-Setup-v1.1.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.1/EasyPubModern-v1.1.1-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.1)
 
 </div>
 
-![EasyPub Modern v1.1.0 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.1.1 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.0) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.1) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -61,7 +61,12 @@
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v1.1.0 正式版
+## v1.1.1 正式版
+
+- 修复发布包打开文本清理时的 WPF 静态资源解析异常，并为清理规则窗口增加独立的统一样式资源。
+- Kindle 书页预览支持“上一页/下一页”，根据当前设备尺寸、字体和行高近似分页；首章前的书籍说明不会再挤占正文预览。
+- 主界面左侧新增始终可见的“快捷键管理”入口，快捷键窗口样式与程序一致。
+- 修复设置页重复显示 GitHub 入口的问题。
 
 - 全新黑白品牌图标覆盖程序、窗口、任务栏、安装程序、卸载程序和快捷方式。
 - 提供 Windows x64 离线安装包，默认安装到 `D:\software\EasyPub Modern`，并提供开始菜单与可选桌面快捷方式。
@@ -158,4 +163,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v1.1.0**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v1.1.1**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
