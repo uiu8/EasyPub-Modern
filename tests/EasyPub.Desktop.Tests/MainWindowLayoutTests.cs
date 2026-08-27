@@ -139,6 +139,21 @@ public sealed class MainWindowLayoutTests
             Assert.StartsWith("第 2 / ", pageText.Text);
             Assert.NotEqual(firstPageBody, previewBody.Text);
 
+            var fullWidthIndentCheck = Assert.IsType<CheckBox>(window.FindName("FullWidthIndentCheck"));
+            var fullWidthIndentCount = Assert.IsType<ComboBox>(window.FindName("FullWidthIndentCountCombo"));
+            fullWidthIndentCheck.IsChecked = true;
+            setPreview.Invoke(window, ["第一章 缩进测试", "正文第一段。\n\n正文第二段。\n"]);
+            window.UpdateLayout();
+            Assert.StartsWith("　　正文第一段", previewBody.Text);
+            fullWidthIndentCount.SelectedItem = fullWidthIndentCount.Items.OfType<ComboBoxItem>()
+                .Single(item => Equals(item.Tag?.ToString(), "3"));
+            window.UpdateLayout();
+            Assert.StartsWith("　　　正文第一段", previewBody.Text);
+            var captureProfile = typeof(MainWindow).GetMethod("CaptureProfile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var captured = Assert.IsType<ConversionProfile>(captureProfile.Invoke(window, null));
+            Assert.True(captured.Options.AddFullWidthIndent);
+            Assert.Equal(3, captured.Options.FullWidthIndentCount);
+
             var convertFormat = Assert.IsType<ComboBox>(window.FindName("ConvertFormatCombo"));
             bottomFormat.SelectedIndex = 0;
             Assert.Equal(0, convertFormat.SelectedIndex);

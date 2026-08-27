@@ -162,6 +162,67 @@ public sealed class LegacyCompatibilityTests
     }
 
     [Fact]
+    public async Task Configured_full_width_indent_count_is_written_to_each_paragraph()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-fullwidth-indent-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var input = Path.Combine(directory, "indent.txt");
+        var output = Path.Combine(directory, "indent.epub");
+        await File.WriteAllTextAsync(input, "第一章 开始\n正文第一段。\n正文第二段。");
+
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                input,
+                output,
+                Options: new ConversionOptions
+                {
+                    AddFullWidthIndent = true,
+                    FullWidthIndentCount = 3,
+                }));
+
+            var entries = ReadEntries(output);
+            var chapter = System.Text.Encoding.UTF8.GetString(entries["OEBPS/chapter1.html"]);
+            Assert.Contains("<p class=\"a\">　　　正文第一段。</p>", chapter);
+            Assert.Contains("<p class=\"a\">　　　正文第二段。</p>", chapter);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Original_config_imports_full_width_indent_count()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-indent-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var config = Path.Combine(directory, "config.xml");
+        File.WriteAllText(config, """
+            <EasyPubConfig>
+              <RecentOptions>
+                <addspace>1</addspace>
+                <addspacecount>4</addspacecount>
+              </RecentOptions>
+              <AdvancedOptions />
+            </EasyPubConfig>
+            """);
+
+        try
+        {
+            var imported = LegacyEasyPubConfig.Load(config);
+
+            Assert.True(imported.Options.AddFullWidthIndent);
+            Assert.Equal(4, imported.Options.FullWidthIndentCount);
+            Assert.DoesNotContain(imported.UnsupportedSettings, item => item.Contains("全角空格数量", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Original_config_is_imported_and_drives_mobi_conversion()
     {
         var root = FindWorkspaceRoot();
@@ -184,6 +245,7 @@ public sealed class LegacyCompatibilityTests
         Assert.Equal(@"^\s*[第卷][0123456789一二三四五六七八九十零〇百千两]*[章回部节集卷].*", imported.Options.ChapterPattern);
         Assert.True(imported.Options.RemoveBlankLines);
         Assert.True(imported.Options.AddFullWidthIndent);
+        Assert.Equal(2, imported.Options.FullWidthIndentCount);
         Assert.Equal(110, imported.Options.FontSizePercent);
         Assert.Equal(120, imported.Options.LineHeightPercent);
         Assert.Equal(0.6, imported.Options.ParagraphSpacingEm);

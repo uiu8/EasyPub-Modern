@@ -578,6 +578,7 @@ public partial class MainWindow : Window
         SelectComboItemByTag(AlignmentCombo, options.TextAlignment.ToString());
         KeepBlankLinesCheck.IsChecked = !options.RemoveBlankLines;
         FullWidthIndentCheck.IsChecked = options.AddFullWidthIndent;
+        SelectComboItemByTag(FullWidthIndentCountCombo, Math.Clamp(options.FullWidthIndentCount, 0, 20).ToString(CultureInfo.InvariantCulture));
         KindleGenText.Text = KindleGenPathPreference.ResolveForCurrentInstallation(
             options.Mobi.KindleGenPath,
             AppContext.BaseDirectory) ?? string.Empty;
@@ -696,6 +697,7 @@ public partial class MainWindow : Window
         SelectComboItemByTag(AlignmentCombo, options.TextAlignment.ToString());
         KeepBlankLinesCheck.IsChecked = !options.RemoveBlankLines;
         FullWidthIndentCheck.IsChecked = options.AddFullWidthIndent;
+        SelectComboItemByTag(FullWidthIndentCountCombo, Math.Clamp(options.FullWidthIndentCount, 0, 20).ToString(CultureInfo.InvariantCulture));
         KindleGenText.Text = KindleGenPathPreference.ResolveForCurrentInstallation(
             options.Mobi.KindleGenPath,
             AppContext.BaseDirectory) ?? string.Empty;
@@ -727,6 +729,7 @@ public partial class MainWindow : Window
             TextEncoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!),
             RemoveBlankLines = KeepBlankLinesCheck.IsChecked != true,
             AddFullWidthIndent = FullWidthIndentCheck.IsChecked == true,
+            FullWidthIndentCount = SelectedFullWidthIndentCount(),
             FontSizePercent = ParseInt(FontSizeText.Text, "字号"),
             LineHeightPercent = ParseInt(LineHeightText.Text, "行高"),
             ParagraphSpacingEm = ParseDouble(ParagraphSpacingText.Text, "段间距"),
@@ -1049,8 +1052,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.1.1"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.1";
+            ? "EasyPub Modern v1.1.2"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.1.2";
         UpdateWorkspaceScope();
     }
 
@@ -1376,6 +1379,7 @@ public partial class MainWindow : Window
                 PageMarginTopText.Text = "0"; PageMarginBottomText.Text = "0"; PageMarginLeftText.Text = "3"; PageMarginRightText.Text = "3";
                 SelectComboItemByTag(AlignmentCombo, EasyPub.Core.TextAlignment.Default.ToString());
                 FullWidthIndentCheck.IsChecked = true;
+                SelectComboItemByTag(FullWidthIndentCountCombo, "2");
                 StatusText.Text = "已切换到原版兼容排版；其他分页设置保持不变";
             }
             else if (ModernModeRadio.IsChecked == true)
@@ -1572,6 +1576,13 @@ public partial class MainWindow : Window
         MarkVisibleLayoutChanged(LayoutTab);
     }
 
+    private void LayoutPreviewSetting_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded || _applyingProfile) return;
+        SwitchToCustomModeAfterManualLayoutChange();
+        MarkVisibleLayoutChanged(LayoutTab);
+    }
+
     private void MarkVisibleLayoutChanged(TabItem tab)
     {
         if (!_applyingProfile) MarkDirtyTab(tab);
@@ -1643,9 +1654,13 @@ public partial class MainWindow : Window
         if (PreviewDeviceFrame is null || LayoutPreviewBody is null) return;
         var availableWidth = PreviewDeviceFrame.Width - PreviewDeviceFrame.Padding.Left - PreviewDeviceFrame.Padding.Right;
         var availableHeight = PreviewDeviceFrame.Height - PreviewDeviceFrame.Padding.Top - PreviewDeviceFrame.Padding.Bottom;
+        var fullWidthIndent = FullWidthIndentCheck?.IsChecked == true ? SelectedFullWidthIndentCount() : 0;
+        var cssIndent = Math.Clamp((int)Math.Round(ParsePreviewNumber(IndentText?.Text, 0), MidpointRounding.AwayFromZero), 0, 20);
+        var indent = new string('　', Math.Clamp(fullWidthIndent + cssIndent, 0, 40));
+        var displayParagraphs = _layoutPreviewParagraphs.Select(paragraph => indent + paragraph).ToArray();
         _layoutPreviewPages = LayoutPreviewPaginator.Paginate(
             _layoutPreviewDocumentTitle,
-            _layoutPreviewParagraphs,
+            displayParagraphs,
             availableWidth,
             availableHeight,
             LayoutPreviewBody.FontSize,
@@ -1971,11 +1986,10 @@ public partial class MainWindow : Window
     private void SetLayoutPreviewSample(string title, string body)
     {
         if (LayoutPreviewTitle is null || LayoutPreviewBody is null) return;
-        var indent = FullWidthIndentCheck?.IsChecked == true || ParsePreviewNumber(IndentText?.Text, 0) >= 1.5 ? "　　" : string.Empty;
         _layoutPreviewDocumentTitle = title;
         _layoutPreviewParagraphs = body.Replace("\r", string.Empty)
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => indent + line.Trim())
+            .Select(line => line.Trim())
             .ToArray();
         _layoutPreviewPageIndex = 0;
         RefreshLayoutPreview();
@@ -2980,7 +2994,7 @@ public partial class MainWindow : Window
         {
             case ConversionMode.OriginalCompatible:
                 ModeDescriptionText.Text = "原版兼容：复现原版 EasyPub 的正文密度与缩进习惯。";
-                ModeParameterText.Text = "字号 110% · 行高 120% · 段间距 0.6em · 首行 0em · 边距 0/0/3/3px · 默认对齐 · 保留两个全角空格";
+                ModeParameterText.Text = "字号 110% · 行高 120% · 段间距 0.6em · 首行 0em · 边距 0/0/3/3px · 默认对齐 · 全角空格缩进 × 2";
                 break;
             case ConversionMode.ModernLayout:
                 ModeDescriptionText.Text = "现代排版：增加留白和行距，适合高分辨率 Kindle 长时间阅读。";
@@ -2988,7 +3002,8 @@ public partial class MainWindow : Window
                 break;
             default:
                 ModeDescriptionText.Text = "自定义：保留当前数值；手动修改排版参数时会自动进入此模式。";
-                ModeParameterText.Text = $"当前：字号 {FontSizeText?.Text}% · 行高 {LineHeightText?.Text}% · 段间距 {ParagraphSpacingText?.Text}em · 首行 {IndentText?.Text}em · 可在下方分页继续调整";
+                var fullWidthSummary = FullWidthIndentCheck?.IsChecked == true ? $"全角空格 × {SelectedFullWidthIndentCount()}" : "不添加全角空格";
+                ModeParameterText.Text = $"当前：字号 {FontSizeText?.Text}% · 行高 {LineHeightText?.Text}% · 段间距 {ParagraphSpacingText?.Text}em · 首行 {IndentText?.Text}em · {fullWidthSummary}";
                 break;
         }
     }
@@ -3110,6 +3125,14 @@ public partial class MainWindow : Window
         var item = comboBox.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(candidate => string.Equals(candidate.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase));
         if (item is not null) comboBox.SelectedItem = item;
+    }
+
+    private int SelectedFullWidthIndentCount()
+    {
+        if (FullWidthIndentCountCombo?.SelectedItem is ComboBoxItem item
+            && int.TryParse(item.Tag?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+            return Math.Clamp(value, 0, 20);
+        return 2;
     }
 
     private static int ParseInt(string value, string name) =>

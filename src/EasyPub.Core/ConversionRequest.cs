@@ -19,6 +19,7 @@ public sealed record ConversionOptions
     public TextEncodingMode TextEncoding { get; init; } = TextEncodingMode.Auto;
     public bool RemoveBlankLines { get; init; } = true;
     public bool AddFullWidthIndent { get; init; } = true;
+    public int FullWidthIndentCount { get; init; } = 2;
     public double ParagraphIndentEm { get; init; }
     public int FontSizePercent { get; init; } = 110;
     public int LineHeightPercent { get; init; } = 120;

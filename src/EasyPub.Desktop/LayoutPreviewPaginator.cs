@@ -13,7 +13,7 @@ public static class LayoutPreviewPaginator
         double lineHeight)
     {
         var normalized = paragraphs
-            .Select(paragraph => paragraph.Replace("\r", string.Empty).Trim())
+            .Select(paragraph => paragraph.Replace("\r", string.Empty).TrimEnd())
             .Where(paragraph => paragraph.Length > 0)
             .ToArray();
         if (normalized.Length == 0) normalized = ["当前章节没有可显示的正文。"];

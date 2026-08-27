@@ -82,9 +82,10 @@ public static class LegacyEasyPubConfig
             unsupported.Add("段间距单位不是 em：新版暂按数值作为 em 应用");
 
         var addSpace = Flag(recent, "addspace", true);
-        var addSpaceCount = Integer(recent, "addspacecount", 2);
-        if (addSpace && addSpaceCount != 2)
-            unsupported.Add($"段首全角空格数量={addSpaceCount}：新版当前固定为两个");
+        var configuredAddSpaceCount = Integer(recent, "addspacecount", 2);
+        var addSpaceCount = Math.Clamp(configuredAddSpaceCount, 0, 20);
+        if (configuredAddSpaceCount != addSpaceCount)
+            unsupported.Add($"段首全角空格数量={configuredAddSpaceCount}：已限制到 {addSpaceCount}");
 
         var kindleGenName = Text(advanced, "kindlegenexe", "kindlegen_v2.9.exe");
         var kindleGenPath = ResolveKindleGen(sourcePath, kindleGenName);
@@ -96,6 +97,7 @@ public static class LegacyEasyPubConfig
             ChapterPattern = chapterPattern,
             RemoveBlankLines = Flag(recent, "removeblankline", true),
             AddFullWidthIndent = addSpace,
+            FullWidthIndentCount = addSpaceCount,
             ParagraphIndentEm = Number(recent, "indent", 0),
             FontSizePercent = Integer(recent, "fontsize", 110),
             LineHeightPercent = Integer(recent, "lineheight", 120),
@@ -124,7 +126,7 @@ public static class LegacyEasyPubConfig
             "章节标题正则",
             "字号、行高、段间距与首行缩进",
             "页面四边距及单位",
-            "空行清理与段首全角空格",
+            $"空行清理与段首全角空格数量={addSpaceCount}",
             $"文本对齐={alignment}",
             "KindleGen 路径、压缩级别、附加参数与源档移除",
             $"阅读进度同步={options.Mobi.EnableReadingProgressSync}，ASIN={(options.Mobi.Asin ?? "随机")}",
