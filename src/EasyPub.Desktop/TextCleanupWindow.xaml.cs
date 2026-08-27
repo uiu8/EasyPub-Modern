@@ -13,6 +13,8 @@ public partial class TextCleanupWindow : Window
     private readonly HashSet<string> _excludedKeys = new(StringComparer.Ordinal);
     private IReadOnlyList<TextCleanupCustomRule> _customRules = [];
     private bool _loaded;
+    private CancellationTokenSource? _previewCancellation;
+    private int _previewVersion;
 
     private TextCleanupWindow(string inputPath, string sourceText, TextCleanupOptions initial)
     {
@@ -25,7 +27,8 @@ public partial class TextCleanupWindow : Window
         ChangeRuleFilterCombo.Items.Add("全部规则");
         ChangeRuleFilterCombo.SelectedIndex = 0;
         _loaded = true;
-        RefreshPreview();
+        RefreshPreview(runInBackground: false);
+        Closed += (_, _) => _previewCancellation?.Cancel();
     }
 
     public TextCleanupOptions Result { get; private set; }
@@ -78,16 +81,37 @@ public partial class TextCleanupWindow : Window
             .First(item => string.Equals(item.Tag?.ToString(), options.ChineseVariant.ToString(), StringComparison.Ordinal));
     }
 
-    private void RefreshPreview()
+    private async void RefreshPreview(bool runInBackground = true)
     {
         if (!_loaded) return;
         Result = CaptureOptions();
-        try { _preview = TextCleanupPipeline.Apply(_sourceText, Result); }
+        var options = Result;
+        var version = ++_previewVersion;
+        _previewCancellation?.Cancel();
+        _previewCancellation?.Dispose();
+        _previewCancellation = new CancellationTokenSource();
+        var cancellationToken = _previewCancellation.Token;
+        if (runInBackground) ChangeSummaryText.Text = "正在重新分析文本…";
+
+        TextCleanupPreview preview;
+        try
+        {
+            preview = runInBackground
+                ? await Task.Run(() => TextCleanupPipeline.Apply(_sourceText, options, cancellationToken), cancellationToken)
+                : TextCleanupPipeline.Apply(_sourceText, options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
         catch (Exception exception)
         {
+            if (version != _previewVersion) return;
             InkDialog.Show(this, exception.Message, "清理规则无法执行", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+        if (version != _previewVersion || cancellationToken.IsCancellationRequested) return;
+        _preview = preview;
         _allRows = _preview.Changes.Select(change => new TextCleanupChangeRow(change)).ToArray();
         var selectedRule = ChangeRuleFilterCombo.SelectedItem?.ToString() ?? "全部规则";
         var rules = _preview.Changes.Select(change => change.Rule).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.CurrentCulture).ToArray();

@@ -8,16 +8,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.1.2-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.2)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.1.3-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.2/EasyPubModern-Setup-v1.1.2-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.2/EasyPubModern-v1.1.2-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.2)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.3/EasyPubModern-Setup-v1.1.3-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.1.3/EasyPubModern-v1.1.3-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3)
 
 </div>
 
-![EasyPub Modern v1.1.2 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.1.3 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.2) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.1.3) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -61,42 +61,17 @@
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
 
-## v1.1.2 正式版
+## v1.1.3 正式版
 
-- 修复 Kindle 书页预览会删除段首全角空格的问题，预览现在会真实保留并显示 U+3000 缩进。
-- “保留两个全角空格”改为与原版 EasyPub 一致的“全角空格缩进 × 数量”，可选择 0–20 个。
-- 全角空格数量会同步用于书页预览、转换方案、项目恢复、原版 `config.xml` 导入和最终 EPUB/MOBI 正文。
-- 原版配置中的 `addspacecount` 不再被标记为不支持。
-
-### v1.1.1
-
-- 修复发布包打开文本清理时的 WPF 静态资源解析异常，并为清理规则窗口增加独立的统一样式资源。
-- Kindle 书页预览支持“上一页/下一页”，根据当前设备尺寸、字体和行高近似分页；首章前的书籍说明不会再挤占正文预览。
-- 主界面左侧新增始终可见的“快捷键管理”入口，快捷键窗口样式与程序一致。
-- 修复设置页重复显示 GitHub 入口的问题。
-
-- 全新黑白品牌图标覆盖程序、窗口、任务栏、安装程序、卸载程序和快捷方式。
-- 提供 Windows x64 离线安装包，默认安装到 `D:\software\EasyPub Modern`，并提供开始菜单与可选桌面快捷方式。
-- 便携版改为压缩的自包含单文件发布，目录只保留主程序、兼容配置与 KindleGen 工具，显著减少散乱的运行库文件。
-- 保留完整 .NET 10 与 WPF 运行环境，不要求用户预装运行库，也不采用风险较高的 WPF 激进裁剪。
-- 修正 KindleGen 联合 MOBI 的首图封面验收误报，并核对图片记录与用户所选封面内容。
-
-- 书稿列表直接显示每本书的封面缩略图，切换小说时更容易确认封面是否对应。
-- 所选小说的右侧卡片始终保留竖版封面预览；点击可查看大图，向卡片拖入 JPG、PNG 或 WebP 可直接替换。
-- 无封面时按钮显示“选择封面”，设置后自动变为“更换封面”；窄窗口也不再折叠封面预览。
-- 书稿列表加入搜索、状态/格式筛选和问题优先排序；每本书旁可直接进入章节树、文本清理、书籍信息、插图和近似预览。
-- “转换前检查”“当前任务与验收”“转换历史”合并到统一任务中心，检查结果会回写书稿状态并用于筛选。
-- 文本清理的每一条修改都可以单独排除或恢复，还能按规则筛选并搜索修改前后的文字。
-- 文件夹元数据映射增加当前项目实际命中预览；多条规则重叠时明确显示最终采用的子文件夹规则和值。
-- 明确区分项目与转换方案：项目保存书稿和逐书内容，转换方案只保存整批通用转换参数。
-- 预览统一标为“近似版式预览”，明确它不是 Kindle 真机显示确认。
-- Release 剔除全部 `.pdb` 调试符号，在不影响转换和运行的前提下降低下载与解压体积。
-- Kindle 预览集中为真实设备档案，补齐 KPW3–KPW6、基础款、Voyage、Oasis、Scribe、Colorsoft，并支持自定义分辨率与 PPI。
-- 输出新增自动改名、覆盖、跳过三种同名文件策略，可选转换完成后自动打开输出目录。
-- 默认并发改为按电脑资源自动计算，也可手动选择 1–32；批量转换可暂停或继续派发任务。
-- 快捷键可在设置中集中管理；书库支持 Ctrl 单击切换选择和按住鼠标滑动批量选择。
-- 设置页可直接查看最近验收报告、打开报告目录和访问 GitHub；项目选择器与其余按钮统一为同一套黑白圆角风格。
-- 批量移除、清空书库和批量书籍信息支持撤销；转换前问题可直接跳转到对应书稿和设置区域。
+- 批量转换采用增量总进度与 100ms 界面节流，避免任务数增加时反复汇总和刷新整个列表。
+- 转换前检查会根据电脑资源自动并行，最高 8 路，并保持书稿与检查结果的原始顺序。
+- 封面预览、检查、写入和成品验收共享有界图片缓存，减少重复读取、解码和 PNG／WebP 转换。
+- 章节树建立复用同一次 TXT 读取；正式转换不再为 BOM 和清理结果复制整本正文。
+- 文本清理改为可取消的后台分析；超长小说只构建当前修改位置附近的预览文本。
+- 书库和转换页启用回收式列表虚拟化，搜索、章节状态与转换进度采用合并刷新。
+- 项目恢复只在内容真正变化时生成快照，撤销历史限制为最近 10 次，控制长期内存占用。
+- 统一 TXT 编码检测模块，正确区分 UTF-8、GBK、UTF-16 与 UTF-32 BOM，并修复 UTF-32 LE 误判风险。
+- 提供可配置全角空格缩进、Kindle 设备预览、快捷键管理和统一的黑白圆角界面。
 
 ### 文本清理定位
 
@@ -170,4 +145,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前唯一发布版本为 **v1.1.2**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。
+当前唯一发布版本为 **v1.1.3**。后续 GitHub Release 只保留最新版，首页也只描述当前可下载版本。

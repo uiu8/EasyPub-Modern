@@ -44,18 +44,29 @@ public sealed class BatchConverter(EasyPubConverter converter)
         EnsureUniqueOutputs(jobs);
         var outcomes = new BatchJobOutcome[jobs.Length];
         var fractions = new double[jobs.Length];
-        var stages = new string[jobs.Length];
         var completed = 0;
         var failed = 0;
         var cancelled = 0;
+        var totalFraction = 0d;
         var sync = new object();
         using var semaphore = new SemaphoreSlim(maxParallelism, maxParallelism);
+        var validationService = new ArtifactValidationService();
+
+        void SetFraction(int index, double value)
+        {
+            lock (sync)
+            {
+                value = Math.Clamp(value, 0, 1);
+                totalFraction += value - fractions[index];
+                fractions[index] = value;
+            }
+        }
 
         void Report(int index, string? inputPath, string stage, BookTaskStage itemStage, ArtifactValidationReport? validation = null)
         {
             lock (sync)
             {
-                var overall = jobs.Length == 0 ? 1 : fractions.Sum() / jobs.Length;
+                var overall = jobs.Length == 0 ? 1 : totalFraction / jobs.Length;
                 progress?.Report(new BatchConversionProgress(
                     jobs.Length, completed, failed, cancelled, inputPath, stage, overall, itemStage, validation, fractions[index]));
             }
@@ -76,37 +87,31 @@ public sealed class BatchConverter(EasyPubConverter converter)
                 if (executionControl is not null)
                     await executionControl.WaitIfPausedAsync(cancellationToken).ConfigureAwait(false);
                 var validationEnabled = (job.Options?.ArtifactValidation ?? new ArtifactValidationOptions()).Enabled;
-                fractions[index] = 0.02;
+                SetFraction(index, 0.02);
                 Report(index, job.InputPath, "正在检查", BookTaskStage.Checking);
                 var itemProgress = new InlineProgress<ConversionProgress>(value =>
                 {
-                    lock (sync)
-                    {
-                        fractions[index] = validationEnabled
-                            ? Math.Clamp(value.Fraction * 0.9, 0, 0.9)
-                            : Math.Clamp(value.Fraction, 0, 1);
-                        stages[index] = value.Stage;
-                    }
+                    SetFraction(index, validationEnabled
+                        ? Math.Clamp(value.Fraction * 0.9, 0, 0.9)
+                        : Math.Clamp(value.Fraction, 0, 1));
                     var convertingStage = string.Equals(Path.GetExtension(job.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase)
                         ? BookTaskStage.GeneratingMobi
                         : BookTaskStage.GeneratingEpub;
                     Report(index, value.InputPath, value.Stage, convertingStage);
                 });
-                var result = await Task.Run(
-                    () => converter.ConvertAsync(job, itemProgress, cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
+                var result = await converter.ConvertAsync(job, itemProgress, cancellationToken).ConfigureAwait(false);
                 ArtifactValidationReport? validation = null;
                 if (validationEnabled)
                 {
-                    lock (sync) fractions[index] = 0.94;
+                    SetFraction(index, 0.94);
                     Report(index, job.InputPath, "正在验收成品", BookTaskStage.Validating);
-                    validation = await new ArtifactValidationService()
+                    validation = await validationService
                         .ValidateAndSaveAsync(job, cancellationToken).ConfigureAwait(false);
                 }
                 outcomes[index] = new BatchJobOutcome(job, result, null, false, validation);
+                SetFraction(index, 1);
                 lock (sync)
                 {
-                    fractions[index] = 1;
                     completed++;
                 }
                 var finalStage = validation is null || validation.StructurePassed && validation.WarningCount == 0
@@ -122,9 +127,9 @@ public sealed class BatchConverter(EasyPubConverter converter)
             catch (OperationCanceledException)
             {
                 outcomes[index] = new BatchJobOutcome(job, null, "已取消", true);
+                SetFraction(index, 1);
                 lock (sync)
                 {
-                    fractions[index] = 1;
                     cancelled++;
                 }
                 Report(index, job.InputPath, "已取消", BookTaskStage.Cancelled);
@@ -132,9 +137,9 @@ public sealed class BatchConverter(EasyPubConverter converter)
             catch (Exception exception)
             {
                 outcomes[index] = new BatchJobOutcome(job, null, exception.Message, false);
+                SetFraction(index, 1);
                 lock (sync)
                 {
-                    fractions[index] = 1;
                     failed++;
                 }
                 Report(index, job.InputPath, "转换失败", BookTaskStage.Failed);

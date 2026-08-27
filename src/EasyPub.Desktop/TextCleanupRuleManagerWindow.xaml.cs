@@ -82,9 +82,13 @@ public partial class TextCleanupRuleManagerWindow : Window
             var matches = CountMatches(RulePatternText.Text, isRegex, IgnoreCaseCheck.IsChecked == true, MultilineCheck.IsChecked == true);
             var rule = row.Rule with
             {
-                Name = RuleNameText.Text.Trim(), Pattern = RulePatternText.Text, Replacement = RuleReplacementText.Text,
-                IsRegex = isRegex, Scope = Enum.Parse<TextCleanupRuleScope>(SelectedTag(RuleScopeCombo)),
-                IgnoreCase = IgnoreCaseCheck.IsChecked == true, Multiline = MultilineCheck.IsChecked == true,
+                Name = RuleNameText.Text.Trim(),
+                Pattern = RulePatternText.Text,
+                Replacement = RuleReplacementText.Text,
+                IsRegex = isRegex,
+                Scope = Enum.Parse<TextCleanupRuleScope>(SelectedTag(RuleScopeCombo)),
+                IgnoreCase = IgnoreCaseCheck.IsChecked == true,
+                Multiline = MultilineCheck.IsChecked == true,
                 Enabled = RuleEnabledCheck.IsChecked == true,
             };
             var index = _rows.IndexOf(row);

@@ -233,6 +233,53 @@ public sealed class CoverImageTests
         }
     }
 
+    [Fact]
+    public async Task Cover_preparation_reuses_the_same_result_while_the_file_is_unchanged()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-cover-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var coverPath = Path.Combine(directory, "cover.jpg");
+        await WriteJpegAsync(coverPath, 7, 11, new SKColor(40, 80, 120));
+
+        try
+        {
+            var first = await CoverImageConverter.PrepareJpegAsync(coverPath);
+            var second = await CoverImageConverter.PrepareJpegAsync(coverPath);
+
+            Assert.Same(first, second);
+            Assert.Same(first.JpegBytes, second.JpegBytes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Cover_preparation_invalidates_the_cache_after_the_file_changes()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-cover-cache-change-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var coverPath = Path.Combine(directory, "cover.jpg");
+        await WriteJpegAsync(coverPath, 5, 9, new SKColor(20, 60, 100));
+
+        try
+        {
+            var first = await CoverImageConverter.PrepareJpegAsync(coverPath);
+            await WriteJpegAsync(coverPath, 13, 17, new SKColor(100, 60, 20));
+            File.SetLastWriteTimeUtc(coverPath, DateTime.UtcNow.AddSeconds(2));
+
+            var second = await CoverImageConverter.PrepareJpegAsync(coverPath);
+
+            Assert.NotSame(first, second);
+            Assert.Equal((13, 17), (second.PixelWidth, second.PixelHeight));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task<string> ReadTextEntryAsync(ZipArchive archive, string path)
     {
         var entry = Assert.Single(archive.Entries, candidate => candidate.FullName == path);

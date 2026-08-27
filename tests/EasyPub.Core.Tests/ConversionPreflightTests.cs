@@ -5,6 +5,31 @@ namespace EasyPub.Core.Tests;
 public sealed class ConversionPreflightTests
 {
     [Fact]
+    public async Task Parallel_preflight_preserves_the_input_book_order()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-preflight-order-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var requests = new List<ConversionRequest>();
+            for (var index = 0; index < 12; index++)
+            {
+                var input = Path.Combine(directory, $"book-{index:D2}.txt");
+                await File.WriteAllTextAsync(input, $"第一章 开始 {index}\n正文");
+                requests.Add(new ConversionRequest(input, Path.Combine(directory, $"book-{index:D2}.epub")));
+            }
+
+            var report = await new ConversionPreflightInspector().InspectAsync(requests);
+
+            Assert.Equal(requests.Select(request => request.InputPath), report.Books.Select(book => book.InputPath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Missing_input_is_reported_before_conversion_starts()
     {
         var request = new ConversionRequest(

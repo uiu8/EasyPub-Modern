@@ -5,6 +5,31 @@ namespace EasyPub.Core.Tests;
 public sealed class ConversionPreflightCacheTests
 {
     [Fact]
+    public async Task Inspect_runs_once_and_reuses_the_completed_report()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"easypub-preflight-inspect-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var input = Path.Combine(root, "book.txt");
+        await File.WriteAllTextAsync(input, "第一章 雨夜\n正文");
+        var request = new ConversionRequest(input, Path.Combine(root, "book.epub"));
+        var cache = new ConversionPreflightCache();
+
+        try
+        {
+            var first = await cache.InspectAsync([request]);
+            var second = await cache.InspectAsync([request]);
+
+            Assert.False(first.Reused);
+            Assert.True(second.Reused);
+            Assert.Same(first.Report, second.Report);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Reuses_result_until_an_input_or_option_changes()
     {
         var root = Path.Combine(Path.GetTempPath(), $"easypub-preflight-cache-{Guid.NewGuid():N}");

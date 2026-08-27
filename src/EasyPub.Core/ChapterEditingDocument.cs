@@ -74,7 +74,18 @@ public sealed class ChapterEditingDocument
         CancellationToken cancellationToken = default)
     {
         var bytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
-        var decoded = Decode(bytes, encodingMode);
+        return FromBytes(sourcePath, bytes, chapterPattern, encodingMode, cancellationToken);
+    }
+
+    internal static ChapterEditingDocument FromBytes(
+        string sourcePath,
+        byte[] bytes,
+        string? chapterPattern = null,
+        TextEncodingMode encodingMode = TextEncodingMode.Auto,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        var decoded = TextFileDecoder.Decode(bytes, encodingMode);
         var text = decoded.Text;
         var newLine = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
@@ -85,6 +96,7 @@ public sealed class ChapterEditingDocument
 
         for (var index = 0; index < lines.Length; index++)
         {
+            if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             var rawLine = lines[index];
             var title = rawLine.Trim();
             if (title.Length == 0) continue;
@@ -160,40 +172,4 @@ public sealed class ChapterEditingDocument
         return preview.ToString();
     }
 
-    private static DecodedText Decode(byte[] bytes, TextEncodingMode mode)
-    {
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        if (mode == TextEncodingMode.Utf8)
-            return DecodeWithEncoding(bytes, new UTF8Encoding(false, true), Encoding.UTF8.Preamble.ToArray());
-        if (mode == TextEncodingMode.Gbk)
-            return new DecodedText(Encoding.GetEncoding(936).GetString(bytes), Encoding.GetEncoding(936), []);
-
-        foreach (var encoding in new[] { Encoding.UTF8, Encoding.Unicode, Encoding.BigEndianUnicode, Encoding.UTF32 })
-        {
-            if (bytes.AsSpan().StartsWith(encoding.Preamble))
-                return DecodeWithEncoding(bytes, encoding, encoding.Preamble.ToArray());
-        }
-
-        try
-        {
-            var encoding = new UTF8Encoding(false, true);
-            return new DecodedText(encoding.GetString(bytes), encoding, []);
-        }
-        catch (DecoderFallbackException)
-        {
-            var encoding = Encoding.GetEncoding(936);
-            return new DecodedText(encoding.GetString(bytes), encoding, []);
-        }
-    }
-
-    private static DecodedText DecodeWithEncoding(byte[] bytes, Encoding encoding, byte[] expectedPreamble)
-    {
-        var preamble = bytes.AsSpan().StartsWith(expectedPreamble) ? expectedPreamble : [];
-        return new DecodedText(
-            encoding.GetString(bytes, preamble.Length, bytes.Length - preamble.Length),
-            encoding,
-            preamble);
-    }
-
-    private sealed record DecodedText(string Text, Encoding Encoding, byte[] Preamble);
 }

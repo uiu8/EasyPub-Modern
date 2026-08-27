@@ -109,6 +109,32 @@ public sealed class ChapterEditingTests
     }
 
     [Fact]
+    public async Task Auto_detection_reads_and_preserves_utf32_little_endian_bom()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-utf32-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var sourcePath = Path.Combine(directory, "source.txt");
+        var outputPath = Path.Combine(directory, "edited.txt");
+        var encoding = System.Text.Encoding.UTF32;
+        var content = encoding.GetBytes("001 雨夜\r\n正文\r\n");
+        await File.WriteAllBytesAsync(sourcePath, [.. encoding.GetPreamble(), .. content]);
+
+        try
+        {
+            var document = await ChapterEditingDocument.LoadAsync(sourcePath);
+            await document.SaveAsAsync(outputPath, [new ChapterTitleEdit(1, "第一章 雨夜")]);
+            var output = await File.ReadAllBytesAsync(outputPath);
+
+            Assert.True(output.AsSpan().StartsWith(encoding.Preamble));
+            Assert.Equal("第一章 雨夜\r\n正文\r\n", encoding.GetString(output, encoding.Preamble.Length, output.Length - encoding.Preamble.Length));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task One_click_numeric_title_edits_are_recognized_by_the_converter()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"easypub-normalized-{Guid.NewGuid():N}");

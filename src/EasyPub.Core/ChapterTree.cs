@@ -58,8 +58,8 @@ public sealed class ChapterTreeDocument
 
         var bytes = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
         var sourceHash = Convert.ToHexString(SHA256.HashData(bytes));
-        var editingDocument = await ChapterEditingDocument.LoadAsync(
-            fullPath, chapterPattern, encodingMode, cancellationToken).ConfigureAwait(false);
+        var editingDocument = ChapterEditingDocument.FromBytes(
+            fullPath, bytes, chapterPattern, encodingMode, cancellationToken);
         var sourceLines = editingDocument.GetLines()
             .Select(line => new ChapterTreeSourceLine(line.LineNumber, line.Text))
             .ToArray();

@@ -13,6 +13,24 @@ public sealed class ConversionPreflightCache
     private string? _key;
     private ConversionPreflightReport? _report;
 
+    public async Task<(ConversionPreflightReport Report, bool Reused)> InspectAsync(
+        IEnumerable<ConversionRequest> requests,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        var jobs = requests.ToArray();
+        var key = CreateKey(jobs);
+        if (_report is not null && string.Equals(_key, key, StringComparison.Ordinal))
+            return (_report, true);
+
+        var report = await Task.Run(
+            () => new ConversionPreflightInspector().InspectAsync(jobs, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
+        _key = key;
+        _report = report;
+        return (report, false);
+    }
+
     public bool TryGet(IEnumerable<ConversionRequest> requests, out ConversionPreflightReport report)
     {
         var key = CreateKey(requests);

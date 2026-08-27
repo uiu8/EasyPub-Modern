@@ -28,7 +28,10 @@ public static partial class TextCleanupPipeline
 
     public static bool IsRemovedLine(string line) => line == RemovedLine;
 
-    public static TextCleanupPreview Apply(string text, TextCleanupOptions? options)
+    public static TextCleanupPreview Apply(
+        string text,
+        TextCleanupOptions? options,
+        CancellationToken cancellationToken = default)
     {
         options ??= new TextCleanupOptions();
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
@@ -38,6 +41,7 @@ public static partial class TextCleanupPipeline
 
         for (var index = 0; index < result.Length; index++)
         {
+            if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             var original = result[index];
             var current = original;
 
@@ -69,6 +73,7 @@ public static partial class TextCleanupPipeline
         {
             for (var index = 0; index < result.Length; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (result[index] == RemovedLine || !SiteNoticePattern().IsMatch(result[index].Trim())) continue;
                 var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]);
                 changes.Add(change);
@@ -80,6 +85,7 @@ public static partial class TextCleanupPipeline
         {
             for (var index = 0; index < result.Length; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (result[index] == RemovedLine || !RepeatedHeaderPattern().IsMatch(result[index].Trim())) continue;
                 var change = CreateChange(index + 1, "删除重复页眉/页码", result[index], string.Empty, exclusions, lines[index]);
                 changes.Add(change);
@@ -92,6 +98,7 @@ public static partial class TextCleanupPipeline
             string? previousTitle = null;
             for (var index = 0; index < result.Length; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (result[index] == RemovedLine || string.IsNullOrWhiteSpace(result[index])) continue;
                 var currentTitle = result[index].Trim();
                 if (!ChapterLinePattern().IsMatch(currentTitle)) { previousTitle = null; continue; }
@@ -109,6 +116,7 @@ public static partial class TextCleanupPipeline
         {
             for (var index = 0; index < result.Length - 1; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var nextIndex = index + 1;
                 while (nextIndex < result.Length && ShouldJoin(result[index], result[nextIndex]))
                 {
@@ -130,6 +138,7 @@ public static partial class TextCleanupPipeline
             var seenBlank = false;
             for (var index = 0; index < result.Length; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (result[index] == RemovedLine) continue;
                 if (!string.IsNullOrWhiteSpace(result[index]))
                 {
@@ -147,7 +156,7 @@ public static partial class TextCleanupPipeline
             }
         }
 
-        result = ApplyCustomRules(result, changes, exclusions, options.CustomRules);
+        result = ApplyCustomRules(result, changes, exclusions, options.CustomRules, cancellationToken);
 
         return new TextCleanupPreview(result, changes.OrderBy(change => change.LineNumber).ToArray());
     }
@@ -158,18 +167,7 @@ public static partial class TextCleanupPipeline
         CancellationToken cancellationToken = default)
     {
         var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        Encoding encoding;
-        if (encodingMode == TextEncodingMode.Utf8) encoding = new UTF8Encoding(false, true);
-        else if (encodingMode == TextEncodingMode.Gbk) encoding = Encoding.GetEncoding(936);
-        else if (bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble)) encoding = Encoding.UTF8;
-        else
-        {
-            try { _ = new UTF8Encoding(false, true).GetString(bytes); encoding = new UTF8Encoding(false); }
-            catch (DecoderFallbackException) { encoding = Encoding.GetEncoding(936); }
-        }
-        var preamble = encoding.GetPreamble();
-        return encoding.GetString(bytes.AsSpan().StartsWith(preamble) ? bytes[preamble.Length..] : bytes);
+        return TextFileDecoder.Decode(bytes, encodingMode).Text;
     }
 
     public static string CreateChangeKey(int lineNumber, string rule, string before)
@@ -224,10 +222,12 @@ public static partial class TextCleanupPipeline
         string[] result,
         List<TextCleanupChange> changes,
         HashSet<string> exclusions,
-        IReadOnlyList<TextCleanupCustomRule> rules)
+        IReadOnlyList<TextCleanupCustomRule> rules,
+        CancellationToken cancellationToken)
     {
         foreach (var rule in rules.Where(rule => rule.Enabled && !string.IsNullOrEmpty(rule.Pattern)).OrderBy(rule => rule.Order).ThenBy(rule => rule.Name, StringComparer.CurrentCulture))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Regex? regex = null;
             if (rule.IsRegex)
             {
@@ -257,6 +257,7 @@ public static partial class TextCleanupPipeline
 
             for (var index = 0; index < result.Length; index++)
             {
+                if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 if (result[index] == RemovedLine) continue;
                 var chapter = ChapterLinePattern().IsMatch(result[index].Trim());
                 if (rule.Scope == TextCleanupRuleScope.BodyOnly && chapter || rule.Scope == TextCleanupRuleScope.ChapterTitlesOnly && !chapter) continue;
