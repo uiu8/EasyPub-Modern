@@ -242,6 +242,49 @@ public sealed class MainWindowLayoutTests
     }
 
     [Fact]
+    public void Cover_page_exposes_one_real_batch_metadata_button_in_the_top_bar()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-cover-batch-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(inputPath, "第一章 雨夜\n正文");
+            RunInWindow(window =>
+            {
+                window.InputBooks.Add(new InputBookItem(inputPath));
+                var coverNavigation = Assert.IsType<RadioButton>(window.FindName("CoverNavigationButton"));
+                coverNavigation.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, coverNavigation));
+                window.UpdateLayout();
+
+                var batchButton = Assert.IsType<Button>(window.FindName("CoverBatchMetadataButton"));
+                Assert.Equal("批量编辑", batchButton.Content);
+                Assert.Single(FindVisualDescendants<Button>(window), button => Equals(button.Content, "批量编辑"));
+
+                var batchEditorOpened = false;
+                var closeBatchTimer = new DispatcherTimer(DispatcherPriority.Background)
+                {
+                    Interval = TimeSpan.FromMilliseconds(100),
+                };
+                closeBatchTimer.Tick += (_, _) =>
+                {
+                    var opened = window.OwnedWindows.OfType<BatchMetadataWindow>()
+                        .FirstOrDefault(candidate => candidate.IsVisible);
+                    if (opened is null) return;
+                    batchEditorOpened = true;
+                    closeBatchTimer.Stop();
+                    opened.DialogResult = false;
+                };
+                closeBatchTimer.Start();
+                batchButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, batchButton));
+                Assert.True(batchEditorOpened, "封面信息页顶部的批量编辑按钮应打开真实批量元数据窗口。");
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
     public void Import_controls_metadata_mapping_and_kindle_models_are_complete()
     {
         RunInWindow(window =>
