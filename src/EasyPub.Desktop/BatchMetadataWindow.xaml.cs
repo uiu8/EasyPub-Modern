@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace EasyPub.Desktop;
 
@@ -26,9 +27,21 @@ public partial class BatchMetadataWindow : Window
         MetadataGrid.ItemsSource = Rows;
     }
 
-    private void ApplyAuthorToAll_Click(object sender, RoutedEventArgs e)
+    private void ApplyFieldToAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var row in Rows) row.Author = BatchAuthorText.Text.Trim();
+        var field = (BatchFieldCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "Author";
+        var value = BatchValueText.Text.Trim();
+        foreach (var row in Rows)
+        {
+            switch (field)
+            {
+                case "Title": row.Title = value; break;
+                case "Publisher": row.Publisher = value; break;
+                case "Category": row.Category = value; break;
+                case "Language": row.Language = value; break;
+                default: row.Author = value; break;
+            }
+        }
         MetadataGrid.Items.Refresh();
     }
 

@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using EasyPub.Core;
 using Microsoft.Win32;
 
@@ -113,6 +115,12 @@ public partial class IllustrationManagerWindow : Window
         }
     }
 
+    private void IllustrationsGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (IllustrationsGrid.SelectedItem is null) return;
+        ChoosePosition_Click(sender, e);
+    }
+
     private void UseManualMarker_Click(object sender, RoutedEventArgs e)
     {
         if (IllustrationsGrid.SelectedItem is not IllustrationEditorItem item)
@@ -133,6 +141,20 @@ public partial class IllustrationManagerWindow : Window
         }
         Clipboard.SetText(item.MarkerToken);
         CountText.Text = $"已复制：{item.MarkerToken}";
+    }
+
+    private void More_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var menu = new ContextMenu { PlacementTarget = button, Placement = PlacementMode.Bottom };
+        var manual = new MenuItem { Header = "改用手动正文标记" };
+        manual.Click += UseManualMarker_Click;
+        var copy = new MenuItem { Header = "复制手动标记" };
+        copy.Click += CopyMarker_Click;
+        menu.Items.Add(manual);
+        menu.Items.Add(copy);
+        button.ContextMenu = menu;
+        menu.IsOpen = true;
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)

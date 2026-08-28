@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -16,7 +17,7 @@ namespace EasyPub.Desktop.Tests;
 public sealed class MainWindowLayoutTests
 {
     [Fact]
-    public void Ink_workspace_uses_six_independent_effect_matching_pages()
+    public void Ink_workspace_uses_five_task_pages_without_a_duplicate_chapter_page()
     {
         RunInWindow(window =>
         {
@@ -24,7 +25,8 @@ public sealed class MainWindowLayoutTests
             Assert.IsType<Button>(window.FindName("SettingsButton"));
             Assert.Null(window.FindName("HeaderSubtitleText"));
             var shortcutManagerButton = Assert.IsType<Button>(window.FindName("ShortcutManagerButton"));
-            Assert.IsType<Menu>(window.FindName("AddBooksMenu"));
+            Assert.IsType<Button>(window.FindName("AddBooksButton"));
+            Assert.Null(window.FindName("AddBooksMenu"));
             Assert.IsType<MenuItem>(window.FindName("FavoriteFoldersMenu"));
             Assert.IsType<Border>(window.FindName("SidebarPanel"));
             Assert.IsType<Border>(window.FindName("BottomOperationBar"));
@@ -43,6 +45,9 @@ public sealed class MainWindowLayoutTests
                 new Dictionary<string, string>(), 0, () => { });
             settingsWindow.Show();
             settingsWindow.UpdateLayout();
+            Assert.DoesNotContain(FindVisualDescendants<TextBox>(settingsWindow), textBox =>
+                Equals(textBox.Text, "搜索设置"));
+            Assert.True(Assert.IsType<Button>(settingsWindow.FindName("ResetAllDefaultsButton")).IsEnabled);
             var settingsCapturePath = Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH");
             if (!string.IsNullOrWhiteSpace(settingsCapturePath)) CaptureWindowVisual(settingsWindow, settingsCapturePath);
             settingsWindow.Close();
@@ -85,7 +90,6 @@ public sealed class MainWindowLayoutTests
             (string Navigation, string Title, string Page)[] cases =
             {
                 ("LibraryNavigationButton", "书库", "InkLibraryPage"),
-                ("ChaptersNavigationButton", "章节正文", "InkChaptersPage"),
                 ("CoverNavigationButton", "封面信息", "InkCoverPage"),
                 ("LayoutNavigationButton", "排版插图", "InkLayoutPage"),
                 ("ConvertNavigationButton", "转换输出", "InkConvertPage"),
@@ -104,6 +108,9 @@ public sealed class MainWindowLayoutTests
                 foreach (var (_, _, otherPageName) in cases.Where(item => item.Page != pageName))
                     Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(window.FindName(otherPageName)).Visibility);
             }
+
+            Assert.Equal(Visibility.Collapsed, Assert.IsType<RadioButton>(window.FindName("ChaptersNavigationButton")).Visibility);
+            Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(window.FindName("InkChaptersPage")).Visibility);
 
             var layoutNavigation = Assert.IsType<RadioButton>(window.FindName("LayoutNavigationButton"));
             layoutNavigation.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, layoutNavigation));
@@ -156,19 +163,20 @@ public sealed class MainWindowLayoutTests
             Assert.True(captured.Options.AddFullWidthIndent);
             Assert.Equal(3, captured.Options.FullWidthIndentCount);
 
-            var convertFormat = Assert.IsType<ComboBox>(window.FindName("ConvertFormatCombo"));
+            var convertFormatSummary = Assert.IsType<TextBlock>(window.FindName("ConvertFormatSummaryText"));
             bottomFormat.SelectedIndex = 0;
-            Assert.Equal(0, convertFormat.SelectedIndex);
-            convertFormat.SelectedIndex = 1;
-            Assert.Equal(1, bottomFormat.SelectedIndex);
+            Assert.Equal("EPUB", convertFormatSummary.Text);
+            bottomFormat.SelectedIndex = 1;
+            Assert.Equal("MOBI", convertFormatSummary.Text);
 
-            var scrollViewer = Assert.IsType<ScrollViewer>(window.FindName("MainContentScrollViewer"));
+            Assert.Null(window.FindName("MainContentScrollViewer"));
+            var mainContent = Assert.IsType<Grid>(window.FindName("MainContentGrid"));
             foreach (var width in new[] { 1120d, 1440d, 1750d })
             {
                 window.Width = width;
                 window.UpdateLayout();
-                Assert.True(scrollViewer.ExtentWidth <= scrollViewer.ViewportWidth + 1,
-                    $"窗口宽度 {width:F0} 时发生横向溢出：ExtentWidth={scrollViewer.ExtentWidth:F1}, ViewportWidth={scrollViewer.ViewportWidth:F1}");
+                Assert.True(mainContent.ActualWidth <= window.ActualWidth,
+                    $"窗口宽度 {width:F0} 时主内容区域宽于窗口：Main={mainContent.ActualWidth:F1}, Window={window.ActualWidth:F1}");
             }
         });
     }
@@ -196,17 +204,34 @@ public sealed class MainWindowLayoutTests
                 Assert.Contains("封面：无", selectedSummary.Text);
                 Assert.True(openCoverPreview.IsEnabled);
                 Assert.Equal(Visibility.Visible, coverPreview.Visibility);
+                var bookListCard = Assert.IsType<Border>(window.FindName("BookListSection"));
                 var coverPanel = Assert.IsType<Border>(window.FindName("CoverDropPanel"));
+                var coverGap = Assert.IsType<ColumnDefinition>(window.FindName("CoverGapColumn"));
+                Assert.True(bookListCard.CornerRadius.TopLeft >= 8 && bookListCard.BorderThickness.Left >= 1,
+                    "书库列表应是独立的圆角卡片，而不是依靠中间分隔线。 ");
+                Assert.True(coverPanel.CornerRadius.TopLeft >= 8 && coverPanel.BorderThickness.Left >= 1,
+                    "所选书稿应是独立的圆角卡片。 ");
+                Assert.True(coverGap.ActualWidth >= 12, "书库列表与所选书稿之间应保留明显卡片间距。 ");
                 var quickMetadata = Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
+                Assert.IsType<Grid>(quickMetadata.Content);
+                Assert.True(quickMetadata.ActualHeight >= 54, "封面信息快捷入口应保留图标、说明与足够点击面积。 ");
                 var quickMetadataBottom = quickMetadata.TranslatePoint(new Point(0, quickMetadata.ActualHeight), coverPanel).Y;
-                Assert.True(quickMetadataBottom < Math.Min(560, coverPanel.ActualHeight),
+                Assert.True(quickMetadataBottom < 560,
                     $"右侧工具距离所选书稿信息过远：按钮底部位于 {quickMetadataBottom:F1}px。 ");
+                Assert.True(quickMetadataBottom <= coverPanel.ActualHeight - 8,
+                    $"封面信息快捷入口被右侧卡片裁切：按钮底部 {quickMetadataBottom:F1}px，卡片高度 {coverPanel.ActualHeight:F1}px。 ");
+                var quickCleanup = Assert.IsType<Button>(window.FindName("QuickCleanupButton"));
+                var quickCleanupBottom = quickCleanup.TranslatePoint(new Point(0, quickCleanup.ActualHeight), coverPanel).Y;
+                Assert.True(quickCleanup.IsVisible && quickCleanupBottom <= coverPanel.ActualHeight - 8,
+                    $"文本清理快捷入口被右侧卡片裁切：按钮底部 {quickCleanupBottom:F1}px，卡片高度 {coverPanel.ActualHeight:F1}px。 ");
 
                 book.CoverImagePath = coverPath;
                 PumpDispatcherUntil(() => book.CoverThumbnail is not null, TimeSpan.FromSeconds(3));
                 Assert.NotNull(book.CoverThumbnail);
                 Assert.Equal(Visibility.Visible, book.CoverThumbnailVisibility);
                 Assert.Equal(Visibility.Collapsed, book.CoverThumbnailPlaceholderVisibility);
+                var capturePath = Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_CAPTURE_PATH");
+                if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(window, capturePath);
             });
         }
         finally
@@ -221,10 +246,9 @@ public sealed class MainWindowLayoutTests
     {
         RunInWindow(window =>
         {
-            var addBooksMenu = Assert.IsType<Menu>(window.FindName("AddBooksMenu"));
-            var addBooksRoot = Assert.IsType<MenuItem>(Assert.Single(addBooksMenu.Items));
-            var fileCommand = Assert.IsType<MenuItem>(addBooksRoot.Items[0]);
-            Assert.NotEqual("Segoe Fluent Icons", fileCommand.FontFamily.Source);
+            var addBooksButton = Assert.IsType<Button>(window.FindName("AddBooksButton"));
+            Assert.Equal("添加书稿", addBooksButton.Content);
+            Assert.Contains(FindVisualDescendants<Button>(window), button => Equals(button.Content, "导入文件夹"));
 
             Assert.IsType<Menu>(window.FindName("FavoriteImportMenu"));
 
@@ -488,6 +512,70 @@ public sealed class MainWindowLayoutTests
     }
 
     [Fact]
+    public void Library_exposes_chapter_structure_metadata_and_text_cleanup_as_equal_actions()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-chapter-workspace-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(inputPath,
+                "第一章 雨夜\r\n第一章正文。\r\n\r\n第二章 天明\r\n这里有唯一关键词。\r\n第二章后续正文。");
+            RunInWindow(window =>
+            {
+                var book = new InputBookItem(inputPath);
+                window.InputBooks.Add(book);
+                var files = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                files.SelectedItem = book;
+                window.UpdateLayout();
+
+                var chapter = Assert.IsType<Button>(window.FindName("QuickChapterButton"));
+                var metadata = Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
+                var cleanup = Assert.IsType<Button>(window.FindName("QuickCleanupButton"));
+                Assert.True(chapter.IsVisible && chapter.IsEnabled);
+                Assert.True(metadata.IsVisible && metadata.IsEnabled);
+                Assert.True(cleanup.IsVisible && cleanup.IsEnabled);
+                Assert.IsType<Grid>(chapter.Content);
+                Assert.IsType<Grid>(metadata.Content);
+                Assert.IsType<Grid>(cleanup.Content);
+                Assert.InRange(Math.Abs(chapter.ActualHeight - metadata.ActualHeight), 0, 1);
+                Assert.InRange(Math.Abs(metadata.ActualHeight - cleanup.ActualHeight), 0, 1);
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
+    public void Epub_to_mobi_mode_is_visible_for_the_selected_epub()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-visible-epub-mode-{Guid.NewGuid():N}.epub");
+        try
+        {
+            File.WriteAllBytes(inputPath, []);
+            RunInWindow(window =>
+            {
+                var book = new InputBookItem(inputPath);
+                window.InputBooks.Add(book);
+                var files = Assert.IsType<ListBox>(window.FindName("FilesList"));
+                files.SelectedItem = book;
+                Assert.IsType<ComboBox>(window.FindName("FormatCombo")).SelectedIndex = 1;
+                window.UpdateLayout();
+
+                var panel = Assert.IsType<StackPanel>(window.FindName("EpubInputModePanel"));
+                var mode = Assert.IsType<ComboBox>(window.FindName("EpubModeCombo"));
+                Assert.Equal(Visibility.Visible, panel.Visibility);
+                Assert.Equal("保留原 EPUB 版式（推荐）", ((ComboBoxItem)mode.Items[0]).Content);
+                Assert.Equal("EasyPub 兼容重排", ((ComboBoxItem)mode.Items[1]).Content);
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
     public void Task_center_landing_renders_tasks_with_read_only_progress()
     {
         RunInWindow(window =>
@@ -508,16 +596,23 @@ public sealed class MainWindowLayoutTests
     public void Cover_page_displays_metadata_from_the_selected_books_folder_mapping()
     {
         var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-mapped-metadata-{Guid.NewGuid():N}.txt");
+        var secondInputPath = Path.Combine(Path.GetTempPath(), $"easypub-cover-independent-{Guid.NewGuid():N}.txt");
         try
         {
             File.WriteAllText(inputPath, "第一章 测试\r\n正文");
+            File.WriteAllText(secondInputPath, "第一章 第二本\r\n正文");
             RunInWindow(window =>
             {
                 var book = new InputBookItem(inputPath);
                 book.SetMetadataOverrides(
                     new BookMetadataOverrides { Publisher = "起点", Language = "zh-CN" },
                     Path.GetDirectoryName(inputPath));
+                var secondBook = new InputBookItem(secondInputPath);
+                secondBook.SetMetadataOverrides(
+                    new BookMetadataOverrides { Publisher = "番茄", Language = "zh-CN" },
+                    Path.GetDirectoryName(secondInputPath));
                 window.InputBooks.Add(book);
+                window.InputBooks.Add(secondBook);
 
                 var filesList = Assert.IsType<ListBox>(window.FindName("FilesList"));
                 filesList.SelectedItem = book;
@@ -526,12 +621,68 @@ public sealed class MainWindowLayoutTests
                 window.UpdateLayout();
 
                 Assert.Equal("起点", Assert.IsType<TextBox>(window.FindName("PublisherText")).Text);
+                var coverBookCombo = Assert.IsType<ComboBox>(window.FindName("CoverBookCombo"));
+                coverBookCombo.SelectedItem = secondBook;
+                PumpDispatcherUntil(() => Equals(Assert.IsType<TextBox>(window.FindName("PublisherText")).Text, "番茄"), TimeSpan.FromSeconds(3));
+                Assert.Same(book, filesList.SelectedItem);
+                Assert.Equal("番茄", Assert.IsType<TextBox>(window.FindName("PublisherText")).Text);
+                var capturePath = Environment.GetEnvironmentVariable("EASYPUB_COVER_CAPTURE_PATH");
+                if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(window, capturePath);
             });
         }
         finally
         {
             if (File.Exists(inputPath)) File.Delete(inputPath);
+            if (File.Exists(secondInputPath)) File.Delete(secondInputPath);
         }
+    }
+
+    [Fact]
+    public void Custom_cleanup_rule_enable_state_is_writable_for_the_inline_checkbox()
+    {
+        var row = new TextCleanupRuleRow(new TextCleanupCustomRule { Name = "测试规则", Pattern = "旧", Enabled = true });
+        var enabledProperty = typeof(TextCleanupRuleRow).GetProperty(nameof(TextCleanupRuleRow.Enabled));
+
+        Assert.NotNull(enabledProperty);
+        Assert.True(enabledProperty!.CanWrite, "规则列表的启用复选框需要可写状态，不能双向绑定到只读属性。");
+        enabledProperty.SetValue(row, false);
+        Assert.False(row.Rule.Enabled);
+    }
+
+    [Fact]
+    public void Applying_custom_cleanup_rules_commits_the_rule_currently_being_edited()
+    {
+        RunInWindow(owner =>
+        {
+            var capturePath = Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH");
+            var manager = new TextCleanupRuleManagerWindow(
+                [new TextCleanupCustomRule { Name = "测试规则", Pattern = "旧文本", Replacement = "旧替换", Enabled = true }],
+                "旧文本")
+            {
+                Owner = owner,
+                ShowInTaskbar = false,
+                WindowStyle = WindowStyle.None,
+                Opacity = string.IsNullOrWhiteSpace(capturePath) ? 0 : 1,
+            };
+            var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(80) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                Assert.IsType<TextBox>(manager.FindName("RulePatternText")).Text = "新文本";
+                Assert.IsType<TextBox>(manager.FindName("RuleReplacementText")).Text = "新替换";
+                Assert.IsType<TextCleanupRuleRow>(Assert.IsType<DataGrid>(manager.FindName("RulesGrid")).Items[0]).Enabled = false;
+                manager.UpdateLayout();
+                if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(manager, capturePath);
+                var applyButton = FindVisualDescendants<Button>(manager).Single(button => Equals(button.Content, "应用规则组"));
+                applyButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, applyButton));
+            };
+            timer.Start();
+
+            Assert.True(manager.ShowDialog());
+            Assert.Equal("新文本", manager.Rules.Single().Pattern);
+            Assert.Equal("新替换", manager.Rules.Single().Replacement);
+            Assert.False(manager.Rules.Single().Enabled);
+        });
     }
 
     private static void RunInWindow(Action<MainWindow> assertion)
@@ -553,12 +704,17 @@ public sealed class MainWindowLayoutTests
                 App? captureApp = null;
                 try
                 {
-                    if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH")) && Application.Current is null)
+                    var captureRequested = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_CHAPTER_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_COVER_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH"));
+                    if (captureRequested && Application.Current is null)
                     {
                         captureApp = new App();
                         captureApp.InitializeComponent();
                     }
-                    window = new MainWindow { Width = 1440, Height = 900, ShowInTaskbar = false, WindowStyle = WindowStyle.None, Opacity = 0 };
+                    window = new MainWindow { Width = 1440, Height = 900, ShowInTaskbar = false, WindowStyle = WindowStyle.None, Opacity = captureRequested ? 1 : 0 };
                     window.Show();
                     assertion(window);
                 }

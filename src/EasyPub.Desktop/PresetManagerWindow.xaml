@@ -9,10 +9,11 @@
         <Border Grid.Row="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">
             <Grid><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <ListBox x:Name="PresetList" DisplayMemberPath="Name" SelectionChanged="PresetList_SelectionChanged"/>
-                <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBox x:Name="NameText" MinHeight="36" Padding="8" VerticalContentAlignment="Center" ToolTip="输入转换方案名称"/>
-                    <Button Grid.Column="2" Content="保存当前设置" Padding="14,8" Margin="0,0,8,0" Click="Save_Click"/>
-                    <Button Grid.Column="3" Content="删除所选" Padding="14,8" Click="Delete_Click"/>
+                    <Button Grid.Column="2" Content="另存当前批次" Padding="14,8" Margin="0,0,8,0" Click="Save_Click"/>
+                    <Button x:Name="ApplyButton" Grid.Column="3" Content="应用所选" Padding="14,8" Margin="0,0,8,0" Click="Apply_Click" IsEnabled="False"/>
+                    <Button Grid.Column="4" Content="删除所选" Padding="14,8" Click="Delete_Click"/>
                 </Grid>
             </Grid>
         </Border>

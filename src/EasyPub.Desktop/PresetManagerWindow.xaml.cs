@@ -19,9 +19,11 @@ public partial class PresetManagerWindow : Window
     }
 
     public bool Changed { get; private set; }
+    public NamedConversionPreset? AppliedPreset { get; private set; }
 
     private void PresetList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        ApplyButton.IsEnabled = PresetList.SelectedItem is NamedConversionPreset;
         if (PresetList.SelectedItem is NamedConversionPreset preset) NameText.Text = preset.Name;
     }
 
@@ -40,9 +42,17 @@ public partial class PresetManagerWindow : Window
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
         if (PresetList.SelectedItem is not NamedConversionPreset preset) return;
+        if (InkDialog.Show(this, $"确定删除转换方案“{preset.Name}”吗？", "删除转换方案", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         _presets.Remove(preset);
         NameText.Clear();
         Changed = true;
+    }
+
+    private void Apply_Click(object sender, RoutedEventArgs e)
+    {
+        if (PresetList.SelectedItem is not NamedConversionPreset preset) return;
+        AppliedPreset = preset;
+        DialogResult = true;
     }
 
     private void Done_Click(object sender, RoutedEventArgs e) => DialogResult = true;

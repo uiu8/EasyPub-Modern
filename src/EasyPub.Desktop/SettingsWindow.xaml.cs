@@ -63,6 +63,11 @@ public partial class SettingsWindow : Window
     public bool AutoOpenTaskCenter => AutoOpenTaskCenterSettingsCheck.IsChecked == true;
     public bool AutoOpenOutputDirectory => AutoOpenOutputSettingsCheck.IsChecked == true;
     public IReadOnlyDictionary<string, string> ShortcutBindings => _shortcutBindings;
+    public int SelectedSection
+    {
+        get => SettingsTabs.SelectedIndex;
+        set => SettingsTabs.SelectedIndex = Math.Clamp(value, 0, SettingsTabs.Items.Count - 1);
+    }
 
     private void BrowseOutput_Click(object sender, RoutedEventArgs e)
     {
@@ -126,6 +131,33 @@ public partial class SettingsWindow : Window
     {
         var window = new ShortcutManagerWindow(_shortcutBindings) { Owner = this };
         if (window.ShowDialog() == true) _shortcutBindings = window.Bindings;
+    }
+
+    private void ResetDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        var result = InkDialog.Show(
+            this,
+            "将界面、性能、验收、自动打开选项和快捷键恢复为默认值。默认输出目录会改为桌面；KindleGen 路径和收藏文件夹不会被删除。是否继续？",
+            "恢复全部默认",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (result != MessageBoxResult.Yes) return;
+
+        SelectByTag(ThemeCombo, ThemeManager.LightTheme);
+        SyncThemeRadios(ThemeManager.LightTheme);
+        SelectByTag(DensityCombo, "Comfortable");
+        SelectByTag(ScaleCombo, "100");
+        RememberWindowCheck.IsChecked = true;
+        ReduceMotionCheck.IsChecked = false;
+        DefaultOutputText.Text = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        SelectByTag(ParallelismSettingsCombo, "0");
+        ValidationSettingsCheck.IsChecked = false;
+        SelectByTag(RetentionSettingsCombo, "10");
+        RetentionSettingsCombo.IsEnabled = false;
+        AutoOpenTaskCenterSettingsCheck.IsChecked = false;
+        AutoOpenOutputSettingsCheck.IsChecked = false;
+        _shortcutBindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        SaveHintText.Text = "已恢复默认值；点击“保存并返回工作区”后生效";
     }
 
     private void OpenGitHub_Click(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://github.com/uiu8/EasyPub-Modern") { UseShellExecute = true });

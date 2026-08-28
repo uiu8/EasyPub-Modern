@@ -28,7 +28,7 @@
                 <ComboBox x:Name="ChineseVariantCombo" Width="140" SelectedIndex="0" SelectionChanged="ChineseVariantCombo_SelectionChanged" Margin="0,0,0,8">
                     <ComboBoxItem Content="不转换" Tag="None"/><ComboBoxItem Content="繁体转简体" Tag="ToSimplified"/><ComboBoxItem Content="简体转繁体" Tag="ToTraditional"/>
                 </ComboBox>
-                <Button x:Name="ManageCustomRulesButton" Content="管理自定义规则" Margin="18,0,0,8" Padding="14,6" Click="ManageCustomRules_Click"/>
+                <Button x:Name="ManageCustomRulesButton" Content="编辑自定义规则与测试…" Margin="18,0,0,8" Padding="14,6" Click="ManageCustomRules_Click" ToolTip="编辑普通替换或正则规则；返回后会在下方显示真实修改并支持逐项排除"/>
             </WrapPanel>
         </Border>
 
@@ -71,7 +71,7 @@
         </Grid>
 
         <Grid Grid.Row="6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal"><Button Content="撤销为打开时设置" Padding="14,8" Margin="0,0,8,0" Click="Undo_Click"/><Button Content="全部关闭" Padding="14,8" Margin="0,0,8,0" Click="Clear_Click"/><TextBlock x:Name="CustomRuleSummaryText" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel>
+            <StackPanel Orientation="Horizontal"><Button Content="恢复打开时设置" Padding="14,8" Margin="0,0,8,0" Click="Undo_Click"/><Button Content="关闭所有规则" Padding="14,8" Margin="0,0,8,0" Click="Clear_Click"/><TextBlock x:Name="CustomRuleSummaryText" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="取消" Padding="16,8" Margin="0,0,8,0" Click="Cancel_Click"/><Button Content="应用到本项目" Padding="20,8" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" BorderBrush="{DynamicResource PrimaryActionBrush}" Click="Apply_Click"/></StackPanel>
         </Grid>
     </Grid>

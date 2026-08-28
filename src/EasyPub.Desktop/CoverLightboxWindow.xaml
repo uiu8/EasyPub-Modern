@@ -1,7 +1,7 @@
 <Window x:Class="EasyPub.Desktop.CoverLightboxWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="封面预览 · EasyPub Modern v1.1.4" Width="620" Height="760" MinWidth="420" MinHeight="520"
+        Title="封面预览 · EasyPub Modern v1.15" Width="620" Height="760" MinWidth="420" MinHeight="520"
         WindowStartupLocation="CenterOwner" Background="{DynamicResource AppBackgroundBrush}" FontFamily="Microsoft YaHei UI"
         AutomationProperties.Name="封面大图预览">
     <Grid Margin="18">

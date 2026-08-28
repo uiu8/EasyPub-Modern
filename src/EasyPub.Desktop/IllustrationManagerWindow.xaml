@@ -11,9 +11,8 @@
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                 <Button Content="＋ 添加图片" Click="Add_Click" Padding="14,7" Margin="0,0,8,0"/>
                 <Button Content="选择插入位置" Click="ChoosePosition_Click" Padding="14,7" Margin="0,0,8,0" Background="{DynamicResource SelectedSurfaceBrush}" BorderBrush="{DynamicResource StrongBorderBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/>
-                <Button Content="改用手动标记" Click="UseManualMarker_Click" Padding="14,7" Margin="0,0,8,0"/>
-                <Button Content="复制标记" Click="CopyMarker_Click" Padding="14,7" Margin="0,0,8,0"/>
                 <Button Content="移除选中" Click="Remove_Click" Padding="14,7"/>
+                <Button Content="更多" Click="More_Click" Padding="14,7" Margin="8,0,0,0"/>
             </StackPanel>
             <StackPanel>
                 <TextBlock Text="正文插图" FontSize="21" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
@@ -26,7 +25,8 @@
         <Border Grid.Row="4" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10">
             <DataGrid x:Name="IllustrationsGrid" ItemsSource="{Binding Items}" AutoGenerateColumns="False"
                       CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Extended"
-                      GridLinesVisibility="Horizontal" HeadersVisibility="Column" BorderThickness="0" RowHeaderWidth="0">
+                      GridLinesVisibility="Horizontal" HeadersVisibility="Column" BorderThickness="0" RowHeaderWidth="0"
+                      MouseDoubleClick="IllustrationsGrid_MouseDoubleClick" ToolTip="双击插图可选择正文插入位置">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="标记" Binding="{Binding Marker, UpdateSourceTrigger=PropertyChanged}" Width="130"/>
                     <DataGridTextColumn Header="替代文字（可选）" Binding="{Binding AltText, UpdateSourceTrigger=PropertyChanged}" Width="180"/>
