@@ -128,6 +128,17 @@ internal static class LegacyMobiWriter
                     progress.Report(value with { Fraction = value.Fraction * 0.70 })));
             progress?.Report(new ConversionProgress(request.InputPath, 0.72, "正在准备 KindleGen 转换包"));
             ZipFile.ExtractToDirectory(epubPath, workingDirectory);
+            if (options.Mobi.OptimizeContentPackaging)
+            {
+                var packing = MobiContentPackager.Optimize(oebpsDirectory);
+                if (packing.WasOptimized)
+                {
+                    progress?.Report(new ConversionProgress(
+                        request.InputPath,
+                        0.75,
+                        $"已将 {packing.LogicalChapterCount} 章优化为 {packing.PhysicalDocumentCount} 个 Kindle 正文分片"));
+                }
+            }
             PrepareLegacyMobiPackage(oebpsDirectory, options);
 
             await RunKindleGenAsync(

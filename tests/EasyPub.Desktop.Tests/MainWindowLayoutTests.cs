@@ -159,9 +159,14 @@ public sealed class MainWindowLayoutTests
             window.UpdateLayout();
             Assert.StartsWith("　　　正文第一段", previewBody.Text);
             var captureProfile = typeof(MainWindow).GetMethod("CaptureProfile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var optimizeMobiPackaging = Assert.IsType<CheckBox>(window.FindName("OptimizeMobiPackagingCheck"));
+            Assert.Equal("优化超长小说编译速度", optimizeMobiPackaging.Content);
+            Assert.False(optimizeMobiPackaging.IsChecked);
+            optimizeMobiPackaging.IsChecked = true;
             var captured = Assert.IsType<ConversionProfile>(captureProfile.Invoke(window, null));
             Assert.True(captured.Options.AddFullWidthIndent);
             Assert.Equal(3, captured.Options.FullWidthIndentCount);
+            Assert.True(captured.Options.Mobi.OptimizeContentPackaging);
 
             var convertFormatSummary = Assert.IsType<TextBlock>(window.FindName("ConvertFormatSummaryText"));
             bottomFormat.SelectedIndex = 0;
@@ -528,7 +533,7 @@ public sealed class MainWindowLayoutTests
     }
 
     [Fact]
-    public void Adding_txt_builds_a_default_chapter_tree()
+    public void Adding_txt_loads_a_lazy_preview_without_persisting_a_duplicate_tree()
     {
         var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-auto-tree-{Guid.NewGuid():N}.txt");
         try
@@ -542,10 +547,45 @@ public sealed class MainWindowLayoutTests
                 addFiles!.Invoke(window, [new[] { inputPath }]);
 
                 var book = Assert.Single(window.InputBooks);
-                PumpDispatcherUntil(() => book.ChapterTree is not null, TimeSpan.FromSeconds(5));
-                Assert.NotNull(book.ChapterTree);
-                Assert.True(book.ChapterTree!.Entries.Count >= 3,
-                    $"自动章节树只识别到 {book.ChapterTree.Entries.Count} 项。");
+                var navigator = Assert.IsType<ListBox>(window.FindName("ChapterNavigatorList"));
+                PumpDispatcherUntil(() => navigator.Items.Count >= 3, TimeSpan.FromSeconds(5));
+                Assert.Null(book.ChapterTree);
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
+    public void Chapter_preview_and_editor_share_the_same_cached_document()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-tree-cache-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(inputPath, "第一章 雨夜\r\n正文。\r\n第二章 天明\r\n正文。");
+            RunInWindow(window =>
+            {
+                var load = typeof(MainWindow).GetMethod(
+                    "GetChapterDocumentAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.NotNull(load);
+                var arguments = new object?[]
+                {
+                    inputPath,
+                    null,
+                    new TocHierarchyOptions(),
+                    TextEncodingMode.Auto,
+                    null,
+                    CancellationToken.None,
+                };
+                var first = Assert.IsAssignableFrom<Task<ChapterTreeDocument>>(load!.Invoke(window, arguments))
+                    .GetAwaiter().GetResult();
+                var second = Assert.IsAssignableFrom<Task<ChapterTreeDocument>>(load.Invoke(window, arguments))
+                    .GetAwaiter().GetResult();
+
+                Assert.Same(first, second);
             });
         }
         finally

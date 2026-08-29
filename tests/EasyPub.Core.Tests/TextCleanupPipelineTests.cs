@@ -119,6 +119,7 @@ public sealed class TextCleanupPipelineTests
             {
                 Options = new ConversionOptions
                 {
+                    TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
                     TextCleanup = new TextCleanupOptions { NormalizeChapterNumbers = true },
                 },
             });

@@ -54,8 +54,9 @@ public sealed class BookPreviewService
             var items = new List<BookPreviewItem>
             {
                 new("封面", Path.Combine(oebps, "cover.html"), false),
-                new("目录", Path.Combine(oebps, "book-toc.html"), false),
             };
+            if ((request.Options ?? ConversionOptions.LegacyDefault).TocHierarchy.IncludeHtmlTocPage)
+                items.Add(new BookPreviewItem("目录", Path.Combine(oebps, "book-toc.html"), false));
             items.AddRange(chapters.Select((chapter, index) =>
                 new BookPreviewItem(chapter.Title, Path.Combine(oebps, $"chapter{index}.html"), true)));
             return new BookPreviewPackage(workingDirectory, items);

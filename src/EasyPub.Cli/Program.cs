@@ -57,6 +57,7 @@ try
             Asin = values.MobiAsin,
             ExtraArguments = values.KindleGenArguments,
             EpubInputMode = values.EpubMode,
+            OptimizeContentPackaging = values.OptimizeMobiPackaging,
         },
     };
     var extension = values.Format == "mobi" ? ".mobi" : ".epub";
@@ -130,6 +131,7 @@ static CliValues ParseArguments(string[] arguments)
             case "--no-fullwidth-indent": values.NoFullWidthIndent = true; break;
             case "--fullwidth-indent-count": values.FullWidthIndentCount = Math.Clamp(int.Parse(Next(), CultureInfo.InvariantCulture), 0, 20); break;
             case "--keep-source-archive": values.KeepSourceArchive = true; break;
+            case "--optimize-mobi-packaging": values.OptimizeMobiPackaging = true; break;
             default:
                 if (argument.StartsWith("--", StringComparison.Ordinal)) throw new ArgumentException($"未知选项：{argument}");
                 values.Inputs.Add(Path.GetFullPath(argument));
@@ -150,7 +152,7 @@ static void PrintUsage()
     Console.Error.WriteLine("书籍信息: --translator 译者 --isbn ISBN --publication-date yyyy-MM-dd --publisher 出版社 --category 类别 --language zh-CN --description 简介");
     Console.Error.WriteLine("排版选项: --chapter-regex 正则 --encoding Auto|Utf8|Gbk --font-size N --line-height N --fullwidth-indent-count 0..20 --cover 图片路径");
     Console.Error.WriteLine("字体选项: --font 字体.ttf --font-family 字体名 --no-font-subset");
-    Console.Error.WriteLine("MOBI选项: --kindlegen 路径 --epub-mode preserve|reflow --mobi-compression 0|1|2 --mobi-asin B00XXXXXXX --no-mobi-sync --kindlegen-args 参数 --keep-source-archive");
+    Console.Error.WriteLine("MOBI选项: --kindlegen 路径 --epub-mode preserve|reflow --mobi-compression 0|1|2 --optimize-mobi-packaging --mobi-asin B00XXXXXXX --no-mobi-sync --kindlegen-args 参数 --keep-source-archive");
 }
 
 sealed class CliValues
@@ -192,5 +194,6 @@ sealed class CliValues
     public bool KeepSourceArchive { get; set; }
     public string? KindleGenArguments { get; set; }
     public EpubInputMode EpubMode { get; set; } = EpubInputMode.PreserveOriginal;
+    public bool OptimizeMobiPackaging { get; set; }
     public List<string> Inputs { get; } = [];
 }

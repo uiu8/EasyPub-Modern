@@ -40,7 +40,11 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <StackPanel Grid.ColumnSpan="3"><TextBlock Text="普通章节标题正则（留空使用原版默认）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="ChapterPatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
-                <StackPanel Grid.Column="4" VerticalAlignment="Bottom"><CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,0,0,8"/><Button Content="按当前规则重新识别" Click="RebuildFromRules_Click" Margin="0" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/></StackPanel>
+                <StackPanel Grid.Column="4" VerticalAlignment="Bottom">
+                    <CheckBox x:Name="IncludeHtmlTocPageCheck" Content="在正文开头生成目录页" Margin="0,0,0,8" ToolTip="默认关闭。关闭后仍保留 Kindle 菜单中的导航目录。"/>
+                    <CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,0,0,8"/>
+                    <Button Content="按当前规则重新识别" Click="RebuildFromRules_Click" Margin="0" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/>
+                </StackPanel>
                 <StackPanel Grid.Row="2"><TextBlock Text="一级（卷、部、篇）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="Level1PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
                 <StackPanel Grid.Row="2" Grid.Column="2"><TextBlock Text="二级（章、回）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="Level2PatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
                 <StackPanel Grid.Row="2" Grid.Column="4"><TextBlock Text="三级（节）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><DockPanel Margin="0,5,0,0"><Button Content="默认规则" DockPanel.Dock="Right" Click="ResetRules_Click" Margin="8,0,0,0"/><TextBox x:Name="Level3PatternText" FontFamily="Consolas"/></DockPanel></StackPanel>
@@ -62,6 +66,8 @@
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="8"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <DockPanel><TextBlock Text="目录结构" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/><TextBlock DockPanel.Dock="Right" Text="拖到另一章下成为子章节；拖到空白处成为根章节" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center"/></DockPanel>
                     <TreeView x:Name="ChapterTree" Grid.Row="2" ItemsSource="{Binding Roots}" BorderThickness="0" Background="Transparent"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.CanContentScroll="True"
                               SelectedItemChanged="ChapterTree_SelectedItemChanged" AllowDrop="True"
                               PreviewMouseLeftButtonDown="ChapterTree_PreviewMouseLeftButtonDown"
                               PreviewMouseMove="ChapterTree_PreviewMouseMove" Drop="ChapterTree_Drop"/>

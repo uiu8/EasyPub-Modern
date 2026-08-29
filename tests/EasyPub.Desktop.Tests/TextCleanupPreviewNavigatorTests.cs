@@ -70,6 +70,7 @@ public sealed class TextCleanupPreviewNavigatorTests
                     window.UpdateLayout();
 
                     var grid = Assert.IsType<DataGrid>(window.FindName("ChangesGrid"));
+                    PumpDispatcherUntil(() => grid.Items.Count > 0, TimeSpan.FromSeconds(5));
                     grid.SelectedIndex = 0;
                     window.UpdateLayout();
 
@@ -96,6 +97,27 @@ public sealed class TextCleanupPreviewNavigatorTests
         {
             File.Delete(path);
         }
+    }
+
+    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        if (condition()) return;
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var started = DateTime.UtcNow;
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(15),
+        };
+        timer.Tick += (_, _) =>
+        {
+            if (!condition() && DateTime.UtcNow - started < timeout) return;
+            timer.Stop();
+            frame.Continue = false;
+        };
+        timer.Start();
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        Assert.True(condition(), "文本清理预览未在限定时间内完成。");
     }
 
 }

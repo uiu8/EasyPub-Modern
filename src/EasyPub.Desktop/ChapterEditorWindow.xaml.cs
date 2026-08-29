@@ -42,6 +42,7 @@ public partial class ChapterEditorWindow : Window
         SourceText.Text = document.SourcePath;
         SourceText.ToolTip = document.SourcePath;
         ChapterPatternText.Text = chapterPattern ?? string.Empty;
+        IncludeHtmlTocPageCheck.IsChecked = hierarchy.IncludeHtmlTocPage;
         HierarchyEnabledCheck.IsChecked = hierarchy.Enabled;
         Level1PatternText.Text = hierarchy.Level1Pattern;
         Level2PatternText.Text = hierarchy.Level2Pattern;
@@ -339,6 +340,7 @@ public partial class ChapterEditorWindow : Window
     private TocHierarchyOptions ReadHierarchyOptions() => new()
     {
         Enabled = HierarchyEnabledCheck.IsChecked == true,
+        IncludeHtmlTocPage = IncludeHtmlTocPageCheck.IsChecked == true,
         Level1Pattern = NormalizePattern(Level1PatternText.Text) ?? TocHierarchyOptions.DefaultLevel1Pattern,
         Level2Pattern = NormalizePattern(Level2PatternText.Text) ?? TocHierarchyOptions.DefaultLevel2Pattern,
         Level3Pattern = NormalizePattern(Level3PatternText.Text) ?? TocHierarchyOptions.DefaultLevel3Pattern,

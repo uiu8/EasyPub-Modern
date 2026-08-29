@@ -27,11 +27,18 @@ public partial class TextCleanupWindow : Window
         ChangeRuleFilterCombo.Items.Add("全部规则");
         ChangeRuleFilterCombo.SelectedIndex = 0;
         _loaded = true;
-        RefreshPreview(runInBackground: false);
+        ChangeSummaryText.Text = "正在分析文本…";
+        Loaded += TextCleanupWindow_Loaded;
         Closed += (_, _) => _previewCancellation?.Cancel();
     }
 
     public TextCleanupOptions Result { get; private set; }
+
+    private void TextCleanupWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= TextCleanupWindow_Loaded;
+        RefreshPreview();
+    }
 
     public static async Task<TextCleanupWindow> CreateAsync(
         string inputPath,

@@ -20,7 +20,11 @@ public sealed class PreviewAndFontTests
             package = await new BookPreviewService().BuildAsync(new ConversionRequest(
                 input,
                 Path.Combine(directory, "ignored.mobi"),
-                Options: ConversionOptions.LegacyDefault with { AdditionalCss = "p { color: #123456; }" }));
+                Options: ConversionOptions.LegacyDefault with
+                {
+                    AdditionalCss = "p { color: #123456; }",
+                    TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
+                }));
             Assert.Equal(5, package.Items.Count);
             Assert.All(package.Items, item => Assert.True(File.Exists(item.HtmlPath)));
             var working = package.WorkingDirectory;

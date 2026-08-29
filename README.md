@@ -8,16 +8,16 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.15.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.15.1)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.16-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.16)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.15.1/EasyPubModern-Setup-v1.15.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.15.1/EasyPubModern-v1.15.1-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.15.1)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.16/EasyPubModern-Setup-v1.16-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.16/EasyPubModern-v1.16-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.16)
 
 </div>
 
-![EasyPub Modern v1.15.1 主界面](assets/readme/overview.png)
+![EasyPub Modern v1.16 主界面](assets/readme/overview.png)
 
 ## 适合谁
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.15.1) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.16) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -54,12 +54,21 @@
 | 批量工作流 | 混合添加 TXT / EPUB、递归导入文件夹、搜索筛选、`Ctrl` 单击/拖拽批选、右键批量编辑与仅转换所选、资源自适应并发（手动最高 32）、暂停/继续与失败重试 |
 | 逐书设置 | 每本书独立保存封面、标题、作者、译者、ISBN、出版社、分类、语言、简介、插图和章节树 |
 | 封面与图片 | 书稿列表显示逐书缩略图；封面支持点击大图与拖入替换；PNG、WebP 转为 Kindle 兼容 JPEG；封面和插图显示分辨率、格式、体积诊断 |
-| 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关 |
+| 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关、可选正文目录页 |
 | 排版与样式 | 字号、行高、段距、缩进、对齐、四边页边距、嵌入 TTF 字体与定制 CSS |
 | 文本清理 | 空行、硬换行、不可见字符、重复标题/页眉、OCR 空格、章节编号、广告、简繁和标点；支持普通/正则自定义规则、跨行、作用范围、顺序、导入导出与逐项排除 |
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
-| 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑 |
+| 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.16 正式版
+
+- 章节树增加“在正文开头生成目录页”开关，默认关闭；关闭只移除书前章节列表，Kindle 导航目录和分级关系仍保留。
+- 增加“优化超长小说编译速度”选项：合并 KindleGen 需要处理的底层正文分片，同时保留每章目录目标和强制分页。
+- 章节预览与章节树工作台共享分析缓存，避免重复读取、哈希和识别同一本长篇书稿。
+- 添加 TXT 时不再后台预建并保存章节树，减少批量导入后的磁盘与 CPU 竞争。
+- 章节树启用虚拟化；文本清理窗口先显示，再在后台完成全文预览，长篇书稿不再因同步处理阻塞窗口出现。
+- 使用约 11.66 MB、1393 章的真实中文长篇验证无正文目录页 EPUB、NCX 目录和联合 MOBI 输出。
 
 ## v1.15.1 补丁版
 
@@ -147,4 +156,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前正式版本为 **v1.15.1**，首页只描述当前可下载版本。
+当前正式版本为 **v1.16**，首页只描述当前可下载版本。

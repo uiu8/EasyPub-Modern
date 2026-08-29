@@ -7,6 +7,32 @@ namespace EasyPub.Core.Tests;
 public sealed class ChapterTreeTests
 {
     [Fact]
+    public async Task Visual_toc_page_is_disabled_by_default_while_ncx_navigation_remains()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-no-visual-toc-{Guid.NewGuid():N}.txt");
+        var output = Path.ChangeExtension(path, ".epub");
+        await File.WriteAllTextAsync(path, "第一章 开始\n正文\n第二章 继续\n正文");
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output));
+
+            using var archive = ZipFile.OpenRead(output);
+            Assert.Null(archive.GetEntry("OEBPS/book-toc.html"));
+            var opf = ReadText(archive, "OEBPS/content.opf");
+            var ncx = ReadText(archive, "OEBPS/toc.ncx");
+            Assert.DoesNotContain("htmltoc", opf);
+            Assert.DoesNotContain("book-toc.html", ncx);
+            Assert.Contains("chapter1.html", ncx);
+            Assert.Contains("第二章 继续", ncx);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(output);
+        }
+    }
+
+    [Fact]
     public async Task Chapters_without_a_volume_are_root_l1_nodes_not_orphan_l2_nodes()
     {
         var path = Path.Combine(Path.GetTempPath(), $"easypub-tree-depth-{Guid.NewGuid():N}.txt");
@@ -23,7 +49,13 @@ public sealed class ChapterTreeTests
             Assert.All(chapters, chapter => Assert.Equal(1, chapter.Level));
             Assert.All(chapters, chapter => Assert.Equal(2, chapter.HeadingLevel));
 
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output)
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                path,
+                output,
+                Options: new ConversionOptions
+                {
+                    TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
+                })
             {
                 ChapterTree = document.CreatePlan(document.Entries),
             });
@@ -48,7 +80,7 @@ public sealed class ChapterTreeTests
         await File.WriteAllTextAsync(input, "开场\n第一卷 上部\n卷正文\n第一章 雨夜\n章节正文\n第二章 清晨\n结尾");
         try
         {
-            var hierarchy = new TocHierarchyOptions { Enabled = true };
+            var hierarchy = new TocHierarchyOptions { Enabled = true, IncludeHtmlTocPage = true };
             var document = await ChapterTreeDocument.LoadAsync(input, hierarchy: hierarchy);
             Assert.Equal(4, document.Entries.Count);
             Assert.True(document.Entries[0].IsFrontMatter);

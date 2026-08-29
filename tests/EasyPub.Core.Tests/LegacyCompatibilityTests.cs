@@ -16,7 +16,15 @@ public sealed class LegacyCompatibilityTests
         try
         {
             var result = await new EasyPubConverter().ConvertAsync(
-                new ConversionRequest(input, output, "EasyPub 兼容基准", "Codex"));
+                new ConversionRequest(
+                    input,
+                    output,
+                    "EasyPub 兼容基准",
+                    "Codex",
+                    ConversionOptions.LegacyDefault with
+                    {
+                        TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
+                    }));
 
             Assert.Equal(4, result.ChapterCount);
             var expected = ReadEntries(golden);
@@ -98,7 +106,15 @@ public sealed class LegacyCompatibilityTests
         try
         {
             var result = await new EasyPubConverter().ConvertAsync(
-                new ConversionRequest(input, output, "EasyPub 兼容基准", "Codex"));
+                new ConversionRequest(
+                    input,
+                    output,
+                    "EasyPub 兼容基准",
+                    "Codex",
+                    ConversionOptions.LegacyDefault with
+                    {
+                        TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
+                    }));
 
             Assert.Equal(4, result.ChapterCount);
             var actual = File.ReadAllBytes(output);

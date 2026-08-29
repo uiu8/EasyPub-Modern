@@ -21,7 +21,7 @@ public sealed class TocHierarchyTests
         {
             var options = ConversionOptions.LegacyDefault with
             {
-                TocHierarchy = new TocHierarchyOptions { Enabled = true },
+                TocHierarchy = new TocHierarchyOptions { Enabled = true, IncludeHtmlTocPage = true },
             };
 
             var result = await new EasyPubConverter().ConvertAsync(
@@ -77,6 +77,7 @@ public sealed class TocHierarchyTests
                     TocHierarchy = new TocHierarchyOptions
                     {
                         Enabled = true,
+                        IncludeHtmlTocPage = true,
                         Level1Pattern = @"^PART\s+",
                         Level2Pattern = @"^CHAPTER\s+",
                         Level3Pattern = @"^SECTION\s+",

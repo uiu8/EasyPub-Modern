@@ -35,6 +35,8 @@ public sealed class ChapterEditorWindowTests
                     window.UpdateLayout();
 
                     var tree = Assert.IsType<TreeView>(window.FindName("ChapterTree"));
+                    Assert.True(VirtualizingPanel.GetIsVirtualizing(tree));
+                    Assert.False(Assert.IsType<CheckBox>(window.FindName("IncludeHtmlTocPageCheck")).IsChecked);
                     var volume = Assert.Single(window.Roots, node => node.Title == "第一卷");
                     var firstChapter = Assert.Single(volume.Children, node => node.Title == "第1章 开始");
                     var volumeContainer = Assert.IsType<TreeViewItem>(

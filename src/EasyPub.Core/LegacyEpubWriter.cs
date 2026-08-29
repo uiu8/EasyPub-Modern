@@ -72,7 +72,8 @@ internal static class LegacyEpubWriter
                         AddEntry(archive, "OEBPS/" + illustration.RelativePath, illustration.JpegBytes, CompressionLevel.Optimal, timestamp);
                     if (font is not null)
                         AddEntry(archive, "OEBPS/fonts/book.ttf", font.Bytes, CompressionLevel.Optimal, timestamp);
-                    AddTextEntry(archive, "OEBPS/book-toc.html", BuildHtmlToc(chapters), timestamp, withBom: true);
+                    if (options.TocHierarchy.IncludeHtmlTocPage)
+                        AddTextEntry(archive, "OEBPS/book-toc.html", BuildHtmlToc(chapters), timestamp, withBom: true);
                     for (var index = 0; index < chapters.Count; index++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -82,10 +83,10 @@ internal static class LegacyEpubWriter
                             0.22 + 0.62 * (index + 1d) / Math.Max(1, chapters.Count),
                             $"正在生成章节 {index + 1}/{chapters.Count}"));
                     }
-                    AddTextEntry(archive, "OEBPS/content.opf", BuildOpf(title, author, bookId, chapters.Count, cover is not null, illustrations, font is not null, metadata), timestamp, withBom: true);
+                    AddTextEntry(archive, "OEBPS/content.opf", BuildOpf(title, author, bookId, chapters.Count, cover is not null, illustrations, font is not null, metadata, options.TocHierarchy.IncludeHtmlTocPage), timestamp, withBom: true);
                     AddTextEntry(archive, "OEBPS/cover.html", BuildCover(title, author, cover is not null), timestamp, withBom: true);
                     AddTextEntry(archive, "OEBPS/style.css", LegacyTemplates.CreateStyleCss(options), timestamp, withBom: false);
-                    AddTextEntry(archive, "OEBPS/toc.ncx", BuildNcx(title, author, bookId, chapters), timestamp, withBom: true);
+                    AddTextEntry(archive, "OEBPS/toc.ncx", BuildNcx(title, author, bookId, chapters, options.TocHierarchy.IncludeHtmlTocPage), timestamp, withBom: true);
                 }
                 progress?.Report(new ConversionProgress(inputPath, 0.93, "正在写入电子书文件"));
                 await output.FlushAsync(cancellationToken);
@@ -216,7 +217,8 @@ internal static class LegacyEpubWriter
         bool hasImageCover,
         IReadOnlyList<PreparedIllustration> illustrations,
         bool hasEmbeddedFont,
-        PublicationMetadata metadata)
+        PublicationMetadata metadata,
+        bool includeHtmlTocPage)
     {
         var lines = new List<string>
         {
@@ -245,10 +247,11 @@ internal static class LegacyEpubWriter
         lines.AddRange([
             "</metadata>", "<manifest>",
             "<item id=\"ncxtoc\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>",
-            "<item id=\"htmltoc\"  href=\"book-toc.html\" media-type=\"application/xhtml+xml\"/>",
-            "<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>",
-            "<item id=\"cover\" href=\"cover.html\" media-type=\"application/xhtml+xml\"/>",
         ]);
+        if (includeHtmlTocPage)
+            lines.Add("<item id=\"htmltoc\"  href=\"book-toc.html\" media-type=\"application/xhtml+xml\"/>");
+        lines.Add("<item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>");
+        lines.Add("<item id=\"cover\" href=\"cover.html\" media-type=\"application/xhtml+xml\"/>");
         if (hasImageCover)
             lines.Add("<item id=\"cover-image\" href=\"cover.jpg\" media-type=\"image/jpeg\"/>");
         foreach (var illustration in illustrations)
@@ -260,20 +263,27 @@ internal static class LegacyEpubWriter
         lines.Add("</manifest>");
         lines.Add("<spine toc=\"ncxtoc\">");
         lines.Add("<itemref idref=\"cover\" linear=\"no\"/>");
-        lines.Add("<itemref idref=\"htmltoc\" linear=\"yes\"/>");
+        if (includeHtmlTocPage)
+            lines.Add("<itemref idref=\"htmltoc\" linear=\"yes\"/>");
         for (var index = 0; index < chapterCount; index++)
             lines.Add($"<itemref idref=\"chapter{index}\" linear=\"yes\"/>");
         lines.Add("</spine>");
         lines.Add("<guide>");
         lines.Add("<reference href=\"cover.html\" type=\"cover\" title=\"Cover\"/>");
-        lines.Add("<reference href=\"book-toc.html\" type=\"toc\" title=\"Table Of Contents\"/>");
+        if (includeHtmlTocPage)
+            lines.Add("<reference href=\"book-toc.html\" type=\"toc\" title=\"Table Of Contents\"/>");
         lines.Add("<reference href=\"chapter0.html\" type=\"text\" title=\"Beginning\"/>");
         lines.Add("</guide>");
         lines.Add("</package>");
         return JoinLines(lines);
     }
 
-    private static string BuildNcx(string title, string author, string bookId, IReadOnlyList<LegacyChapter> chapters)
+    private static string BuildNcx(
+        string title,
+        string author,
+        string bookId,
+        IReadOnlyList<LegacyChapter> chapters,
+        bool includeHtmlTocPage)
     {
         var tocTree = BuildTocTree(chapters);
         var lines = new List<string>
@@ -291,10 +301,17 @@ internal static class LegacyEpubWriter
             "<docAuthor>", $"<text>{Html(author)}</text>", "</docAuthor>", "", "<navMap>",
             "<navPoint id=\"cover\" playOrder=\"1\">", "<navLabel><text>封面</text></navLabel>",
             "<content src=\"cover.html\"/>", "</navPoint>", "",
-            "<navPoint id=\"htmltoc\" playOrder=\"2\">", "<navLabel><text>目录</text></navLabel>",
-            "<content src=\"book-toc.html\"/>", "</navPoint>", "",
         };
-        foreach (var root in tocTree) AddNcxNode(lines, root, chapters);
+        if (includeHtmlTocPage)
+        {
+            lines.Add("<navPoint id=\"htmltoc\" playOrder=\"2\">");
+            lines.Add("<navLabel><text>目录</text></navLabel>");
+            lines.Add("<content src=\"book-toc.html\"/>");
+            lines.Add("</navPoint>");
+            lines.Add("");
+        }
+        var chapterPlayOrderOffset = includeHtmlTocPage ? 3 : 2;
+        foreach (var root in tocTree) AddNcxNode(lines, root, chapters, chapterPlayOrderOffset);
         lines.Add("</navMap>");
         lines.Add("</ncx>");
         return JoinLines(lines);
@@ -325,12 +342,13 @@ internal static class LegacyEpubWriter
     private static void AddNcxNode(
         List<string> lines,
         TocNode node,
-        IReadOnlyList<LegacyChapter> chapters)
+        IReadOnlyList<LegacyChapter> chapters,
+        int playOrderOffset)
     {
-        lines.Add($"<navPoint id=\"chapter{node.ChapterIndex}\" playOrder=\"{node.ChapterIndex + 3}\">");
+        lines.Add($"<navPoint id=\"chapter{node.ChapterIndex}\" playOrder=\"{node.ChapterIndex + playOrderOffset}\">");
         lines.Add($"<navLabel><text>{Html(chapters[node.ChapterIndex].Title)}</text></navLabel>");
         lines.Add($"<content src=\"chapter{node.ChapterIndex}.html\"/>");
-        foreach (var child in node.Children) AddNcxNode(lines, child, chapters);
+        foreach (var child in node.Children) AddNcxNode(lines, child, chapters, playOrderOffset);
         lines.Add("</navPoint>");
         lines.Add("");
     }

@@ -104,6 +104,7 @@ public sealed record TocHierarchyOptions
     public const string DefaultLevel3Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+节.*";
 
     public bool Enabled { get; init; }
+    public bool IncludeHtmlTocPage { get; init; }
     public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
     public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
     public string Level3Pattern { get; init; } = DefaultLevel3Pattern;
@@ -143,6 +144,7 @@ public sealed record MobiOptions
     public string? Asin { get; init; }
     public string? ExtraArguments { get; init; }
     public EpubInputMode EpubInputMode { get; init; } = EpubInputMode.PreserveOriginal;
+    public bool OptimizeContentPackaging { get; init; }
 }
 
 public enum EpubInputMode
