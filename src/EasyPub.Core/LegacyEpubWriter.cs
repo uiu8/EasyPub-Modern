@@ -77,7 +77,7 @@ internal static class LegacyEpubWriter
                     for (var index = 0; index < chapters.Count; index++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        AddTextEntry(archive, $"OEBPS/chapter{index}.html", BuildChapter(chapters[index], index, options, illustrations), timestamp, withBom: true);
+                        AddTextEntry(archive, $"OEBPS/chapter{index}.html", BuildChapter(chapters[index], index, chapters.Count, options, illustrations), timestamp, withBom: true);
                         progress?.Report(new ConversionProgress(
                             inputPath,
                             0.22 + 0.62 * (index + 1d) / Math.Max(1, chapters.Count),
@@ -170,13 +170,34 @@ internal static class LegacyEpubWriter
     private static string BuildChapter(
         LegacyChapter chapter,
         int index,
+        int chapterCount,
         ConversionOptions options,
         IReadOnlyList<PreparedIllustration> illustrations)
     {
         var lines = LegacyTemplates.XhtmlHeader($"chapter {index} - 0");
         var level = Math.Clamp(chapter.HeadingLevel ?? chapter.TocLevel, 1, 4);
         var titleClass = chapter.Paragraphs.Count == 0 ? $"titlel{level}single" : $"titlel{level}std";
-        lines.Add($"<h{level} id=\"title\" class=\"{titleClass}\">{Html(chapter.Title)}</h{level}>");
+        var title = $"<h{level} id=\"title\" class=\"{titleClass}\">{Html(chapter.Title)}</h{level}>";
+        if (options.TocHierarchy.IncludeChapterTopNavigation)
+        {
+            var navigation = BuildChapterNavigation(index, chapterCount, options.TocHierarchy.IncludeHtmlTocPage);
+            if (navigation is not null)
+            {
+                // Kindle's footnote heuristic stays inactive when every reciprocal chapter link appears before
+                // its destination target. A real trailing span keeps that source order while placing the landing
+                // point on the navigation line, immediately above the chapter title.
+                lines.Add(navigation);
+                lines.Add(title);
+            }
+            else
+            {
+                lines.Add(title);
+            }
+        }
+        else
+        {
+            lines.Add(title);
+        }
         var prefix = options.AddFullWidthIndent
             ? new string('　', Math.Clamp(options.FullWidthIndentCount, 0, 20))
             : string.Empty;
@@ -207,6 +228,17 @@ internal static class LegacyEpubWriter
         lines.Add("</body>");
         lines.Add("</html>");
         return JoinLines(lines);
+    }
+
+    private static string? BuildChapterNavigation(int index, int chapterCount, bool includeHtmlTocPage)
+    {
+        var links = new List<string>(3);
+        if (index > 0) links.Add($"<a href=\"chapter{index - 1}.html#chapter-nav-target\">上一章</a>");
+        if (includeHtmlTocPage) links.Add("<a href=\"book-toc.html\">目录</a>");
+        if (index + 1 < chapterCount) links.Add($"<a href=\"chapter{index + 1}.html#chapter-nav-target\">下一章</a>");
+        return links.Count == 0
+            ? null
+            : $"<div class=\"chapter-nav\">{string.Join("<span class=\"chapter-nav-separator\">｜</span>", links)}<span id=\"chapter-nav-target\">&#160;</span></div>";
     }
 
     private static string BuildOpf(

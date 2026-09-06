@@ -74,7 +74,7 @@ public static partial class TextCleanupPipeline
             for (var index = 0; index < result.Length; index++)
             {
                 if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if (result[index] == RemovedLine || !SiteNoticePattern().IsMatch(result[index].Trim())) continue;
+                if (result[index] == RemovedLine || !IsSiteNotice(result[index])) continue;
                 var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]);
                 changes.Add(change);
                 if (change.IsApplied) result[index] = RemovedLine;
@@ -297,6 +297,15 @@ public static partial class TextCleanupPipeline
         return "统一全角空格";
     }
 
+    private static bool IsSiteNotice(string line)
+    {
+        var value = line.Trim();
+        if (SiteNoticePattern().IsMatch(value)) return true;
+        return WebAddressPattern().IsMatch(value)
+            && PublishingPromotionContextPattern().IsMatch(value)
+            && PromotionalSignalPattern().Matches(value).Count >= 2;
+    }
+
     [GeneratedRegex("[　\\u00a0]+")]
     private static partial Regex FullWidthSpaceRun();
 
@@ -317,6 +326,15 @@ public static partial class TextCleanupPipeline
 
     [GeneratedRegex(@"(?:本书来自|更多精彩.*访问|请记住本站|最新网址|手机用户请浏览|下载本书|txt电子书|小说下载|加入书签|投推荐票|章节错误.*举报|广告位)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SiteNoticePattern();
+
+    [GeneratedRegex(@"(?:https?://|www\.|(?:[a-z0-9-]+\.)+(?:com|org|net|cn|cc|me|io))[^\s]*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WebAddressPattern();
+
+    [GeneratedRegex(@"(?:更新不易|书友|读者|分享|搜索|域名|最新|无错|更新快|请访问)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PromotionalSignalPattern();
+
+    [GeneratedRegex(@"(?:更新不易|书友|章节|小说|本书|无错)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PublishingPromotionContextPattern();
 }
 
 internal static class ChineseVariantMapper

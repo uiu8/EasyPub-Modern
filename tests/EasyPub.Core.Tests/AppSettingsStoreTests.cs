@@ -18,7 +18,11 @@ public sealed class AppSettingsStoreTests
             {
                 FontSizePercent = 125,
                 LineHeightPercent = 150,
-                TocHierarchy = new TocHierarchyOptions { IncludeHtmlTocPage = true },
+                TocHierarchy = new TocHierarchyOptions
+                {
+                    IncludeHtmlTocPage = true,
+                    IncludeChapterTopNavigation = true,
+                },
                 Mobi = new MobiOptions
                 {
                     Compression = MobiCompression.High,
@@ -33,6 +37,7 @@ public sealed class AppSettingsStoreTests
         {
             UseLegacyConfig = false,
             LegacyConfigPath = null,
+            TextEditorPath = @"D:\software\Notepad++\notepad++.exe",
             AutoOpenTaskCenter = true,
             Theme = "Dark",
             UiDensity = "Compact",
@@ -56,11 +61,13 @@ public sealed class AppSettingsStoreTests
             Assert.Equal(MobiCompression.High, restored.LastProfile.MobiCompression);
             Assert.True(restored.LastProfile.Options.Mobi.OptimizeContentPackaging);
             Assert.True(restored.LastProfile.Options.TocHierarchy.IncludeHtmlTocPage);
+            Assert.True(restored.LastProfile.Options.TocHierarchy.IncludeChapterTopNavigation);
             Assert.True(restored.LastProfile.Options.ArtifactValidation.Enabled);
             Assert.Equal(20, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
             Assert.Equal("Kindle 大字版", Assert.Single(restored.Presets).Name);
             Assert.False(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
+            Assert.Equal(@"D:\software\Notepad++\notepad++.exe", restored.TextEditorPath);
             Assert.True(restored.AutoOpenTaskCenter);
             Assert.Equal("Dark", restored.Theme);
             Assert.Equal("Compact", restored.UiDensity);
@@ -106,6 +113,7 @@ public sealed class AppSettingsStoreTests
 
             Assert.True(restored.UseLegacyConfig);
             Assert.Null(restored.LegacyConfigPath);
+            Assert.Equal("notepad.exe", restored.TextEditorPath);
             Assert.False(restored.LastProfile.Options.ArtifactValidation.Enabled);
             Assert.Equal(10, restored.LastProfile.Options.ArtifactValidation.MaxReportCount);
             Assert.False(restored.AutoOpenTaskCenter);

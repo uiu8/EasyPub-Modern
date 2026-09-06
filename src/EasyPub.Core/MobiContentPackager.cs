@@ -49,15 +49,19 @@ internal static partial class MobiContentPackager
         {
             var group = groups[groupIndex];
             var fileName = $"chapter-pack-{groupIndex + 1:0000}.html";
-            var outputPath = Path.Combine(oebpsDirectory, fileName);
-            WriteGroup(outputPath, group);
             groupFiles.Add(new GroupFile(groupIndex + 1, fileName, group));
             foreach (var chapter in group)
                 mappings[$"chapter{chapter.Index}.html"] = $"{fileName}#chapter{chapter.Index}";
         }
 
+        foreach (var group in groupFiles)
+            WriteGroup(Path.Combine(oebpsDirectory, group.FileName), group.Chapters);
+
         RewriteNcx(Path.Combine(oebpsDirectory, "toc.ncx"), mappings);
-        RewriteHtmlToc(Path.Combine(oebpsDirectory, "book-toc.html"), mappings);
+        RewriteXhtmlLinks(Path.Combine(oebpsDirectory, "book-toc.html"), mappings);
+        RewriteXhtmlLinks(Path.Combine(oebpsDirectory, "chapter0.html"), mappings);
+        foreach (var group in groupFiles)
+            RewriteXhtmlLinks(Path.Combine(oebpsDirectory, group.FileName), mappings);
         RewriteOpf(Path.Combine(oebpsDirectory, "content.opf"), chapters, groupFiles);
         foreach (var chapter in chapters) File.Delete(chapter.Path);
 
@@ -152,16 +156,31 @@ internal static partial class MobiContentPackager
         WriteXml(path, document);
     }
 
-    private static void RewriteHtmlToc(string path, IReadOnlyDictionary<string, string> mappings)
+    private static void RewriteXhtmlLinks(string path, IReadOnlyDictionary<string, string> mappings)
     {
         if (!File.Exists(path)) return;
         var document = LoadXml(path);
         foreach (var link in document.Descendants(XhtmlNamespace + "a"))
         {
             var href = link.Attribute("href");
-            if (href is not null && mappings.TryGetValue(href.Value, out var target)) href.Value = target;
+            if (href is null) continue;
+            var target = RewriteLinkTarget(href.Value, mappings);
+            if (target is not null) href.Value = target;
         }
         WriteXml(path, document);
+    }
+
+    private static string? RewriteLinkTarget(string href, IReadOnlyDictionary<string, string> mappings)
+    {
+        if (mappings.TryGetValue(href, out var directTarget)) return directTarget;
+        var fragmentStart = href.IndexOf('#');
+        if (fragmentStart <= 0 || !mappings.TryGetValue(href[..fragmentStart], out var chapterTarget)) return null;
+
+        var fragment = href[(fragmentStart + 1)..];
+        if (fragment == "chapter-start") return chapterTarget;
+        var targetFragmentStart = chapterTarget.IndexOf('#');
+        if (targetFragmentStart < 0 || string.IsNullOrEmpty(fragment)) return chapterTarget;
+        return chapterTarget[..targetFragmentStart] + "#" + chapterTarget[(targetFragmentStart + 1)..] + "-" + fragment;
     }
 
     private static void RewriteOpf(

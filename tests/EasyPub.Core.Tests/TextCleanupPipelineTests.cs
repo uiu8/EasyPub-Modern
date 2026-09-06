@@ -5,6 +5,74 @@ namespace EasyPub.Core.Tests;
 public sealed class TextCleanupPipelineTests
 {
     [Fact]
+    public void Site_notice_cleanup_detects_promotional_sentence_with_bare_domain()
+    {
+        const string notice = "　　更新不易，请书友分享，速读谷 www.sudugu.org，无错最新章节";
+
+        var preview = TextCleanupPipeline.Apply(notice, new TextCleanupOptions
+        {
+            RemoveSiteNotices = true,
+        });
+
+        var change = Assert.Single(preview.Changes);
+        Assert.Equal("清理网站广告/下载说明", change.Rule);
+        Assert.True(change.IsApplied);
+        Assert.Equal(string.Empty, preview.Text);
+    }
+
+    [Fact]
+    public void Site_notice_cleanup_keeps_ordinary_prose_that_mentions_a_shared_web_address()
+    {
+        const string prose = "他把研究网址 www.example.org 分享给同事，随后继续讨论。";
+
+        var preview = TextCleanupPipeline.Apply(prose, new TextCleanupOptions
+        {
+            RemoveSiteNotices = true,
+        });
+
+        Assert.Empty(preview.Changes);
+        Assert.Equal(prose, preview.Text);
+    }
+
+    [Fact]
+    public void Site_notice_cleanup_keeps_reader_prose_with_multiple_generic_signals()
+    {
+        const string prose = "读者分享了最新的研究网址 www.example.org，并讨论其中的数据。";
+
+        var preview = TextCleanupPipeline.Apply(prose, new TextCleanupOptions
+        {
+            RemoveSiteNotices = true,
+        });
+
+        Assert.Empty(preview.Changes);
+        Assert.Equal(prose, preview.Text);
+    }
+
+    [Fact]
+    public void Site_notice_cleanup_detects_known_promotional_variants_from_real_novel()
+    {
+        var notices = new[]
+        {
+            "写到这里，请各位书友使用 必应 搜索：速 读 谷 www.sudugu.org看最新无错章节！",
+            "更新不易，请书友分享，速读谷 www.sudugu.org，无错最新章节",
+            "更新不易，看完请读者分享，速读谷，www.sudugu.org 更新快，不出错！",
+            "更新不易，请分享，速读谷，www.sudugu.org看最新无错章节！",
+            "更新不易，请分享，速读谷，www.sudugu.org 看最新章节！",
+            "更新不易，请记得分享，速读谷，www.sudugu.org,看最新章节！",
+            "写到这里，请记得我们的域名，速读谷，www.sudugu.org,看无错最新章节！",
+            "更多精彩小说，请访问：速读谷 http://www.sudugu.org",
+        };
+
+        var preview = TextCleanupPipeline.Apply(string.Join('\n', notices), new TextCleanupOptions
+        {
+            RemoveSiteNotices = true,
+        });
+
+        Assert.Equal(notices.Length, preview.Changes.Count);
+        Assert.Equal(string.Empty, preview.Text);
+    }
+
+    [Fact]
     public void Multiline_custom_regex_replaces_across_line_boundaries()
     {
         var preview = TextCleanupPipeline.Apply("广告开始\n请访问 example.com\n广告结束\n正文。", new TextCleanupOptions

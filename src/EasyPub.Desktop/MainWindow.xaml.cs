@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -32,6 +33,9 @@ public partial class MainWindow : Window
 
     private LegacyConfigImport? _legacyConfig;
     private bool _useLegacyConfig = true;
+    private string _textEditorPath = "notepad.exe";
+    private readonly Dictionary<string, SourceFileStamp> _pendingSourceEdits = new(StringComparer.OrdinalIgnoreCase);
+    private bool _refreshingSourceEdits;
     private int _coverPreviewVersion;
     private readonly FavoriteFolderStore _favoriteFolderStore = FavoriteFolderStore.CreateDefault();
     private readonly MetadataMappingStore _metadataMappingStore = MetadataMappingStore.CreateDefault();
@@ -144,6 +148,7 @@ public partial class MainWindow : Window
             ? bundledKindleGen
             : File.Exists(legacyKindleGen) ? legacyKindleGen : string.Empty;
         Loaded += MainWindow_Loaded;
+        Activated += MainWindow_Activated;
         Closing += MainWindow_Closing;
         _recoveryTimer.Tick += RecoveryTimer_Tick;
         InitializeOptionTracking();
@@ -398,6 +403,7 @@ public partial class MainWindow : Window
             _reduceMotion,
             OutputDirectoryText.Text,
             KindleGenText.Text,
+            _textEditorPath,
             int.Parse((ParallelismCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "0", CultureInfo.InvariantCulture),
             ArtifactValidationCheck.IsChecked == true,
             int.Parse(((ComboBoxItem)ValidationRetentionCombo.SelectedItem).Tag!.ToString()!, CultureInfo.InvariantCulture),
@@ -419,6 +425,7 @@ public partial class MainWindow : Window
         _reduceMotion = settingsWindow.ReduceMotion;
         OutputDirectoryText.Text = settingsWindow.OutputDirectory;
         KindleGenText.Text = settingsWindow.KindleGenPath;
+        _textEditorPath = settingsWindow.TextEditorPath;
         SelectComboItemByTag(ParallelismCombo, settingsWindow.Parallelism.ToString(CultureInfo.InvariantCulture));
         ArtifactValidationCheck.IsChecked = settingsWindow.ValidationEnabled;
         SelectComboItemByTag(ValidationRetentionCombo, settingsWindow.ReportRetention.ToString(CultureInfo.InvariantCulture));
@@ -482,6 +489,8 @@ public partial class MainWindow : Window
             _optionTrackingReady = true;
         }
     }
+
+    private async void MainWindow_Activated(object? sender, EventArgs e) => await RefreshPendingSourceEditsAsync();
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
@@ -682,6 +691,7 @@ public partial class MainWindow : Window
         _uiScalePercent = Math.Clamp(settings.UiScalePercent, 90, 125);
         _rememberWindowPlacement = settings.RememberWindowPlacement;
         _reduceMotion = settings.ReduceMotion;
+        _textEditorPath = string.IsNullOrWhiteSpace(settings.TextEditorPath) ? "notepad.exe" : settings.TextEditorPath;
         ApplyAppearanceSettings();
         ApplyWindowPlacement(settings);
     }
@@ -858,6 +868,7 @@ public partial class MainWindow : Window
         {
             UseLegacyConfig = _useLegacyConfig,
             LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
+            TextEditorPath = _textEditorPath,
             AutoOpenTaskCenter = AutoOpenTaskCenterCheck.IsChecked == true,
             AutoOpenOutputDirectory = AutoOpenOutputDirectoryCheck.IsChecked == true,
             OutputCollisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var collisionPolicy) ? collisionPolicy : OutputCollisionPolicy.AutoRename,
@@ -1226,8 +1237,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.16"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.16";
+            ? "EasyPub Modern v1.17"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.17";
         UpdateWorkspaceScope();
     }
 
@@ -1426,7 +1437,7 @@ public partial class MainWindow : Window
     {
         if (TocHierarchyStatusText is null) return;
         var hierarchyText = _tocHierarchy.Enabled ? "层级目录：一级 / 二级 / 三级" : "层级目录：关闭";
-        TocHierarchyStatusText.Text = $"{hierarchyText} · 正文目录页：{(_tocHierarchy.IncludeHtmlTocPage ? "开" : "关")}";
+        TocHierarchyStatusText.Text = $"{hierarchyText} · 正文目录页：{(_tocHierarchy.IncludeHtmlTocPage ? "开" : "关")} · 章顶导航：{(_tocHierarchy.IncludeChapterTopNavigation ? "开" : "关")}";
         TocHierarchyStatusText.Foreground = _tocHierarchy.Enabled
             ? System.Windows.Media.Brushes.SeaGreen
             : System.Windows.Media.Brushes.SlateGray;
@@ -1507,6 +1518,91 @@ public partial class MainWindow : Window
         {
             StatusText.Text = "章节分析失败";
             InkDialog.Show(this, exception.Message, "无法打开章节编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void EditSourceText_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = ChapterBookCombo.SelectedItem as InputBookItem
+            ?? (FilesList.SelectedItems.Count == 1 ? FilesList.SelectedItem as InputBookItem : null);
+        if (selected is null)
+        {
+            InkDialog.Show(this, "请先选择一本 TXT 书稿。", "编辑原始 TXT");
+            return;
+        }
+        if (selected.IsEpub)
+        {
+            InkDialog.Show(this, "EPUB 不能作为 TXT 源文件直接编辑。请选择 TXT 书稿。", "编辑原始 TXT");
+            return;
+        }
+        if (!File.Exists(selected.InputPath))
+        {
+            InkDialog.Show(this, "找不到所选 TXT 文件。", "编辑原始 TXT", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var editor = string.IsNullOrWhiteSpace(_textEditorPath) ? "notepad.exe" : _textEditorPath.Trim();
+        if (Path.IsPathFullyQualified(editor) && !File.Exists(editor))
+        {
+            InkDialog.Show(this, $"找不到外置编辑器：{editor}\n请在设置 → 外部工具中重新选择。", "无法打开编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        try
+        {
+            _pendingSourceEdits[selected.InputPath] = SourceFileStamp.Capture(selected.InputPath);
+            var startInfo = new ProcessStartInfo(editor) { UseShellExecute = true };
+            startInfo.ArgumentList.Add(selected.InputPath);
+            var process = Process.Start(startInfo);
+            if (process is not null)
+            {
+                process.EnableRaisingEvents = true;
+                process.Exited += (_, _) => _ = Dispatcher.BeginInvoke(new Action(async () => await RefreshPendingSourceEditsAsync()));
+            }
+            StatusText.Text = $"已用 {Path.GetFileNameWithoutExtension(editor)} 打开：{selected.DisplayName}";
+        }
+        catch (Exception exception)
+        {
+            _pendingSourceEdits.Remove(selected.InputPath);
+            InkDialog.Show(this, exception.Message, "无法打开 TXT 编辑器", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task RefreshPendingSourceEditsAsync()
+    {
+        if (_refreshingSourceEdits || _pendingSourceEdits.Count == 0) return;
+        _refreshingSourceEdits = true;
+        try
+        {
+            foreach (var (path, before) in _pendingSourceEdits.ToArray())
+            {
+                if (!File.Exists(path))
+                {
+                    _pendingSourceEdits.Remove(path);
+                    StatusText.Text = $"外置编辑后找不到源文件：{Path.GetFileName(path)}";
+                    continue;
+                }
+                if (SourceFileStamp.Capture(path) == before) continue;
+
+                _pendingSourceEdits.Remove(path);
+                InvalidateChapterDocumentCache(path);
+                _preflightCache.Clear();
+                _chapterPreviewDocument = null;
+                var book = InputBooks.FirstOrDefault(item => string.Equals(item.InputPath, path, StringComparison.OrdinalIgnoreCase));
+                if (book is not null)
+                {
+                    _selectionPreviewCancellation?.Cancel();
+                    await RefreshInlineChapterPreviewAsync(book);
+                    UpdateSelectedBookInspector(book);
+                    StatusText.Text = book.ChapterTree is null
+                        ? $"已重新读取修改后的 TXT：{book.DisplayName}"
+                        : $"源 TXT 已修改：{book.DisplayName}；现有章节树将在打开时要求重新识别";
+                }
+            }
+        }
+        finally
+        {
+            _refreshingSourceEdits = false;
         }
     }
 
@@ -3422,6 +3518,8 @@ public partial class MainWindow : Window
                 : Visibility.Collapsed;
         }
         PreviewBookButton.IsEnabled = singleBook is { IsEpub: false };
+        QuickEditTextButton.IsEnabled = singleBook is { IsEpub: false };
+        EditSourceTextButton.IsEnabled = singleBook is { IsEpub: false };
         QuickChapterButton.IsEnabled = singleBook is { IsEpub: false };
         QuickCleanupButton.IsEnabled = singleBook is { IsEpub: false };
         QuickMetadataButton.IsEnabled = singleBook is not null;
@@ -3731,6 +3829,16 @@ public partial class MainWindow : Window
         TextEncodingMode Encoding,
         string PlanSourceSha256,
         int PlanEntryCount);
+
+    private sealed record SourceFileStamp(long Length, long LastWriteUtcTicks)
+    {
+        public static SourceFileStamp Capture(string path)
+        {
+            var info = new FileInfo(path);
+            info.Refresh();
+            return new SourceFileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+        }
+    }
 }
 
 public sealed class InputBookItem : INotifyPropertyChanged

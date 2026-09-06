@@ -105,6 +105,7 @@ public sealed record TocHierarchyOptions
 
     public bool Enabled { get; init; }
     public bool IncludeHtmlTocPage { get; init; }
+    public bool IncludeChapterTopNavigation { get; init; }
     public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
     public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
     public string Level3Pattern { get; init; } = DefaultLevel3Pattern;

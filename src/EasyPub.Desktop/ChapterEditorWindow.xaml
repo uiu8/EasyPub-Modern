@@ -42,6 +42,7 @@
                 <StackPanel Grid.ColumnSpan="3"><TextBlock Text="普通章节标题正则（留空使用原版默认）" Foreground="{DynamicResource SecondaryTextBrush}" FontWeight="SemiBold"/><TextBox x:Name="ChapterPatternText" Margin="0,5,0,0" FontFamily="Consolas"/></StackPanel>
                 <StackPanel Grid.Column="4" VerticalAlignment="Bottom">
                     <CheckBox x:Name="IncludeHtmlTocPageCheck" Content="在正文开头生成目录页" Margin="0,0,0,8" ToolTip="默认关闭。关闭后仍保留 Kindle 菜单中的导航目录。"/>
+                    <CheckBox x:Name="IncludeChapterTopNavigationCheck" Content="每章标题上方显示章节导航" Margin="0,0,0,8" ToolTip="默认关闭。显示上一章 / 下一章；同时开启正文目录页时才会显示“目录”。跳转落点位于导航末尾，所有章间链接仍在落点之前，降低 Kindle 误判为脚注弹窗的风险。"/>
                     <CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,0,0,8"/>
                     <Button Content="按当前规则重新识别" Click="RebuildFromRules_Click" Margin="0" Background="{DynamicResource SelectedSurfaceBrush}" Foreground="{DynamicResource PrimaryTextBrush}"/>
                 </StackPanel>

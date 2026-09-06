@@ -20,6 +20,7 @@ public partial class SettingsWindow : Window
         bool reduceMotion,
         string outputDirectory,
         string kindleGenPath,
+        string textEditorPath,
         int parallelism,
         bool validationEnabled,
         int reportRetention,
@@ -41,6 +42,7 @@ public partial class SettingsWindow : Window
         ReduceMotionCheck.IsChecked = reduceMotion;
         DefaultOutputText.Text = outputDirectory;
         KindleGenPathText.Text = kindleGenPath;
+        TextEditorPathText.Text = string.IsNullOrWhiteSpace(textEditorPath) ? "notepad.exe" : textEditorPath;
         SelectByTag(ParallelismSettingsCombo, parallelism.ToString(CultureInfo.InvariantCulture));
         ValidationSettingsCheck.IsChecked = validationEnabled;
         SelectByTag(RetentionSettingsCombo, reportRetention.ToString(CultureInfo.InvariantCulture));
@@ -57,6 +59,7 @@ public partial class SettingsWindow : Window
     public bool ReduceMotion => ReduceMotionCheck.IsChecked == true;
     public string OutputDirectory => DefaultOutputText.Text.Trim();
     public string KindleGenPath => KindleGenPathText.Text.Trim();
+    public string TextEditorPath => string.IsNullOrWhiteSpace(TextEditorPathText.Text) ? "notepad.exe" : TextEditorPathText.Text.Trim();
     public int Parallelism => int.Parse(SelectedTag(ParallelismSettingsCombo, "0"), CultureInfo.InvariantCulture);
     public bool ValidationEnabled => ValidationSettingsCheck.IsChecked == true;
     public int ReportRetention => int.Parse(SelectedTag(RetentionSettingsCombo, "10"), CultureInfo.InvariantCulture);
@@ -80,6 +83,14 @@ public partial class SettingsWindow : Window
         var dialog = new OpenFileDialog { Title = "选择 kindlegen_v2.9.exe", Filter = "KindleGen (kindlegen*.exe)|kindlegen*.exe|可执行文件 (*.exe)|*.exe" };
         if (dialog.ShowDialog(this) == true) KindleGenPathText.Text = dialog.FileName;
     }
+
+    private void BrowseTextEditor_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Title = "选择 TXT 编辑器", Filter = "可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*" };
+        if (dialog.ShowDialog(this) == true) TextEditorPathText.Text = dialog.FileName;
+    }
+
+    private void ResetTextEditor_Click(object sender, RoutedEventArgs e) => TextEditorPathText.Text = "notepad.exe";
 
     private void TestKindleGen_Click(object sender, RoutedEventArgs e)
     {
@@ -156,6 +167,7 @@ public partial class SettingsWindow : Window
         RetentionSettingsCombo.IsEnabled = false;
         AutoOpenTaskCenterSettingsCheck.IsChecked = false;
         AutoOpenOutputSettingsCheck.IsChecked = false;
+        TextEditorPathText.Text = "notepad.exe";
         _shortcutBindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         SaveHintText.Text = "已恢复默认值；点击“保存并返回工作区”后生效";
     }

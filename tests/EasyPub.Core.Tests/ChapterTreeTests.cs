@@ -7,6 +7,88 @@ namespace EasyPub.Core.Tests;
 public sealed class ChapterTreeTests
 {
     [Fact]
+    public async Task Chapter_top_navigation_lands_on_a_trailing_target_above_the_heading()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-chapter-navigation-{Guid.NewGuid():N}.txt");
+        var output = Path.ChangeExtension(path, ".epub");
+        await File.WriteAllTextAsync(path, "第一章 开始\n正文一\n第二章 继续\n正文二\n第三章 结束\n正文三");
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                path,
+                output,
+                Options: new ConversionOptions
+                {
+                    TocHierarchy = new TocHierarchyOptions
+                    {
+                        IncludeHtmlTocPage = false,
+                        IncludeChapterTopNavigation = true,
+                    },
+                }));
+
+            using var archive = ZipFile.OpenRead(output);
+            var first = ReadText(archive, "OEBPS/chapter0.html");
+            var middle = ReadText(archive, "OEBPS/chapter2.html");
+            var last = ReadText(archive, "OEBPS/chapter3.html");
+            var opf = ReadText(archive, "OEBPS/content.opf");
+            var titleIndex = first.IndexOf("id=\"title\"", StringComparison.Ordinal);
+            var navigationIndex = first.IndexOf("class=\"chapter-nav\"", StringComparison.Ordinal);
+            var navigationTargetIndex = first.IndexOf("id=\"chapter-nav-target\"", StringComparison.Ordinal);
+            Assert.True(navigationIndex >= 0 && navigationTargetIndex > navigationIndex && titleIndex > navigationTargetIndex);
+            Assert.Contains("<span id=\"chapter-nav-target\">&#160;</span></div>\r\n<h", first);
+            Assert.DoesNotContain("<table class=\"chapter-heading-table\">", first);
+            Assert.DoesNotContain("id=\"chapter-start\"", first);
+            Assert.DoesNotContain("上一章", first);
+            Assert.DoesNotContain(">目录<", first);
+            Assert.Contains("href=\"chapter1.html#chapter-nav-target\"", first);
+            Assert.Contains("href=\"chapter1.html#chapter-nav-target\"", middle);
+            Assert.Contains("href=\"chapter3.html#chapter-nav-target\"", middle);
+            Assert.Contains("href=\"chapter2.html#chapter-nav-target\"", last);
+            Assert.DoesNotContain("下一章", last);
+            Assert.Null(archive.GetEntry("OEBPS/book-toc.html"));
+            Assert.DoesNotContain("htmltoc", opf);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(output);
+        }
+    }
+
+    [Fact]
+    public async Task Chapter_top_navigation_shows_html_toc_link_only_when_visual_toc_is_enabled()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-chapter-navigation-toc-{Guid.NewGuid():N}.txt");
+        var output = Path.ChangeExtension(path, ".epub");
+        await File.WriteAllTextAsync(path, "第一章 开始\n正文\n第二章 继续\n正文");
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                path,
+                output,
+                Options: new ConversionOptions
+                {
+                    TocHierarchy = new TocHierarchyOptions
+                    {
+                        IncludeHtmlTocPage = true,
+                        IncludeChapterTopNavigation = true,
+                    },
+                }));
+
+            using var archive = ZipFile.OpenRead(output);
+            var first = ReadText(archive, "OEBPS/chapter0.html");
+            Assert.Contains("href=\"book-toc.html\">目录</a>", first);
+            Assert.Contains("href=\"chapter1.html#chapter-nav-target\">下一章</a>", first);
+            Assert.NotNull(archive.GetEntry("OEBPS/book-toc.html"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(output);
+        }
+    }
+
+    [Fact]
     public async Task Visual_toc_page_is_disabled_by_default_while_ncx_navigation_remains()
     {
         var path = Path.Combine(Path.GetTempPath(), $"easypub-no-visual-toc-{Guid.NewGuid():N}.txt");

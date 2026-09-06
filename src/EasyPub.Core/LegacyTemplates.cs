@@ -389,6 +389,9 @@ img.attpic {
         if (options.Illustrations.Count > 0)
             css += "\r\n/* Body illustrations */\r\n.illustration { text-align: center; margin: 1em 0; }\r\n.body-illustration { max-width: 100%; height: auto; }\r\n";
 
+        if (options.TocHierarchy.IncludeChapterTopNavigation)
+            css += "\r\n/* Chapter navigation */\r\n.chapter-nav { margin: 0 0 0.8em 0; text-align: center; font-size: 85%; line-height: 140%; page-break-inside: avoid; page-break-after: avoid; }\r\n.chapter-nav a { text-decoration: none; }\r\n.chapter-nav-separator { margin: 0 0.45em; }\r\n";
+
         if (options.Font.Enabled && !string.IsNullOrWhiteSpace(options.Font.FontPath))
         {
             var fallback = Path.GetFileNameWithoutExtension(options.Font.FontPath);

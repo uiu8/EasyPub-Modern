@@ -8,6 +8,70 @@ namespace EasyPub.Core.Tests;
 public sealed class MobiContentPackagerTests
 {
     [Fact]
+    public async Task Optimized_package_preserves_trailing_navigation_targets_before_headings()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"easypub-mobi-nav-pack-{Guid.NewGuid():N}");
+        var input = Path.Combine(root, "导航测试.txt");
+        var epub = Path.Combine(root, "导航测试.epub");
+        var expanded = Path.Combine(root, "expanded");
+        Directory.CreateDirectory(root);
+        var text = new StringBuilder("序言正文\n");
+        for (var chapter = 1; chapter <= 12; chapter++)
+            text.Append($"第{chapter}章 测试{chapter}\n正文 {chapter}。\n");
+        await File.WriteAllTextAsync(input, text.ToString(), Encoding.UTF8);
+
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(
+                input,
+                epub,
+                Options: new ConversionOptions
+                {
+                    TocHierarchy = new TocHierarchyOptions
+                    {
+                        IncludeHtmlTocPage = false,
+                        IncludeChapterTopNavigation = true,
+                    },
+                }));
+            ZipFile.ExtractToDirectory(epub, expanded);
+            var oebps = Path.Combine(expanded, "OEBPS");
+
+            MobiContentPackager.Optimize(oebps);
+
+            Assert.False(File.Exists(Path.Combine(oebps, "book-toc.html")));
+            var chapterZero = XDocument.Load(Path.Combine(oebps, "chapter0.html"));
+            var firstPack = XDocument.Load(Path.Combine(oebps, "chapter-pack-0001.html"));
+            XNamespace xhtml = "http://www.w3.org/1999/xhtml";
+            var hrefs = chapterZero.Descendants(xhtml + "a")
+                .Concat(firstPack.Descendants(xhtml + "a"))
+                .Select(element => (string?)element.Attribute("href"))
+                .Where(value => value is not null)
+                .Cast<string>()
+                .ToArray();
+            Assert.Contains("chapter-pack-0001.html#chapter1-chapter-nav-target", hrefs);
+            Assert.Contains("chapter0.html#chapter-nav-target", hrefs);
+            Assert.Contains(firstPack.Descendants(xhtml + "a"), element => element.Value == "上一章");
+            var packedChapter = Assert.Single(
+                firstPack.Descendants(xhtml + "div")
+                    .Where(element => (string?)element.Attribute("id") == "chapter1"));
+            var navigation = Assert.Single(
+                packedChapter.Elements(xhtml + "div")
+                    .Where(element => (string?)element.Attribute("class") == "chapter-nav"));
+            var navigationTarget = navigation.Elements().Last();
+            Assert.Equal("chapter1-chapter-nav-target", (string?)navigationTarget.Attribute("id"));
+            Assert.All(navigation.Elements(xhtml + "a"), link => Assert.Contains(navigationTarget, link.ElementsAfterSelf()));
+            Assert.Equal("chapter1-title", (string?)navigation.ElementsAfterSelf().First().Attribute("id"));
+            Assert.Empty(packedChapter.Elements(xhtml + "table"));
+            Assert.DoesNotContain(hrefs, href => System.Text.RegularExpressions.Regex.IsMatch(href, @"^chapter\d+\.html#(?:title|chapter-start|chapter-nav-target)$")
+                && !href.StartsWith("chapter0.html", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Optimized_package_keeps_every_logical_toc_entry_and_reduces_physical_documents()
     {
         var root = Path.Combine(Path.GetTempPath(), $"easypub-mobi-pack-{Guid.NewGuid():N}");
@@ -104,6 +168,7 @@ public sealed class MobiContentPackagerTests
             var kindleGen = Path.Combine(workspace, "work", "easypub-compat", "legacy-capture", "bin", "kindlegen_v2.9.exe");
             var options = ConversionOptions.LegacyDefault with
             {
+                TocHierarchy = new TocHierarchyOptions { IncludeChapterTopNavigation = true },
                 Mobi = new MobiOptions
                 {
                     KindleGenPath = kindleGen,

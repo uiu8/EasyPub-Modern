@@ -32,6 +32,8 @@ public sealed class MainWindowLayoutTests
             Assert.IsType<Border>(window.FindName("BottomOperationBar"));
             Assert.DoesNotContain(FindVisualDescendants<Button>(window), button => Equals(button.Content, "☷") || Equals(button.Content, "▦"));
             Assert.IsType<Button>(window.FindName("InkManageIllustrationsButton"));
+            Assert.IsType<Button>(window.FindName("QuickEditTextButton"));
+            Assert.IsType<Button>(window.FindName("EditSourceTextButton"));
             var bottomFormat = Assert.IsType<ComboBox>(window.FindName("FormatCombo"));
             var bottomPreset = Assert.IsType<ComboBox>(window.FindName("LayoutModeCombo"));
             Assert.Equal(Visibility.Visible, bottomFormat.Visibility);
@@ -41,10 +43,11 @@ public sealed class MainWindowLayoutTests
             var captureTheme = Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_THEME") ?? "Light";
             var settingsWindow = new SettingsWindow(
                 captureTheme, "Comfortable", 100, true, false,
-                Path.GetTempPath(), string.Empty, 1, false, 10, false, false,
+                Path.GetTempPath(), string.Empty, "notepad.exe", 1, false, 10, false, false,
                 new Dictionary<string, string>(), 0, () => { });
             settingsWindow.Show();
             settingsWindow.UpdateLayout();
+            Assert.Equal("notepad.exe", Assert.IsType<TextBox>(settingsWindow.FindName("TextEditorPathText")).Text);
             Assert.DoesNotContain(FindVisualDescendants<TextBox>(settingsWindow), textBox =>
                 Equals(textBox.Text, "搜索设置"));
             Assert.True(Assert.IsType<Button>(settingsWindow.FindName("ResetAllDefaultsButton")).IsEnabled);
@@ -217,6 +220,9 @@ public sealed class MainWindowLayoutTests
                 Assert.True(coverPanel.CornerRadius.TopLeft >= 8 && coverPanel.BorderThickness.Left >= 1,
                     "所选书稿应是独立的圆角卡片。 ");
                 Assert.True(coverGap.ActualWidth >= 12, "书库列表与所选书稿之间应保留明显卡片间距。 ");
+                var quickEdit = Assert.IsType<Button>(window.FindName("QuickEditTextButton"));
+                Assert.True(quickEdit.ActualHeight <= 36,
+                    $"编辑原始 TXT 应为紧凑操作，当前高度 {quickEdit.ActualHeight:F1}px。 ");
                 var quickMetadata = Assert.IsType<Button>(window.FindName("QuickMetadataButton"));
                 Assert.IsType<Grid>(quickMetadata.Content);
                 Assert.True(quickMetadata.ActualHeight >= 54, "封面信息快捷入口应保留图标、说明与足够点击面积。 ");
