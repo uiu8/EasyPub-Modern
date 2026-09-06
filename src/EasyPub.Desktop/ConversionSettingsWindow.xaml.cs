@@ -71,6 +71,12 @@ public partial class ConversionSettingsWindow : UserControl
         UpdateParallelismHint();
     }
 
+    public void ShowCategory(int index)
+    {
+        if (CategoryTabs.Items.Count == 0) return;
+        CategoryTabs.SelectedIndex = Math.Clamp(index, 0, CategoryTabs.Items.Count - 1);
+    }
+
     private async void ConversionSettingsWindow_Loaded(object sender, RoutedEventArgs e)
     {
         await RefreshKindleGenStatusAsync();

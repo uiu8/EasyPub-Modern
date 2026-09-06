@@ -793,6 +793,71 @@ public sealed class MainWindowLayoutTests
     }
 
     [Fact]
+    public void Library_inspector_presents_three_state_analysis_before_editing_tools()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-readiness-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(inputPath, "第一章 雨夜\r\n正文");
+            RunInWindow(window =>
+            {
+                var book = new InputBookItem(inputPath);
+                window.InputBooks.Add(book);
+                Assert.IsType<ListBox>(window.FindName("FilesList")).SelectedItem = book;
+                book.SetAnalysisSnapshot(new BookAnalysisSnapshot(
+                    inputPath,
+                    "TXT",
+                    new FileInfo(inputPath).Length,
+                    File.GetLastWriteTimeUtc(inputPath),
+                    1,
+                    ReadinessEvaluator.Evaluate([
+                        new ConversionPreflightIssue(inputPath, PreflightSeverity.Warning, "chapter", "章节需要确认。", PreflightTargetKind.Chapters)]),
+                    [new ConversionPreflightIssue(inputPath, PreflightSeverity.Warning, "chapter", "章节需要确认。", PreflightTargetKind.Chapters)],
+                    DateTimeOffset.UtcNow));
+                window.UpdateLayout();
+
+                Assert.Equal("建议处理 1", Assert.IsType<TextBlock>(window.FindName("SelectedBookReadinessText")).Text);
+                var viewIssues = Assert.IsType<Button>(window.FindName("ViewSelectedBookIssuesButton"));
+                Assert.True(viewIssues.IsEnabled);
+                Assert.Equal("查看并处理", viewIssues.Content);
+                var capturePath = Environment.GetEnvironmentVariable("EASYPUB_READINESS_CAPTURE_PATH");
+                if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(window, capturePath);
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
+    public void Imported_txt_is_automatically_analyzed_without_opening_the_preflight_window()
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-auto-analysis-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(inputPath, "第一章 雨夜\r\n正文");
+            RunInWindow(window =>
+            {
+                Assert.IsType<ComboBox>(window.FindName("FormatCombo")).SelectedIndex = 0;
+                var book = new InputBookItem(inputPath);
+                window.InputBooks.Add(book);
+                Assert.IsType<ListBox>(window.FindName("FilesList")).SelectedItem = book;
+
+                PumpDispatcherUntil(() => book.AnalysisStatus == BookAnalysisStatus.Completed, TimeSpan.FromSeconds(8));
+
+                Assert.True(book.HasBeenChecked);
+                Assert.Equal("可直接转换", book.ReadinessLabel);
+                Assert.Equal(1, book.ChapterCandidateCount);
+            });
+        }
+        finally
+        {
+            if (File.Exists(inputPath)) File.Delete(inputPath);
+        }
+    }
+
+    [Fact]
     public void Epub_to_mobi_mode_is_visible_for_the_selected_epub()
     {
         var inputPath = Path.Combine(Path.GetTempPath(), $"easypub-visible-epub-mode-{Guid.NewGuid():N}.epub");
@@ -955,6 +1020,7 @@ public sealed class MainWindowLayoutTests
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_SELECTION_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_INSPECTOR_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_READINESS_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_COVER_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_CONVERSION_SETTINGS_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH"));

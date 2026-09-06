@@ -41,13 +41,14 @@ public partial class MainWindow : Window
     private readonly MetadataMappingStore _metadataMappingStore = MetadataMappingStore.CreateDefault();
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
     private readonly ConversionHistoryStore _historyStore = ConversionHistoryStore.CreateDefault();
-    private readonly ConversionPreflightCache _preflightCache = new();
+    private readonly BookAnalysisCoordinator _analysisCoordinator = new();
     private readonly object _chapterDocumentCacheGate = new();
     private readonly Dictionary<ChapterDocumentCacheKey, Task<ChapterTreeDocument>> _chapterDocumentCache = [];
     private readonly EasyPubProjectStore _recoveryStore = EasyPubProjectStore.CreateRecoveryDefault();
     private readonly DispatcherTimer _recoveryTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _bookFilterTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
     private readonly DispatcherTimer _statusRefreshTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    private readonly DispatcherTimer _automaticAnalysisTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
     private readonly Dictionary<string, BookTaskViewModel> _bookTasksByInputPath = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<InputBookItem> _trackedBooks = [];
     private IReadOnlyList<string> _lastFailedInputPaths = [];
@@ -98,6 +99,8 @@ public partial class MainWindow : Window
     private IReadOnlyList<LayoutPreviewPage> _layoutPreviewPages = [];
     private int _layoutPreviewPageIndex;
     private CancellationTokenSource? _selectionPreviewCancellation;
+    private CancellationTokenSource? _automaticAnalysisCancellation;
+    private long _automaticAnalysisGeneration;
     private ChapterTreeDocument? _chapterPreviewDocument;
     private long _projectChangeGeneration;
     private long _savedRecoveryGeneration;
@@ -125,6 +128,11 @@ public partial class MainWindow : Window
         {
             _statusRefreshTimer.Stop();
             UpdateStatus();
+        };
+        _automaticAnalysisTimer.Tick += async (_, _) =>
+        {
+            _automaticAnalysisTimer.Stop();
+            await RunAutomaticAnalysisAsync();
         };
         FormatCombo.SelectionChanged += (_, _) => MarkProjectDirty();
         ParallelismCombo.SelectionChanged += (_, _) => MarkProjectDirty();
@@ -592,6 +600,7 @@ public partial class MainWindow : Window
             _optionTrackingReady = true;
             UpdateConversionSummary();
             _ = RefreshKindleGenSummaryAsync();
+            ScheduleAutomaticAnalysis();
         }
     }
 
@@ -601,7 +610,9 @@ public partial class MainWindow : Window
     {
         _recoveryTimer.Stop();
         _statusRefreshTimer.Stop();
+        _automaticAnalysisTimer.Stop();
         _selectionPreviewCancellation?.Cancel();
+        _automaticAnalysisCancellation?.Cancel();
         _operationCancellation?.Cancel();
         if (string.Equals(
                 Environment.GetEnvironmentVariable("EASYPUB_DISABLE_SETTINGS_SAVE"),
@@ -1248,11 +1259,74 @@ public partial class MainWindow : Window
             or nameof(InputBookItem.MetadataRuleFolder)
             or nameof(InputBookItem.ChapterTree))
             MarkProjectDirty();
+        if (e.PropertyName is nameof(InputBookItem.AnalysisStatus) or nameof(InputBookItem.ReadinessLabel) or nameof(InputBookItem.ReadinessDetail)
+            && sender is InputBookItem book
+            && Dispatcher.CheckAccess()
+            && ReferenceEquals(book, CurrentLibraryInspectorBook()))
+            UpdateSelectedBookInspector(book);
     }
 
     private void MarkProjectDirty()
     {
-        if (_optionTrackingReady) Interlocked.Increment(ref _projectChangeGeneration);
+        if (!_optionTrackingReady) return;
+        Interlocked.Increment(ref _projectChangeGeneration);
+        ScheduleAutomaticAnalysis();
+    }
+
+    private void ScheduleAutomaticAnalysis()
+    {
+        if (!_optionTrackingReady || !IsLoaded || InputBooks.Count == 0) return;
+        foreach (var book in InputBooks) book.SetAnalysisPending();
+        _automaticAnalysisCancellation?.Cancel();
+        _automaticAnalysisTimer.Stop();
+        _automaticAnalysisTimer.Start();
+        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+        UpdateConversionSummary();
+    }
+
+    private async Task RunAutomaticAnalysisAsync()
+    {
+        if (InputBooks.Count == 0) return;
+        var generation = Interlocked.Increment(ref _automaticAnalysisGeneration);
+        _automaticAnalysisCancellation?.Cancel();
+        _automaticAnalysisCancellation?.Dispose();
+        _automaticAnalysisCancellation = new CancellationTokenSource();
+        var cancellationToken = _automaticAnalysisCancellation.Token;
+        var books = InputBooks.ToArray();
+        foreach (var book in books) book.SetAnalysisRunning();
+        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+
+        try
+        {
+            var requests = await BuildConversionRequestsForBooksAsync(books, resolveCollisions: false, enforceCompatibility: false);
+            var result = await _analysisCoordinator.AnalyzeAsync(requests, cancellationToken);
+            if (generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
+            ApplyAnalysisToWorklist(result);
+            _lastPreflightReport = result.Report;
+            _taskCenterWindow?.UpdatePreflight(result.Report);
+            var ready = result.Books.Count(book => book.Readiness.State == BookReadiness.Ready);
+            var review = result.Books.Count(book => book.Readiness.State == BookReadiness.NeedsReview);
+            var blocked = result.Books.Count(book => book.Readiness.State == BookReadiness.Blocked);
+            StatusText.Text = result.Reused
+                ? $"分析结果未变化，已复用缓存 · 可转换 {ready} · 建议处理 {review} · 必须处理 {blocked}"
+                : $"自动分析完成 · 可转换 {ready} · 建议处理 {review} · 必须处理 {blocked}";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A newer file or setting state superseded this analysis.
+        }
+        catch (Exception exception)
+        {
+            if (generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
+            foreach (var book in books) book.SetAnalysisUnavailable(exception.Message);
+            StatusText.Text = $"自动分析暂不可用：{exception.Message}";
+        }
+        finally
+        {
+            UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+            UpdateConversionSummary();
+            _bookWorklistView?.Refresh();
+        }
     }
 
     private void MarkRecoveryClean()
@@ -1338,8 +1412,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.18"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.18";
+            ? "EasyPub Modern v1.19"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.19";
         UpdateWorkspaceScope();
     }
 
@@ -1683,7 +1757,7 @@ public partial class MainWindow : Window
 
                 _pendingSourceEdits.Remove(path);
                 InvalidateChapterDocumentCache(path);
-                _preflightCache.Clear();
+                _analysisCoordinator.Clear();
                 _chapterPreviewDocument = null;
                 var book = InputBooks.FirstOrDefault(item => string.Equals(item.InputPath, path, StringComparison.OrdinalIgnoreCase));
                 if (book is not null)
@@ -2811,6 +2885,11 @@ public partial class MainWindow : Window
             SelectedBookFormatText.Text = "—";
             SelectedBookSummaryText.Text = "请选择书稿查看封面、元数据、插图和章节树状态";
             SelectedBookPathText.Text = string.Empty;
+            SelectedBookReadinessText.Text = "等待分析";
+            SelectedBookReadinessText.Foreground = Brushes.SlateGray;
+            SelectedBookAnalysisText.Text = "导入书稿后会自动在后台分析";
+            ViewSelectedBookIssuesButton.IsEnabled = false;
+            ViewSelectedBookIssuesButton.Content = "查看";
             LoadSelectedBookMetadataFields(null);
             UpdateLayoutIllustrationSummary();
             return;
@@ -2821,6 +2900,11 @@ public partial class MainWindow : Window
         SelectedBookFormatText.Text = book.FormatLabel;
         SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
         SelectedBookPathText.Text = book.DirectoryPath;
+        SelectedBookReadinessText.Text = book.ReadinessLabel;
+        SelectedBookReadinessText.Foreground = book.ReadinessForeground;
+        SelectedBookAnalysisText.Text = book.ReadinessDetail;
+        ViewSelectedBookIssuesButton.IsEnabled = book.HasBeenChecked;
+        ViewSelectedBookIssuesButton.Content = book.HasPreflightIssues ? "查看并处理" : "查看结果";
         LoadSelectedBookMetadataFields(book);
         UpdateLayoutIllustrationSummary();
     }
@@ -3024,7 +3108,6 @@ public partial class MainWindow : Window
             var requests = await BuildConversionRequestsAsync();
             var (report, reused) = await GetPreflightReportAsync(requests, _operationCancellation.Token);
             _lastPreflightReport = report;
-            ApplyPreflightToWorklist(report);
             _taskCenterWindow?.UpdatePreflight(report);
             new PreflightWindow(report, allowContinue: false, NavigateToPreflightIssue) { Owner = this }.ShowDialog();
             StatusText.Text = report.HasErrors
@@ -3048,31 +3131,58 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ViewSelectedBookIssues_Click(object sender, RoutedEventArgs e)
+    {
+        var book = CurrentLibraryInspectorBook();
+        if (book is null) return;
+        try
+        {
+            ViewSelectedBookIssuesButton.IsEnabled = false;
+            ViewSelectedBookIssuesButton.Content = "正在分析…";
+            var requests = await BuildConversionRequestsForBooksAsync([book], resolveCollisions: false, enforceCompatibility: false);
+            var result = await _analysisCoordinator.AnalyzeAsync(requests);
+            ApplyAnalysisToWorklist(result);
+            _lastPreflightReport = result.Report;
+            new PreflightWindow(result.Report, allowContinue: false, NavigateToPreflightIssue) { Owner = this }.ShowDialog();
+        }
+        catch (Exception exception)
+        {
+            InkDialog.Show(this, exception.Message, "无法查看书稿问题", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+        }
+    }
+
     private void NavigateToPreflightIssue(ConversionPreflightIssue issue)
     {
         var book = issue.InputPath is null ? null : InputBooks.FirstOrDefault(item =>
             string.Equals(item.InputPath, issue.InputPath, StringComparison.OrdinalIgnoreCase));
         if (book is not null)
         {
-            FilesList.SelectedItems.Clear();
-            FilesList.SelectedItem = book;
+            if (!FilesList.SelectedItems.Contains(book)) FilesList.SelectedItems.Add(book);
+            _inspectedLibraryBook = book;
             FilesList.ScrollIntoView(book);
+            UpdateSelectedBookInspector(book);
         }
 
         switch (issue.Target)
         {
             case PreflightTargetKind.Chapters:
-                OptionsTabs.SelectedIndex = 0;
                 EditChapters_Click(this, new RoutedEventArgs());
                 break;
             case PreflightTargetKind.Output:
-                OutputDirectoryText.Focus();
+                ShowWorkspacePage(WorkspacePage.Convert);
+                OpenConversionSettingsPane();
+                ConversionSettingsPane.ShowCategory(0);
                 break;
             case PreflightTargetKind.Cover:
+                ShowWorkspacePage(WorkspacePage.Cover);
+                if (book is not null) CoverBookCombo.SelectedItem = book;
                 BrowseCoverButton.Focus();
                 break;
             case PreflightTargetKind.Illustrations when book is not null:
-                OptionsTabs.SelectedIndex = 5;
                 var encoding = Enum.Parse<TextEncodingMode>(
                     ((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!);
                 var editor = new IllustrationManagerWindow(
@@ -3086,18 +3196,22 @@ public partial class MainWindow : Window
                 if (editor.ShowDialog() == true) book.SetIllustrations(editor.Result);
                 break;
             case PreflightTargetKind.Mobi:
-                OptionsTabs.SelectedIndex = 6;
-                KindleGenText.Focus();
+                ShowWorkspacePage(WorkspacePage.Convert);
+                OpenConversionSettingsPane();
+                ConversionSettingsPane.ShowCategory(2);
                 break;
             case PreflightTargetKind.Font:
-                OptionsTabs.SelectedIndex = 2;
-                FontPathText.Focus();
+                ShowWorkspacePage(WorkspacePage.Layout);
+                LayoutFontNav.IsChecked = true;
+                LayoutSection_Checked(LayoutFontNav, new RoutedEventArgs());
                 break;
             case PreflightTargetKind.BookInformation:
-                OptionsTabs.SelectedIndex = 3;
+                ShowWorkspacePage(WorkspacePage.Cover);
+                if (book is not null) CoverBookCombo.SelectedItem = book;
                 IsbnText.Focus();
                 break;
             default:
+                ShowWorkspacePage(WorkspacePage.Library);
                 FilesList.Focus();
                 break;
         }
@@ -3170,7 +3284,11 @@ public partial class MainWindow : Window
     private async Task<(ConversionPreflightReport Report, bool Reused)> GetPreflightReportAsync(
         IReadOnlyList<ConversionRequest> requests,
         CancellationToken cancellationToken)
-        => await _preflightCache.InspectAsync(requests, cancellationToken);
+    {
+        var result = await _analysisCoordinator.AnalyzeAsync(requests, cancellationToken);
+        ApplyAnalysisToWorklist(result);
+        return (result.Report, result.Reused);
+    }
 
     private void InitializeBookTasks(IReadOnlyList<ConversionRequest> requests)
     {
@@ -3231,7 +3349,6 @@ public partial class MainWindow : Window
             foreach (var task in BookTasks) task.Update(BookTaskStage.Checking, 0.02, "正在检查");
             var (report, reusedPreflight) = await GetPreflightReportAsync(requests, cancellationToken);
             _lastPreflightReport = report;
-            ApplyPreflightToWorklist(report);
             _taskCenterWindow?.UpdatePreflight(report);
             if (reusedPreflight) StatusText.Text = "输入和选项未变化，已复用上次转换前检查结果";
             if (report.HasErrors)
@@ -3389,11 +3506,20 @@ public partial class MainWindow : Window
     {
         var operationBooks = SelectedBooksForOperation();
         if (operationBooks.Count == 0) throw new InvalidOperationException("请先在书库中选择至少一本要转换的书稿。");
+        return await BuildConversionRequestsForBooksAsync(operationBooks, resolveCollisions: true, enforceCompatibility: true);
+    }
+
+    private async Task<IReadOnlyList<ConversionRequest>> BuildConversionRequestsForBooksAsync(
+        IReadOnlyList<InputBookItem> operationBooks,
+        bool resolveCollisions,
+        bool enforceCompatibility)
+    {
         var outputDirectory = OutputDirectoryText.Text.Trim();
         if (outputDirectory.Length == 0) throw new InvalidOperationException("请选择输出目录。");
 
         var profile = CaptureProfile();
-        if (!string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase)
+        if (enforceCompatibility
+            && !string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase)
             && operationBooks.Any(book => book.IsEpub))
             throw new InvalidOperationException("EPUB 输入只能输出 MOBI。请把输出格式切换为 MOBI。");
         var options = profile.Options;
@@ -3413,6 +3539,8 @@ public partial class MainWindow : Window
             profile.OutputFormat,
             profile.Author,
             options);
+        if (!resolveCollisions) return requests;
+
         var collisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var parsedPolicy)
             ? parsedPolicy : OutputCollisionPolicy.AutoRename;
         var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3643,17 +3771,15 @@ public partial class MainWindow : Window
         };
     }
 
-    private void ApplyPreflightToWorklist(ConversionPreflightReport report)
+    private void ApplyAnalysisToWorklist(BookAnalysisResult result)
     {
-        var issueIndex = PreflightIssueIndex.Create(report.Issues);
+        var snapshots = result.Books.ToDictionary(book => book.InputPath, StringComparer.OrdinalIgnoreCase);
         foreach (var book in InputBooks)
-        {
-            var issues = issueIndex.For(book.InputPath);
-            book.SetPreflightResult(
-                issues.Count(issue => issue.Severity == PreflightSeverity.Error),
-                issues.Count(issue => issue.Severity == PreflightSeverity.Warning));
-        }
+            if (snapshots.TryGetValue(book.InputPath, out var snapshot))
+                book.SetAnalysisSnapshot(snapshot);
         _bookWorklistView?.Refresh();
+        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+        UpdateConversionSummary();
     }
 
     private void UpdateContextualControls()
@@ -4080,6 +4206,15 @@ public partial class MainWindow : Window
     }
 }
 
+public enum BookAnalysisStatus
+{
+    NotAnalyzed,
+    Pending,
+    Running,
+    Completed,
+    Unavailable,
+}
+
 public sealed class InputBookItem : INotifyPropertyChanged
 {
     private string _inputPath;
@@ -4094,6 +4229,9 @@ public sealed class InputBookItem : INotifyPropertyChanged
     private ChapterTreePlan? _chapterTree;
     private int? _preflightErrorCount;
     private int _preflightWarningCount;
+    private BookAnalysisSnapshot? _analysisSnapshot;
+    private BookAnalysisStatus _analysisStatus;
+    private string? _analysisFailure;
 
     public InputBookItem(string inputPath)
     {
@@ -4191,14 +4329,35 @@ public sealed class InputBookItem : INotifyPropertyChanged
     public ChapterTreePlan? ChapterTree => _chapterTree;
     public string ChapterTreeLabel => _chapterTree is null ? string.Empty : $"章节树 {_chapterTree.Entries.Count}";
     public Visibility ChapterTreeBadgeVisibility => _chapterTree is null ? Visibility.Collapsed : Visibility.Visible;
-    public bool HasBeenChecked => _preflightErrorCount is not null;
+    public BookAnalysisSnapshot? AnalysisSnapshot => _analysisSnapshot;
+    public BookAnalysisStatus AnalysisStatus => _analysisStatus;
+    public IReadOnlyList<ConversionPreflightIssue> PreflightIssues => _analysisSnapshot?.Issues ?? [];
+    public int ChapterCandidateCount => _analysisSnapshot?.ChapterCandidateCount ?? 0;
+    public bool HasBeenChecked => _analysisStatus == BookAnalysisStatus.Completed || _preflightErrorCount is not null;
     public bool HasPreflightIssues => (_preflightErrorCount ?? 0) > 0 || _preflightWarningCount > 0;
     public int PreflightErrorCount => _preflightErrorCount ?? 0;
     public int PreflightWarningCount => _preflightWarningCount;
     public int ReadinessPriority => (_preflightErrorCount ?? 0) > 0 ? 3 : _preflightWarningCount > 0 ? 2 : !HasBeenChecked ? 1 : 0;
-    public string ReadinessLabel => (_preflightErrorCount ?? 0) > 0
-        ? $"错误 {_preflightErrorCount}"
-        : _preflightWarningCount > 0 ? $"提醒 {_preflightWarningCount}" : HasBeenChecked ? "检查通过" : "未检查";
+    public string ReadinessLabel => _analysisStatus switch
+    {
+        BookAnalysisStatus.Pending => "等待分析",
+        BookAnalysisStatus.Running => "正在分析…",
+        BookAnalysisStatus.Unavailable => "分析失败",
+        _ when (_preflightErrorCount ?? 0) > 0 => $"必须处理 {_preflightErrorCount}",
+        _ when _preflightWarningCount > 0 => $"建议处理 {_preflightWarningCount}",
+        _ when HasBeenChecked => "可直接转换",
+        _ => "等待分析",
+    };
+    public string ReadinessDetail => _analysisStatus switch
+    {
+        BookAnalysisStatus.Pending => "设置已变化，等待重新分析",
+        BookAnalysisStatus.Running => "正在后台识别章节并检查转换条件",
+        BookAnalysisStatus.Unavailable => _analysisFailure ?? "暂时无法完成分析",
+        _ when (_preflightErrorCount ?? 0) > 0 => $"发现 {_preflightErrorCount} 个必须处理的问题",
+        _ when _preflightWarningCount > 0 => $"发现 {_preflightWarningCount} 条建议；仍可继续转换",
+        _ when HasBeenChecked => $"已识别 {ChapterCandidateCount} 个章节候选；未发现阻止转换的问题",
+        _ => "导入后会自动在后台分析",
+    };
     public Brush ReadinessForeground => (_preflightErrorCount ?? 0) > 0
         ? Brushes.Firebrick
         : _preflightWarningCount > 0 ? Brushes.DarkOrange : HasBeenChecked ? Brushes.SeaGreen : Brushes.SlateGray;
@@ -4234,11 +4393,51 @@ public sealed class InputBookItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibilityName)));
     }
 
-    public void SetPreflightResult(int errors, int warnings)
+    public void SetAnalysisPending()
     {
-        _preflightErrorCount = Math.Max(0, errors);
-        _preflightWarningCount = Math.Max(0, warnings);
-        foreach (var name in new[] { nameof(HasBeenChecked), nameof(HasPreflightIssues), nameof(PreflightErrorCount), nameof(PreflightWarningCount), nameof(ReadinessPriority), nameof(ReadinessLabel), nameof(ReadinessForeground) })
+        _analysisSnapshot = null;
+        _preflightErrorCount = null;
+        _preflightWarningCount = 0;
+        _analysisFailure = null;
+        _analysisStatus = BookAnalysisStatus.Pending;
+        RaiseAnalysisPropertiesChanged();
+    }
+
+    public void SetAnalysisRunning()
+    {
+        _analysisStatus = BookAnalysisStatus.Running;
+        RaiseAnalysisPropertiesChanged();
+    }
+
+    public void SetAnalysisUnavailable(string message)
+    {
+        _analysisSnapshot = null;
+        _preflightErrorCount = null;
+        _preflightWarningCount = 0;
+        _analysisStatus = BookAnalysisStatus.Unavailable;
+        _analysisFailure = message;
+        RaiseAnalysisPropertiesChanged();
+    }
+
+    public void SetAnalysisSnapshot(BookAnalysisSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _analysisSnapshot = snapshot;
+        _analysisFailure = null;
+        _preflightErrorCount = snapshot.Readiness.ErrorCount;
+        _preflightWarningCount = snapshot.Readiness.WarningCount;
+        _analysisStatus = BookAnalysisStatus.Completed;
+        RaiseAnalysisPropertiesChanged();
+    }
+
+    private void RaiseAnalysisPropertiesChanged()
+    {
+        foreach (var name in new[]
+                 {
+                     nameof(AnalysisSnapshot), nameof(AnalysisStatus), nameof(PreflightIssues), nameof(ChapterCandidateCount),
+                     nameof(HasBeenChecked), nameof(HasPreflightIssues), nameof(PreflightErrorCount), nameof(PreflightWarningCount),
+                     nameof(ReadinessPriority), nameof(ReadinessLabel), nameof(ReadinessDetail), nameof(ReadinessForeground),
+                 })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 

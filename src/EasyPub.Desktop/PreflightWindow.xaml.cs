@@ -47,6 +47,12 @@ public partial class PreflightWindow : Window
 
     private void IssuesGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e) => LocateSelected();
     private void Locate_Click(object sender, RoutedEventArgs e) => LocateSelected();
+    private void HandleIssue_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: PreflightIssueRow { Issue: { } issue } } || _navigate is null) return;
+        _navigate(issue);
+        Close();
+    }
 
     private void LocateSelected()
     {
@@ -63,4 +69,8 @@ public sealed record PreflightIssueRow(
     string SeverityText,
     string BookName,
     string Message,
-    ConversionPreflightIssue? Issue);
+    ConversionPreflightIssue? Issue)
+{
+    public bool CanNavigate => Issue is not null;
+    public string ActionLabel => Issue is null ? "—" : ReadinessEvaluator.ActionLabel(Issue.Target);
+}
