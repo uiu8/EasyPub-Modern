@@ -33,6 +33,7 @@ public sealed record EasyPubAppSettings(
 {
     public bool UseLegacyConfig { get; init; } = true;
     public string? LegacyConfigPath { get; init; }
+    public string? KindleGenPath { get; init; }
     public string TextEditorPath { get; init; } = "notepad.exe";
     public bool AutoOpenTaskCenter { get; init; }
     public bool AutoOpenOutputDirectory { get; init; }

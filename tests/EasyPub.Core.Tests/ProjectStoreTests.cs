@@ -1,9 +1,45 @@
+using System.Text.Json.Nodes;
 using EasyPub.Core;
 
 namespace EasyPub.Core.Tests;
 
 public sealed class ProjectStoreTests
 {
+    [Fact]
+    public async Task Schema_one_project_without_execution_settings_uses_safe_defaults()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"easypub-project-v1-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "旧项目.easypubproj");
+        var document = new EasyPubProjectDocument(
+            EasyPubProjectDocument.CurrentSchemaVersion,
+            path,
+            directory,
+            ConversionProfile.Default,
+            [],
+            DateTimeOffset.Now);
+
+        try
+        {
+            var store = new EasyPubProjectStore(path);
+            await store.SaveAsync(document);
+            var root = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+            root["SchemaVersion"] = 1;
+            Assert.True(root.Remove("ExecutionSettings"));
+            await File.WriteAllTextAsync(path, root.ToJsonString());
+
+            var loaded = await store.LoadAsync();
+
+            Assert.Equal(OutputCollisionPolicy.AutoRename, loaded.ExecutionSettings.CollisionPolicy);
+            Assert.False(loaded.ExecutionSettings.AutoOpenOutputDirectory);
+            Assert.False(loaded.ExecutionSettings.AutoOpenTaskCenter);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Project_round_trip_preserves_per_book_assets_and_profile()
     {
@@ -52,7 +88,15 @@ public sealed class ProjectStoreTests
                     new ChapterTreeEntry("chapter-1", "第一章", 1, true, 1, [new ChapterSourceRange(2, 3)])
                     { HeadingLevel = 2 }]),
             }],
-            DateTimeOffset.Now);
+            DateTimeOffset.Now)
+        {
+            ExecutionSettings = new ProjectExecutionSettings
+            {
+                CollisionPolicy = OutputCollisionPolicy.Skip,
+                AutoOpenOutputDirectory = true,
+                AutoOpenTaskCenter = true,
+            },
+        };
 
         try
         {
@@ -81,6 +125,9 @@ public sealed class ProjectStoreTests
             Assert.True(loaded.Profile.Options.TocHierarchy.Enabled);
             Assert.True(loaded.Profile.Options.ArtifactValidation.Enabled);
             Assert.Equal(50, loaded.Profile.Options.ArtifactValidation.MaxReportCount);
+            Assert.Equal(OutputCollisionPolicy.Skip, loaded.ExecutionSettings.CollisionPolicy);
+            Assert.True(loaded.ExecutionSettings.AutoOpenOutputDirectory);
+            Assert.True(loaded.ExecutionSettings.AutoOpenTaskCenter);
             Assert.Equal("译者", loaded.Profile.Options.Metadata.Translator);
             Assert.Equal(new DateOnly(2026, 8, 23), loaded.Profile.Options.Metadata.PublicationDate);
             var book = Assert.Single(loaded.Books);

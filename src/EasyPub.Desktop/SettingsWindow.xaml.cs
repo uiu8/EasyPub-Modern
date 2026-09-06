@@ -92,19 +92,14 @@ public partial class SettingsWindow : Window
 
     private void ResetTextEditor_Click(object sender, RoutedEventArgs e) => TextEditorPathText.Text = "notepad.exe";
 
-    private void TestKindleGen_Click(object sender, RoutedEventArgs e)
+    private async void TestKindleGen_Click(object sender, RoutedEventArgs e)
     {
-        var path = KindleGenPathText.Text.Trim();
-        if (!File.Exists(path))
-        {
-            EngineStatusText.Text = "未找到文件，请重新选择。";
-            EngineStatusText.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["ErrorBrush"];
-            return;
-        }
-        EngineStatusText.Text = Path.GetFileName(path).Contains("kindlegen", StringComparison.OrdinalIgnoreCase)
-            ? "引擎文件存在，可以用于转换。"
-            : "文件存在，但名称不像 KindleGen，请谨慎确认。";
-        EngineStatusText.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SuccessBrush"];
+        EngineStatusText.Text = "正在实际启动 KindleGen 进行自检…";
+        EngineStatusText.Foreground = (System.Windows.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
+        var result = await KindleGenHealthProbe.ProbeAsync(KindleGenPathText.Text.Trim());
+        EngineStatusText.Text = result.Message;
+        EngineStatusText.Foreground = (System.Windows.Media.Brush)Application.Current.Resources[
+            result.IsReady ? "SuccessBrush" : result.Status == KindleGenHealthStatus.Missing ? "ErrorBrush" : "WarningBrush"];
     }
 
     private void ValidationSettingsCheck_Click(object sender, RoutedEventArgs e) => RetentionSettingsCombo.IsEnabled = ValidationSettingsCheck.IsChecked == true;

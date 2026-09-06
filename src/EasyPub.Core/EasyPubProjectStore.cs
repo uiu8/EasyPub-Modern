@@ -24,7 +24,15 @@ public sealed record EasyPubProjectDocument(
     IReadOnlyList<EasyPubProjectBook> Books,
     DateTimeOffset UpdatedAt)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
+    public ProjectExecutionSettings ExecutionSettings { get; init; } = new();
+}
+
+public sealed record ProjectExecutionSettings
+{
+    public OutputCollisionPolicy CollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
+    public bool AutoOpenOutputDirectory { get; init; }
+    public bool AutoOpenTaskCenter { get; init; }
 }
 
 public sealed class EasyPubProjectStore
@@ -135,6 +143,7 @@ public sealed class EasyPubProjectStore
         ProjectPathHint = NormalizeOptionalPath(document.ProjectPathHint),
         OutputDirectory = NormalizeOptionalPath(document.OutputDirectory),
         Profile = document.Profile ?? ConversionProfile.Default,
+        ExecutionSettings = document.ExecutionSettings ?? new ProjectExecutionSettings(),
         Books = (document.Books ?? [])
             .Where(book => !string.IsNullOrWhiteSpace(book.InputPath))
             .Select(book => book with

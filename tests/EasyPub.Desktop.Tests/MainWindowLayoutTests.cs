@@ -36,8 +36,10 @@ public sealed class MainWindowLayoutTests
             Assert.IsType<Button>(window.FindName("EditSourceTextButton"));
             var bottomFormat = Assert.IsType<ComboBox>(window.FindName("FormatCombo"));
             var bottomPreset = Assert.IsType<ComboBox>(window.FindName("LayoutModeCombo"));
-            Assert.Equal(Visibility.Visible, bottomFormat.Visibility);
-            Assert.Equal(Visibility.Visible, bottomPreset.Visibility);
+            var managePreset = Assert.IsType<Button>(window.FindName("ManagePresetButton"));
+            Assert.True(bottomFormat.IsVisible);
+            Assert.True(bottomPreset.IsVisible);
+            Assert.True(managePreset.IsVisible);
             Assert.Equal("原版兼容", ((ComboBoxItem)bottomPreset.SelectedItem).Content);
 
             var captureTheme = Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_THEME") ?? "Light";
@@ -209,6 +211,15 @@ public sealed class MainWindowLayoutTests
                 filesList.SelectedItem = book;
                 window.UpdateLayout();
 
+                var rowSelectionCheckBox = Assert.Single(FindVisualDescendants<CheckBox>(filesList));
+                Assert.True(rowSelectionCheckBox.IsChecked);
+                rowSelectionCheckBox.IsChecked = false;
+                window.UpdateLayout();
+                Assert.Empty(filesList.SelectedItems);
+                rowSelectionCheckBox.IsChecked = true;
+                window.UpdateLayout();
+                Assert.Same(book, filesList.SelectedItem);
+
                 Assert.Contains("封面：无", selectedSummary.Text);
                 Assert.True(openCoverPreview.IsEnabled);
                 Assert.Equal(Visibility.Visible, coverPreview.Visibility);
@@ -250,6 +261,57 @@ public sealed class MainWindowLayoutTests
             if (File.Exists(inputPath)) File.Delete(inputPath);
             if (File.Exists(coverPath)) File.Delete(coverPath);
         }
+    }
+
+    [Fact]
+    public void Unified_conversion_settings_exposes_five_categories_without_advanced_expanders()
+    {
+        RunInWindow(window =>
+        {
+            Assert.IsType<Button>(window.FindName("AdjustConversionSettingsButton"));
+            var navigation = Assert.IsType<RadioButton>(window.FindName("ConvertNavigationButton"));
+            navigation.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, navigation));
+            window.UpdateLayout();
+
+            var settings = Assert.IsType<ConversionSettingsWindow>(window.FindName("ConversionSettingsPane"));
+            var host = Assert.IsType<Border>(window.FindName("ConversionSettingsPaneHost"));
+            var adjust = Assert.IsType<Button>(window.FindName("AdjustConversionSettingsButton"));
+            Assert.Equal(Visibility.Visible, host.Visibility);
+            Assert.Equal(Visibility.Collapsed, adjust.Visibility);
+            var tabs = Assert.IsType<TabControl>(settings.FindName("CategoryTabs"));
+            Assert.Equal(
+                ["基本输出", "EPUB 输入", "MOBI / Kindle", "性能与文件", "验收与完成"],
+                tabs.Items.OfType<TabItem>().Select(tab => tab.Header?.ToString() ?? string.Empty).ToArray());
+            Assert.IsType<ComboBox>(settings.FindName("OutputFormatCombo"));
+            Assert.IsType<RadioButton>(settings.FindName("PreserveEpubRadio"));
+            Assert.IsType<TextBlock>(settings.FindName("KindleGenStatusText"));
+            Assert.IsType<ComboBox>(settings.FindName("ParallelismCombo"));
+            Assert.IsType<CheckBox>(settings.FindName("ArtifactValidationCheck"));
+            Assert.DoesNotContain(FindVisualDescendants<Expander>(settings), _ => true);
+            var cancel = Assert.IsType<Button>(settings.FindName("CancelSettingsButton"));
+            cancel.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, cancel));
+            Assert.Equal(Visibility.Collapsed, host.Visibility);
+            Assert.Equal(Visibility.Visible, adjust.Visibility);
+            adjust.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, adjust));
+            window.UpdateLayout();
+            Assert.Equal(Visibility.Visible, host.Visibility);
+            Assert.Equal(Visibility.Collapsed, adjust.Visibility);
+            var capturePath = Environment.GetEnvironmentVariable("EASYPUB_CONVERSION_SETTINGS_CAPTURE_PATH");
+            if (!string.IsNullOrWhiteSpace(capturePath))
+            {
+                for (var index = 0; index < tabs.Items.Count; index++)
+                {
+                    tabs.SelectedIndex = index;
+                    window.UpdateLayout();
+                    var tabCapturePath = index == 0
+                        ? capturePath
+                        : Path.Combine(
+                            Path.GetDirectoryName(capturePath)!,
+                            $"{Path.GetFileNameWithoutExtension(capturePath)}-tab{index + 1}{Path.GetExtension(capturePath)}");
+                    CaptureWindowVisual(window, tabCapturePath);
+                }
+            }
+        });
     }
 
     [Fact]
@@ -457,6 +519,101 @@ public sealed class MainWindowLayoutTests
             MainWindow.ApplyLibrarySelection(list, secondRow, extendSelection: true);
             Assert.Single(list.SelectedItems);
             Assert.Contains(first, list.SelectedItems.Cast<InputBookItem>());
+        });
+    }
+
+    [Fact]
+    public void Library_row_checkboxes_allow_independent_toggle_without_modifier_keys()
+    {
+        RunInWindow(window =>
+        {
+            var first = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-checkbox-selection-a.txt"));
+            var second = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-checkbox-selection-b.txt"));
+            window.InputBooks.Add(first);
+            window.InputBooks.Add(second);
+            var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+            list.UnselectAll();
+            list.ScrollIntoView(first);
+            list.ScrollIntoView(second);
+            window.UpdateLayout();
+
+            var firstRow = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(first));
+            var secondRow = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromItem(second));
+            var firstCheckBox = Assert.Single(FindVisualDescendants<CheckBox>(firstRow));
+            var secondCheckBox = Assert.Single(FindVisualDescendants<CheckBox>(secondRow));
+            var previewHandler = typeof(MainWindow).GetMethod(
+                "FilesList_PreviewMouseLeftButtonDown",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(previewHandler);
+
+            void PreviewCheckBoxClick(CheckBox checkBox)
+            {
+                var click = new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    System.Windows.Input.MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent,
+                    Source = checkBox,
+                };
+                previewHandler!.Invoke(window, [list, click]);
+                Assert.False(click.Handled);
+            }
+
+            PreviewCheckBoxClick(firstCheckBox);
+            firstCheckBox.IsChecked = true;
+            PreviewCheckBoxClick(secondCheckBox);
+            secondCheckBox.IsChecked = true;
+            Assert.Equal(2, list.SelectedItems.Count);
+            var capturePath = Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_SELECTION_CAPTURE_PATH");
+            if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(window, capturePath);
+
+            PreviewCheckBoxClick(firstCheckBox);
+            firstCheckBox.IsChecked = false;
+            Assert.Single(list.SelectedItems);
+            Assert.Contains(second, list.SelectedItems.Cast<InputBookItem>());
+        });
+    }
+
+    [Fact]
+    public void Library_multi_selection_keeps_inspector_visible_and_cycles_without_changing_selection()
+    {
+        RunInWindow(window =>
+        {
+            var first = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-inspector-a.txt"));
+            var second = new InputBookItem(Path.Combine(Path.GetTempPath(), "easypub-inspector-b.txt"));
+            window.InputBooks.Add(first);
+            window.InputBooks.Add(second);
+            var list = Assert.IsType<ListBox>(window.FindName("FilesList"));
+            list.SelectAll();
+            window.UpdateLayout();
+
+            var inspector = Assert.IsType<Border>(window.FindName("CoverDropPanel"));
+            var navigation = Assert.IsType<StackPanel>(window.FindName("SelectedBookNavigationPanel"));
+            var position = Assert.IsType<TextBlock>(window.FindName("SelectedBookPositionText"));
+            var title = Assert.IsType<TextBlock>(window.FindName("SelectedBookNameText"));
+            var previous = Assert.IsType<Button>(window.FindName("PreviousSelectedBookButton"));
+            var next = Assert.IsType<Button>(window.FindName("NextSelectedBookButton"));
+            Assert.True(inspector.IsVisible);
+            Assert.True(navigation.IsVisible);
+            Assert.Equal("2 / 2", position.Text);
+            Assert.Equal(second.DisplayName, title.Text);
+
+            previous.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, previous));
+            window.UpdateLayout();
+            Assert.Equal(2, list.SelectedItems.Count);
+            Assert.Equal("1 / 2", position.Text);
+            Assert.Equal(first.DisplayName, title.Text);
+
+            next.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, next));
+            window.UpdateLayout();
+            Assert.Equal(2, list.SelectedItems.Count);
+            Assert.Equal("2 / 2", position.Text);
+            Assert.Equal(second.DisplayName, title.Text);
+            Assert.True(Assert.IsType<Button>(window.FindName("QuickChapterButton")).IsEnabled);
+
+            var capturePath = Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_INSPECTOR_CAPTURE_PATH");
+            if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(window, capturePath);
         });
     }
 
@@ -796,7 +953,10 @@ public sealed class MainWindowLayoutTests
                     var captureRequested = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_CHAPTER_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_SELECTION_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_INSPECTOR_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_COVER_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_CONVERSION_SETTINGS_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH"));
                     if (captureRequested && Application.Current is null)
                     {
