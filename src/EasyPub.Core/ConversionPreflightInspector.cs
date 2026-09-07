@@ -18,6 +18,7 @@ public enum PreflightTargetKind
     BookInformation,
     Mobi,
     Font,
+    TextCleanup,
 }
 
 public sealed record ConversionPreflightIssue(
@@ -59,11 +60,13 @@ public sealed class ConversionPreflightInspector
             async (jobIndex, token) =>
         {
             var request = jobs[jobIndex];
+            bool Check(PreflightTargetKind target) => request.AutomaticChecks is null || request.AutomaticChecks.Targets.Contains(target);
             var issues = new List<ConversionPreflightIssue>();
             var books = new List<ConversionPreflightBook>();
             try
             {
                 token.ThrowIfCancellationRequested();
+                if (request.AutomaticChecks is { Enabled: false }) return;
                 if (!File.Exists(request.InputPath))
                 {
                     issues.Add(new ConversionPreflightIssue(
@@ -97,6 +100,15 @@ public sealed class ConversionPreflightInspector
                             issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_drm", "EPUB 含 DRM 或不支持的加密资源。", PreflightTargetKind.InputBook));
                         if (inspection.IsFixedLayout && options.Mobi.EpubInputMode == EpubInputMode.EasyPubCompatible)
                             issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_fixed_layout_reflow", "固定版式 EPUB 不能兼容重排，请选择“保留原 EPUB 版式”。", PreflightTargetKind.Mobi));
+                        else if (options.Mobi.EpubInputMode == EpubInputMode.EasyPubCompatible)
+                        {
+                            try { EpubInspectionService.ValidateCompatibleReflow(request.InputPath); }
+                            catch (InvalidDataException exception)
+                            {
+                                issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error,
+                                    "epub_reflow_unsafe", exception.Message, PreflightTargetKind.Mobi));
+                            }
+                        }
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException)
                     {
@@ -115,6 +127,72 @@ public sealed class ConversionPreflightInspector
                             request.ChapterTree,
                             token);
                         inputLineCount = document.LineCount;
+                        var sourceText = string.Join("\n", document.SourceLines.Select(line => line.Text));
+                        TextCleanupPreview? plannedCleanup = null;
+                        try
+                        {
+                            if (options.TextCleanup.Enabled)
+                            {
+                                plannedCleanup = TextCleanupPipeline.Apply(sourceText, options.TextCleanup, token);
+                                plannedCleanup.EnsureSourcePositionsAreSafe(request.ChapterTree is not null || options.Illustrations.Any(image => image.InsertAfterLine.HasValue));
+                            }
+                        }
+                        catch (Exception exception) when (exception is not OperationCanceledException)
+                        {
+                            issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error,
+                                "cleanup_plan_invalid", $"转换清理规则无法安全应用：{exception.Message}", PreflightTargetKind.TextCleanup));
+                        }
+                        if (request.AutomaticChecks is { } checks)
+                        {
+                            if (checks.Cleanup.Enabled)
+                            {
+                                try
+                                {
+                                    var preview = TextCleanupPipeline.Apply(sourceText, checks.Cleanup, token);
+                                    var planned = (plannedCleanup?.Changes ?? []).Where(change => change.IsApplied)
+                                        .Select(change => (change.Key, change.After)).ToHashSet();
+                                    var excluded = options.TextCleanup.ExcludedChangeKeys.ToHashSet(StringComparer.Ordinal);
+                                    foreach (var group in preview.Changes.Where(change => change.IsApplied).GroupBy(change => new
+                                    {
+                                        change.Rule,
+                                        State = excluded.Contains(change.Key) ? "已确认保留" : planned.Contains((change.Key, change.After)) ? "已计划清理" : "待确认"
+                                    }))
+                                        issues.Add(new ConversionPreflightIssue(request.InputPath,
+                                            group.Key.State == "待确认" ? PreflightSeverity.Warning : PreflightSeverity.Information,
+                                            "cleanup_check", $"{group.Key.Rule}：{group.Count()} 处{group.Key.State}，首处原文第 {group.First().LineNumber} 行。",
+                                            PreflightTargetKind.TextCleanup, group.First().LineNumber));
+                                }
+                                catch (Exception exception) when (exception is not OperationCanceledException)
+                                {
+                                    issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error,
+                                        "cleanup_rule_invalid", $"自动检查的清理规则无效：{exception.Message}", PreflightTargetKind.TextCleanup));
+                                }
+                            }
+                        }
+                        else
+                        {
+                        var notices = 0;
+                        int? firstNoticeLine = null;
+                        var exclusions = new HashSet<string>(options.TextCleanup.ExcludedChangeKeys, StringComparer.Ordinal);
+                        foreach (var line in document.SourceLines)
+                        {
+                            if ((line.LineNumber & 1023) == 0) token.ThrowIfCancellationRequested();
+                            if (!TextCleanupPipeline.IsSiteNotice(line.Text)) continue;
+                            if (exclusions.Contains(TextCleanupPipeline.CreateChangeKey(line.LineNumber, "清理网站广告/下载说明", line.Text))) continue;
+                            notices++;
+                            firstNoticeLine ??= line.LineNumber;
+                        }
+                        if (notices > 0)
+                        {
+                            var enabled = options.TextCleanup.RemoveSiteNotices;
+                            issues.Add(new ConversionPreflightIssue(request.InputPath,
+                                enabled ? PreflightSeverity.Information : PreflightSeverity.Warning,
+                                "site_notices",
+                                $"发现 {notices} 行疑似网站广告/下载说明（首处原文第 {firstNoticeLine} 行）；"
+                                    + (enabled ? "已开启广告清理，转换时将按规则处理，可预览确认。" : "建议打开文本清理预览并确认。"),
+                                PreflightTargetKind.TextCleanup, firstNoticeLine));
+                        }
+                        }
                         var candidateCount = document.Entries.Count(entry => entry.TitleLineNumber.HasValue);
                         books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
                         if (candidateCount == 0)
@@ -138,7 +216,7 @@ public sealed class ConversionPreflightInspector
                     }
                 }
 
-                if (File.Exists(request.OutputPath))
+                if (Check(PreflightTargetKind.Output) && File.Exists(request.OutputPath))
                 {
                     issues.Add(new ConversionPreflightIssue(
                         request.InputPath,
@@ -148,7 +226,7 @@ public sealed class ConversionPreflightInspector
                         PreflightTargetKind.Output));
                 }
 
-                if (!string.IsNullOrWhiteSpace(options.CoverImagePath)
+                if (Check(PreflightTargetKind.Cover) && !string.IsNullOrWhiteSpace(options.CoverImagePath)
                     && !File.Exists(options.CoverImagePath))
                 {
                     issues.Add(new ConversionPreflightIssue(
@@ -158,7 +236,7 @@ public sealed class ConversionPreflightInspector
                         $"找不到封面文件：{options.CoverImagePath}",
                         PreflightTargetKind.Cover));
                 }
-                else if (!string.IsNullOrWhiteSpace(options.CoverImagePath))
+                else if (Check(PreflightTargetKind.Cover) && !string.IsNullOrWhiteSpace(options.CoverImagePath))
                 {
                     try
                     {
@@ -175,7 +253,7 @@ public sealed class ConversionPreflightInspector
                     }
                 }
 
-                foreach (var illustration in options.Illustrations)
+                foreach (var illustration in Check(PreflightTargetKind.Illustrations) ? options.Illustrations : [])
                 {
                     if (illustration.InsertAfterLine is int insertAfterLine &&
                         (insertAfterLine < 1 || inputLineCount is not null && insertAfterLine > inputLineCount))
@@ -240,7 +318,7 @@ public sealed class ConversionPreflightInspector
                         PreflightTargetKind.BookInformation));
                 }
 
-                if (options.Font.Enabled)
+                if (Check(PreflightTargetKind.Font) && options.Font.Enabled)
                 {
                     if (string.IsNullOrWhiteSpace(options.Font.FontPath) || !File.Exists(options.Font.FontPath))
                     {

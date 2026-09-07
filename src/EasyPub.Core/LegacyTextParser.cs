@@ -21,7 +21,8 @@ internal static partial class LegacyTextParser
     {
         var bytes = await File.ReadAllBytesAsync(inputPath, cancellationToken);
         var text = TextFileDecoder.Decode(bytes, options.TextEncoding).Text;
-        var cleanup = TextCleanupPipeline.Apply(text, options.TextCleanup);
+        var cleanup = TextCleanupPipeline.Apply(text, options.TextCleanup, cancellationToken);
+        cleanup.EnsureSourcePositionsAreSafe(chapterTree is not null || options.Illustrations.Any(image => image.InsertAfterLine.HasValue));
         var sourceLines = cleanup.Lines;
         if (chapterTree is not null)
             return ParseUsingChapterTree(bytes, sourceLines, options, chapterTree);

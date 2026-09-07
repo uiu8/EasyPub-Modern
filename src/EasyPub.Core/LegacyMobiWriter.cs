@@ -216,7 +216,8 @@ internal static class LegacyMobiWriter
         mobiBytes = LegacyMobiPostProcessor.ApplyEasyPubMetadata(mobiBytes, asin);
         if (kindleGenProducedJointMobi && !LegacyMobiPostProcessor.HasValidJointStructure(mobiBytes))
             throw new InvalidDataException("MOBI 后处理破坏了 Kindle KF8 联合结构，已停止输出无效文件。");
-        await File.WriteAllBytesAsync(outputPath, mobiBytes, cancellationToken).ConfigureAwait(false);
+        await AtomicOutputWriter.WriteAsync(outputPath,
+            (stream, token) => stream.WriteAsync(mobiBytes.AsMemory(), token).AsTask(), cancellationToken).ConfigureAwait(false);
         progress?.Report(new ConversionProgress(reportedInputPath, 1, "转换完成"));
         return mobiBytes.LongLength;
     }

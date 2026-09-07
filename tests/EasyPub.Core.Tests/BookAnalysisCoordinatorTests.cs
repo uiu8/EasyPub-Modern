@@ -5,6 +5,38 @@ namespace EasyPub.Core.Tests;
 public sealed class BookAnalysisCoordinatorTests
 {
     [Fact]
+    public async Task Automatic_analysis_detects_site_advertising_without_enabling_cleanup()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"easypub-ad-analysis-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "book.txt");
+        try
+        {
+            await File.WriteAllTextAsync(path, "第一章 开始\n正文\n更新不易，请书友分享，速读谷 www.sudugu.org，无错最新章节\n正文");
+            var result = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"))]);
+            Assert.Contains(result.Report.Issues, issue => issue.Code == "site_notices" && issue.LineNumber == 3);
+            Assert.Equal(BookReadiness.NeedsReview, result.Books[0].Readiness.State);
+            var enabled = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"))
+            {
+                Options = ConversionOptions.LegacyDefault with { TextCleanup = new TextCleanupOptions { RemoveSiteNotices = true } }
+            }]);
+            Assert.Contains(enabled.Report.Issues, issue => issue.Code == "site_notices" && issue.Severity == PreflightSeverity.Information);
+            Assert.Equal(BookReadiness.Ready, enabled.Books[0].Readiness.State);
+
+            var realBook = Environment.GetEnvironmentVariable("EASYPUB_AD_REGRESSION_BOOK");
+            if (!string.IsNullOrWhiteSpace(realBook))
+            {
+                var actual = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(realBook, Path.Combine(root, "actual.epub"))]);
+                Assert.Contains(actual.Report.Issues, issue => issue.Code == "site_notices");
+                var preview = TextCleanupPipeline.Apply(await TextCleanupPipeline.ReadFileAsync(realBook, TextEncodingMode.Auto), new TextCleanupOptions { RemoveSiteNotices = true });
+                Assert.Contains(preview.Changes, change => change.LineNumber == 27073);
+                Console.WriteLine($"REAL_BOOK_ADS={preview.Changes.Count}; LINE_27073=DETECTED");
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public void Readiness_maps_errors_warnings_and_clean_reports_to_three_user_states()
     {
         var ready = ReadinessEvaluator.Evaluate([]);

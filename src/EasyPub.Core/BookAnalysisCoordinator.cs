@@ -7,6 +7,7 @@ public enum BookReadiness
     Ready,
     NeedsReview,
     Blocked,
+    Unchecked,
 }
 
 public sealed record ReadinessAssessment(
@@ -18,9 +19,12 @@ public sealed record ReadinessAssessment(
 
 public static class ReadinessEvaluator
 {
-    public static ReadinessAssessment Evaluate(IEnumerable<ConversionPreflightIssue> issues)
+    public static ReadinessAssessment Evaluate(IEnumerable<ConversionPreflightIssue> issues, AutomaticCheckOptions? checks = null)
     {
         ArgumentNullException.ThrowIfNull(issues);
+        if (checks is not null && (!checks.Enabled || !checks.ActiveLabels().Any()))
+            return new ReadinessAssessment(BookReadiness.Unchecked, 0, 0,
+                checks.Enabled ? "未选择检查项" : "自动检查已关闭", "未执行所选检查；转换时仍验证必要条件");
         var items = issues.ToArray();
         var errors = items.Count(issue => issue.Severity == PreflightSeverity.Error);
         var warnings = items.Count(issue => issue.Severity == PreflightSeverity.Warning);
@@ -28,7 +32,9 @@ public static class ReadinessEvaluator
             return new ReadinessAssessment(BookReadiness.Blocked, errors, warnings, "必须处理", $"{errors} 个错误阻止转换");
         if (warnings > 0)
             return new ReadinessAssessment(BookReadiness.NeedsReview, 0, warnings, "建议处理", $"{warnings} 条建议，可继续转换");
-        return new ReadinessAssessment(BookReadiness.Ready, 0, 0, "可直接转换", "未发现阻止转换的问题");
+        return new ReadinessAssessment(BookReadiness.Ready, 0, 0,
+            checks is null ? "可直接转换" : "所选检查通过",
+            checks is null ? "未发现阻止转换的问题" : "仅代表已选择的检查项通过；不等于成品内容或真机验收通过");
     }
 
     public static string ActionLabel(PreflightTargetKind target) => target switch
@@ -40,6 +46,7 @@ public static class ReadinessEvaluator
         PreflightTargetKind.BookInformation => "编辑书籍信息",
         PreflightTargetKind.Mobi => "设置 KindleGen",
         PreflightTargetKind.Font => "调整字体",
+        PreflightTargetKind.TextCleanup => "查看广告并清理",
         PreflightTargetKind.InputBook => "查看书稿",
         _ => "查看处理",
     };
@@ -78,6 +85,15 @@ public sealed class BookAnalysisCoordinator(ConversionPreflightCache? cache = nu
         var jobs = requests.ToArray();
         var stopwatch = Stopwatch.StartNew();
         var (report, reused) = await _cache.InspectAsync(jobs, cancellationToken).ConfigureAwait(false);
+        if (jobs.Any(job => job.AutomaticChecks is not null))
+        {
+            var settings = jobs.ToDictionary(job => Path.GetFullPath(job.InputPath), job => job.AutomaticChecks, StringComparer.OrdinalIgnoreCase);
+            report = report with { Issues = report.Issues.Where(issue =>
+            {
+                var checks = issue.InputPath is null ? jobs[0].AutomaticChecks : settings.GetValueOrDefault(Path.GetFullPath(issue.InputPath));
+                return checks is null || checks.Enabled && (issue.Target == PreflightTargetKind.TextCleanup || checks.Targets.Contains(issue.Target));
+            }).ToArray() };
+        }
         stopwatch.Stop();
 
         var booksByPath = report.Books
@@ -105,7 +121,7 @@ public sealed class BookAnalysisCoordinator(ConversionPreflightCache? cache = nu
                 info.Exists ? info.Length : 0,
                 info.Exists ? info.LastWriteTimeUtc : DateTime.MinValue,
                 book?.ChapterCandidateCount ?? 0,
-                ReadinessEvaluator.Evaluate(issues),
+                ReadinessEvaluator.Evaluate(issues, request.AutomaticChecks),
                 issues,
                 DateTimeOffset.UtcNow));
         }

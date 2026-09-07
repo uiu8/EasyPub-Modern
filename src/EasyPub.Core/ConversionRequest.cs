@@ -8,6 +8,7 @@ public sealed record ConversionRequest(
     ConversionOptions? Options = null)
 {
     public ChapterTreePlan? ChapterTree { get; init; }
+    public AutomaticCheckOptions? AutomaticChecks { get; init; }
 }
 
 public sealed record ConversionOptions

@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
     private readonly ConversionHistoryStore _historyStore = ConversionHistoryStore.CreateDefault();
     private readonly BookAnalysisCoordinator _analysisCoordinator = new();
+    private AutomaticCheckOptions _automaticChecks = new();
     private readonly object _chapterDocumentCacheGate = new();
     private readonly Dictionary<ChapterDocumentCacheKey, Task<ChapterTreeDocument>> _chapterDocumentCache = [];
     private readonly EasyPubProjectStore _recoveryStore = EasyPubProjectStore.CreateRecoveryDefault();
@@ -440,6 +441,7 @@ public partial class MainWindow : Window
         ConversionSettingsPane.LoadDraft(draft, context);
         ConversionSettingsPaneHost.Visibility = Visibility.Visible;
         ConversionSettingsPaneColumn.Width = new GridLength(620);
+        UpdateConversionPaneLayout();
         AdjustConversionSettingsButton.Visibility = Visibility.Collapsed;
     }
 
@@ -447,6 +449,7 @@ public partial class MainWindow : Window
     {
         ConversionSettingsPaneHost.Visibility = Visibility.Collapsed;
         ConversionSettingsPaneColumn.Width = new GridLength(0);
+        UpdateConversionPaneLayout();
         AdjustConversionSettingsButton.Visibility = Visibility.Visible;
     }
 
@@ -553,7 +556,7 @@ public partial class MainWindow : Window
     {
         ThemeManager.Apply(_theme, this);
         var compact = string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase);
-        SidebarColumn.Width = new GridLength(compact ? 166 : 184);
+        SidebarColumn.Width = new GridLength(ActualWidth < 1280 ? 132 : compact ? 166 : 184);
         foreach (var button in new[] { LibraryNavigationButton, ChaptersNavigationButton, CoverNavigationButton, LayoutNavigationButton, ConvertNavigationButton, TasksNavigationButton })
             button.Height = compact ? 42 : 48;
         FontSize = Math.Clamp(12d * _uiScalePercent / 100d, 10.5, 15);
@@ -785,6 +788,8 @@ public partial class MainWindow : Window
 
     private void ApplyAppSettings(EasyPubAppSettings settings)
     {
+        _automaticChecks = settings.AutomaticChecks ?? new();
+        UpdateAutomaticCheckSummary();
         if (!string.IsNullOrWhiteSpace(settings.OutputDirectory))
             OutputDirectoryText.Text = settings.OutputDirectory;
         ConversionPresets.Clear();
@@ -981,6 +986,7 @@ public partial class MainWindow : Window
             ConversionPresets.ToArray())
         {
             UseLegacyConfig = _useLegacyConfig,
+            AutomaticChecks = _automaticChecks,
             LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
             KindleGenPath = EmptyToNull(KindleGenText.Text),
             TextEditorPath = _textEditorPath,
@@ -1275,6 +1281,12 @@ public partial class MainWindow : Window
 
     private void ScheduleAutomaticAnalysis()
     {
+        UpdateAutomaticCheckSummary();
+        if (!_automaticChecks.Enabled)
+        {
+            foreach (var book in InputBooks) book.SetAnalysisDisabled();
+            return;
+        }
         if (!_optionTrackingReady || !IsLoaded || InputBooks.Count == 0) return;
         foreach (var book in InputBooks) book.SetAnalysisPending();
         _automaticAnalysisCancellation?.Cancel();
@@ -1286,7 +1298,7 @@ public partial class MainWindow : Window
 
     private async Task RunAutomaticAnalysisAsync()
     {
-        if (InputBooks.Count == 0) return;
+        if (!_automaticChecks.Enabled || InputBooks.Count == 0) return;
         var generation = Interlocked.Increment(ref _automaticAnalysisGeneration);
         _automaticAnalysisCancellation?.Cancel();
         _automaticAnalysisCancellation?.Dispose();
@@ -1299,7 +1311,7 @@ public partial class MainWindow : Window
         try
         {
             var requests = await BuildConversionRequestsForBooksAsync(books, resolveCollisions: false, enforceCompatibility: false);
-            var result = await _analysisCoordinator.AnalyzeAsync(requests, cancellationToken);
+            var result = await _analysisCoordinator.AnalyzeAsync(requests.Select(request => request with { AutomaticChecks = _automaticChecks }), cancellationToken);
             if (generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
             ApplyAnalysisToWorklist(result);
             _lastPreflightReport = result.Report;
@@ -1308,8 +1320,8 @@ public partial class MainWindow : Window
             var review = result.Books.Count(book => book.Readiness.State == BookReadiness.NeedsReview);
             var blocked = result.Books.Count(book => book.Readiness.State == BookReadiness.Blocked);
             StatusText.Text = result.Reused
-                ? $"分析结果未变化，已复用缓存 · 可转换 {ready} · 建议处理 {review} · 必须处理 {blocked}"
-                : $"自动分析完成 · 可转换 {ready} · 建议处理 {review} · 必须处理 {blocked}";
+                ? $"已复用检查结果 · 所选检查通过 {ready} · 建议处理 {review} · 必须处理 {blocked} · 未检查 {result.Books.Count - ready - review - blocked}"
+                : $"自动检查完成 · 所选检查通过 {ready} · 建议处理 {review} · 必须处理 {blocked} · 未检查 {result.Books.Count - ready - review - blocked}";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1327,6 +1339,30 @@ public partial class MainWindow : Window
             UpdateConversionSummary();
             _bookWorklistView?.Refresh();
         }
+    }
+
+    private void UpdateAutomaticCheckSummary()
+    {
+        AutomaticCheckSummaryText.Text = _automaticChecks.Enabled
+            ? $"已开启 {_automaticChecks.ActiveLabels().Count()} 项检查"
+            : "自动检查已关闭";
+        AutomaticCheckDetailsText.Text = _automaticChecks.Summary;
+    }
+
+    private async void AutomaticCheckSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AutomaticCheckWindow(_automaticChecks, _textCleanupOptions.CustomRules) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _automaticChecks = dialog.Result;
+        Interlocked.Increment(ref _automaticAnalysisGeneration);
+        _automaticAnalysisCancellation?.Cancel();
+        _automaticAnalysisTimer.Stop();
+        _analysisCoordinator.Clear();
+        _lastPreflightReport = null;
+        ScheduleAutomaticAnalysis();
+        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+        try { await _appSettingsStore.SaveAsync(CaptureAppSettings()); }
+        catch (Exception exception) { InkDialog.Show(this, exception.Message, "检查设置保存失败"); }
     }
 
     private void MarkRecoveryClean()
@@ -1412,8 +1448,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.19"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.19";
+            ? "EasyPub Modern v1.19.7"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.19.7";
         UpdateWorkspaceScope();
     }
 
@@ -1793,15 +1829,21 @@ public partial class MainWindow : Window
         try
         {
             var encoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag!.ToString()!);
-            var window = await TextCleanupWindow.CreateAsync(selected.InputPath, encoding, _textCleanupOptions);
+            var previewOptions = sender is ConversionPreflightIssue { Code: "cleanup_check" }
+                ? AutomaticCheckOptions.MergeCleanupForPreview(_textCleanupOptions, _automaticChecks.Cleanup)
+                : sender is ConversionPreflightIssue { Target: PreflightTargetKind.TextCleanup }
+                ? _textCleanupOptions with { RemoveSiteNotices = true }
+                : _textCleanupOptions;
+            var window = await TextCleanupWindow.CreateAsync(selected.InputPath, encoding, previewOptions);
             window.Owner = this;
             if (window.ShowDialog() != true) return;
             _textCleanupOptions = window.Result;
             UpdateTextCleanupSummary();
+            MarkProjectDirty();
             _conversionMode = ConversionMode.Custom;
             CustomModeRadio.IsChecked = true;
             StatusText.Text = _textCleanupOptions.Enabled
-                ? "已保存文本清理规则；转换时只在内存中处理，不修改源 TXT"
+                ? "已保存本项目全部 TXT 的清理规则；仅转换时处理，不修改源文件"
                 : "已关闭文本清理规则";
         }
         catch (Exception exception)
@@ -1813,16 +1855,7 @@ public partial class MainWindow : Window
     private void UpdateTextCleanupSummary()
     {
         if (TextCleanupStatusText is null) return;
-        var count = new[]
-        {
-            _textCleanupOptions.CollapseBlankLines,
-            _textCleanupOptions.RepairHardWraps,
-            _textCleanupOptions.NormalizeFullWidthSpaces,
-            _textCleanupOptions.NormalizeChapterNumbers,
-            _textCleanupOptions.RemoveSiteNotices,
-            _textCleanupOptions.NormalizePunctuation,
-            _textCleanupOptions.ChineseVariant != ChineseVariantConversion.None,
-        }.Count(enabled => enabled);
+        var count = new AutomaticCheckOptions { Targets = [], Cleanup = _textCleanupOptions }.ActiveLabels().Count();
         TextCleanupStatusText.Text = count == 0
             ? "使用原文，不做额外清理"
             : $"已启用 {count} 项规则 · 可预览、可撤销 · 不修改源文件";
@@ -2885,6 +2918,7 @@ public partial class MainWindow : Window
             SelectedBookFormatText.Text = "—";
             SelectedBookSummaryText.Text = "请选择书稿查看封面、元数据、插图和章节树状态";
             SelectedBookPathText.Text = string.Empty;
+            SelectedBookPathText.ToolTip = null;
             SelectedBookReadinessText.Text = "等待分析";
             SelectedBookReadinessText.Foreground = Brushes.SlateGray;
             SelectedBookAnalysisText.Text = "导入书稿后会自动在后台分析";
@@ -2899,7 +2933,8 @@ public partial class MainWindow : Window
         SelectedBookNameText.ToolTip = book.InputPath;
         SelectedBookFormatText.Text = book.FormatLabel;
         SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
-        SelectedBookPathText.Text = book.DirectoryPath;
+        SelectedBookPathText.Text = book.DirectoryDisplayName;
+        SelectedBookPathText.ToolTip = book.DirectoryPath;
         SelectedBookReadinessText.Text = book.ReadinessLabel;
         SelectedBookReadinessText.Foreground = book.ReadinessForeground;
         SelectedBookAnalysisText.Text = book.ReadinessDetail;
@@ -3140,7 +3175,7 @@ public partial class MainWindow : Window
             ViewSelectedBookIssuesButton.IsEnabled = false;
             ViewSelectedBookIssuesButton.Content = "正在分析…";
             var requests = await BuildConversionRequestsForBooksAsync([book], resolveCollisions: false, enforceCompatibility: false);
-            var result = await _analysisCoordinator.AnalyzeAsync(requests);
+            var result = await _analysisCoordinator.AnalyzeAsync(requests.Select(request => request with { AutomaticChecks = _automaticChecks.Enabled ? _automaticChecks : null }));
             ApplyAnalysisToWorklist(result);
             _lastPreflightReport = result.Report;
             new PreflightWindow(result.Report, allowContinue: false, NavigateToPreflightIssue) { Owner = this }.ShowDialog();
@@ -3169,6 +3204,9 @@ public partial class MainWindow : Window
 
         switch (issue.Target)
         {
+            case PreflightTargetKind.TextCleanup:
+                EditTextCleanup_Click(issue, new RoutedEventArgs());
+                break;
             case PreflightTargetKind.Chapters:
                 EditChapters_Click(this, new RoutedEventArgs());
                 break;
@@ -4020,12 +4058,26 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private void UpdateConversionPaneLayout()
+    {
+        var narrowEditor = ActualWidth < 1280 && ConversionSettingsPaneHost.Visibility == Visibility.Visible;
+        ConversionSummaryCard.Visibility = narrowEditor ? Visibility.Collapsed : Visibility.Visible;
+        ConversionSummaryColumn.Width = narrowEditor ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        ConversionGapColumn.Width = new GridLength(narrowEditor || ConversionSettingsPaneHost.Visibility != Visibility.Visible ? 0 : 12);
+        if (ConversionSettingsPaneHost.Visibility == Visibility.Visible)
+            ConversionSettingsPaneColumn.Width = narrowEditor ? new GridLength(1, GridUnitType.Star) : new GridLength(620);
+    }
+
     private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (RootLayout is null || OptionsTabs is null) return;
-        var compact = ActualWidth < 980;
+        var compact = ActualWidth < 1280;
         if (_compactLayout == compact && IsLoaded) return;
         _compactLayout = compact;
+        HeaderBrandColumn.Width = new GridLength(compact ? 275 : 420);
+        HeaderThemeColumn.Width = new GridLength(compact ? 160 : 210);
+        HeaderSettingsColumn.Width = new GridLength(compact ? 65 : 120);
+        UpdateConversionPaneLayout();
         RootLayout.Margin = compact ? new Thickness(10) : new Thickness(18);
         MainContentGrid.Margin = compact ? new Thickness(12, 14, 8, 10) : new Thickness(18, 18, 12, 12);
         HeaderLogo.Width = HeaderLogo.Height = compact ? 40 : 48;
@@ -4208,6 +4260,7 @@ public partial class MainWindow : Window
 
 public enum BookAnalysisStatus
 {
+    Disabled,
     NotAnalyzed,
     Pending,
     Running,
@@ -4246,6 +4299,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
             if (!SetField(ref _inputPath, Path.GetFullPath(value))) return;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DirectoryPath)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DirectoryDisplayName)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEpub)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FormatLabel)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AccessibilityName)));
@@ -4256,6 +4310,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
     public override string ToString() => DisplayName;
 
     public string DirectoryPath => Path.GetDirectoryName(InputPath) ?? string.Empty;
+    public string DirectoryDisplayName => string.IsNullOrEmpty(DirectoryPath) ? string.Empty : new DirectoryInfo(DirectoryPath).Name;
     public bool IsEpub => string.Equals(Path.GetExtension(InputPath), ".epub", StringComparison.OrdinalIgnoreCase);
     public string FormatLabel => IsEpub ? "EPUB" : "TXT";
     public string AccessibilityName => $"{DisplayName}，{FormatLabel}，封面{(CoverImagePath is null ? "未设置" : "已设置")}，插图 {_illustrations.Count} 张，元数据{(_metadataOverrides.IsEmpty ? "未设置" : "已设置")}，章节树{(_chapterTree is null ? "未设置" : $"{_chapterTree.Entries.Count} 项")}";
@@ -4333,28 +4388,32 @@ public sealed class InputBookItem : INotifyPropertyChanged
     public BookAnalysisStatus AnalysisStatus => _analysisStatus;
     public IReadOnlyList<ConversionPreflightIssue> PreflightIssues => _analysisSnapshot?.Issues ?? [];
     public int ChapterCandidateCount => _analysisSnapshot?.ChapterCandidateCount ?? 0;
-    public bool HasBeenChecked => _analysisStatus == BookAnalysisStatus.Completed || _preflightErrorCount is not null;
+    public bool HasBeenChecked => _analysisSnapshot?.Readiness.State != BookReadiness.Unchecked && (_analysisStatus == BookAnalysisStatus.Completed || _preflightErrorCount is not null);
     public bool HasPreflightIssues => (_preflightErrorCount ?? 0) > 0 || _preflightWarningCount > 0;
     public int PreflightErrorCount => _preflightErrorCount ?? 0;
     public int PreflightWarningCount => _preflightWarningCount;
     public int ReadinessPriority => (_preflightErrorCount ?? 0) > 0 ? 3 : _preflightWarningCount > 0 ? 2 : !HasBeenChecked ? 1 : 0;
     public string ReadinessLabel => _analysisStatus switch
     {
+        BookAnalysisStatus.Disabled => "自动检查已关闭",
         BookAnalysisStatus.Pending => "等待分析",
         BookAnalysisStatus.Running => "正在分析…",
         BookAnalysisStatus.Unavailable => "分析失败",
         _ when (_preflightErrorCount ?? 0) > 0 => $"必须处理 {_preflightErrorCount}",
         _ when _preflightWarningCount > 0 => $"建议处理 {_preflightWarningCount}",
+        _ when _analysisSnapshot is not null => _analysisSnapshot.Readiness.Label,
         _ when HasBeenChecked => "可直接转换",
         _ => "等待分析",
     };
     public string ReadinessDetail => _analysisStatus switch
     {
+        BookAnalysisStatus.Disabled => "可在书库顶部开启；转换前仍执行基础检查",
         BookAnalysisStatus.Pending => "设置已变化，等待重新分析",
         BookAnalysisStatus.Running => "正在后台识别章节并检查转换条件",
         BookAnalysisStatus.Unavailable => _analysisFailure ?? "暂时无法完成分析",
         _ when (_preflightErrorCount ?? 0) > 0 => $"发现 {_preflightErrorCount} 个必须处理的问题",
         _ when _preflightWarningCount > 0 => $"发现 {_preflightWarningCount} 条建议；仍可继续转换",
+        _ when _analysisSnapshot is not null => _analysisSnapshot.Readiness.Summary,
         _ when HasBeenChecked => $"已识别 {ChapterCandidateCount} 个章节候选；未发现阻止转换的问题",
         _ => "导入后会自动在后台分析",
     };
@@ -4400,6 +4459,13 @@ public sealed class InputBookItem : INotifyPropertyChanged
         _preflightWarningCount = 0;
         _analysisFailure = null;
         _analysisStatus = BookAnalysisStatus.Pending;
+        RaiseAnalysisPropertiesChanged();
+    }
+
+    public void SetAnalysisDisabled()
+    {
+        SetAnalysisPending();
+        _analysisStatus = BookAnalysisStatus.Disabled;
         RaiseAnalysisPropertiesChanged();
     }
 

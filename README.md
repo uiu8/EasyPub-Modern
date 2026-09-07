@@ -8,12 +8,12 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.18-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.18)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.19.7-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.19.7)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.18/EasyPubModern-Setup-v1.18-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.18/EasyPubModern-v1.18-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.18)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.19.7/EasyPubModern-Setup-v1.19.7-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.19.7/EasyPubModern-v1.19.7-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.19.7)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.18) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.19.7) 下载正式安装包；无需安装时也可以选择便携版。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -60,6 +60,13 @@
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.19.7 自动检查与交互质量升级
+
+- 可选择自动检查是否开启、检查哪些资源与清理规则，支持自定义规则，并显示已开启项。
+- 增加源位置错位、复杂 EPUB 重排和输出文件安全保护；成品验收失败不再计为成功。
+- 优化滚动条、收藏菜单、深色主题、输入控件、按钮和窄窗口布局，增加未应用设置提示。
+- [完整更新说明与 v1.16 对比](docs/RELEASE_v1.19.7.md)。本地回归 176 项通过，发布包启动验证通过。
 
 ## v1.18 转换设置升级
 

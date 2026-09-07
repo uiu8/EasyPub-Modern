@@ -42,6 +42,7 @@ public sealed class ChapterTreeDocument
     public string SourcePath { get; }
     public string SourceSha256 { get; }
     public int LineCount => _sourceLines.Count;
+    internal IReadOnlyList<ChapterTreeSourceLine> SourceLines => _sourceLines;
     public IReadOnlyList<ChapterTreeEntry> Entries { get; }
 
     public static async Task<ChapterTreeDocument> LoadAsync(

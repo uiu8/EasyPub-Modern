@@ -8,7 +8,7 @@
         <StackPanel>
             <TextBlock Text="文本清理流水线" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
             <TextBlock x:Name="BookPathText" Margin="0,5,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis"/>
-            <TextBlock Margin="0,4,0,0" Text="这里只预览并保存转换规则，正式转换时在内存中处理；不会修改原始 TXT。" Foreground="{DynamicResource SuccessBrush}" FontWeight="SemiBold"/>
+            <TextBlock Margin="0,4,0,0" Text="预览当前书稿；应用后影响本项目全部 TXT。转换时在内存中处理，不修改原文件。" Foreground="{DynamicResource SuccessBrush}" FontWeight="SemiBold"/>
         </StackPanel>
 
         <Border Grid.Row="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">

@@ -108,13 +108,16 @@ public sealed class BatchConverter(EasyPubConverter converter)
                     validation = await validationService
                         .ValidateAndSaveAsync(job, cancellationToken).ConfigureAwait(false);
                 }
-                outcomes[index] = new BatchJobOutcome(job, result, null, false, validation);
+                outcomes[index] = new BatchJobOutcome(job, result,
+                    validation?.StructurePassed == false ? "成品已生成，但" + validation.ResultLabel : null, false, validation);
                 SetFraction(index, 1);
                 lock (sync)
                 {
-                    completed++;
+                    if (validation?.StructurePassed == false) failed++;
+                    else completed++;
                 }
-                var finalStage = validation is null || validation.StructurePassed && validation.WarningCount == 0
+                var finalStage = validation?.StructurePassed == false ? BookTaskStage.Failed
+                    : validation is null || validation.StructurePassed && validation.WarningCount == 0
                     ? BookTaskStage.Completed
                     : BookTaskStage.Warning;
                 Report(
@@ -179,5 +182,5 @@ public sealed record BatchJobOutcome(
     bool Cancelled = false,
     ArtifactValidationReport? Validation = null)
 {
-    public bool Succeeded => Result is not null;
+    public bool Succeeded => Result is not null && Validation?.StructurePassed != false;
 }

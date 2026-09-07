@@ -19,6 +19,14 @@ public sealed record TextCleanupPreview(
     IReadOnlyList<string> Lines,
     IReadOnlyList<TextCleanupChange> Changes)
 {
+    public bool RequiresSourcePositionRemap { get; init; }
+
+    public void EnsureSourcePositionsAreSafe(bool usesSourcePositions)
+    {
+        if (usesSourcePositions && RequiresSourcePositionRemap)
+            throw new InvalidDataException("已应用的跨行自定义清理无法保证原文位置不变，不能与已保存章节树或按原文行号定位的插图同时转换。请关闭或排除该跨行规则，或先将清理结果另存为 TXT，再重新整理章节和插图；原文件及已有成品未被覆盖。");
+    }
+
     public string Text => string.Join(Environment.NewLine, Lines.Where(line => line != TextCleanupPipeline.RemovedLine));
 }
 
@@ -156,9 +164,9 @@ public static partial class TextCleanupPipeline
             }
         }
 
-        result = ApplyCustomRules(result, changes, exclusions, options.CustomRules, cancellationToken);
+        result = ApplyCustomRules(result, changes, exclusions, options.CustomRules, cancellationToken, out var requiresRemap);
 
-        return new TextCleanupPreview(result, changes.OrderBy(change => change.LineNumber).ToArray());
+        return new TextCleanupPreview(result, changes.OrderBy(change => change.LineNumber).ToArray()) { RequiresSourcePositionRemap = requiresRemap };
     }
 
     public static async Task<string> ReadFileAsync(
@@ -223,8 +231,10 @@ public static partial class TextCleanupPipeline
         List<TextCleanupChange> changes,
         HashSet<string> exclusions,
         IReadOnlyList<TextCleanupCustomRule> rules,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        out bool requiresRemap)
     {
+        requiresRemap = false;
         foreach (var rule in rules.Where(rule => rule.Enabled && !string.IsNullOrEmpty(rule.Pattern)).OrderBy(rule => rule.Order).ThenBy(rule => rule.Name, StringComparer.CurrentCulture))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -250,7 +260,11 @@ public static partial class TextCleanupPipeline
                     var lineNumber = 1 + beforeDocument.AsSpan(0, Math.Min(firstDifference, beforeDocument.Length)).Count('\n');
                     var change = CreateChange(lineNumber, $"自定义：{rule.Name}", Abbreviate(beforeDocument), Abbreviate(afterDocument), exclusions, $"{rule.Id}\n{beforeDocument}");
                     changes.Add(change);
-                    if (change.IsApplied) result = afterDocument.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+                    if (change.IsApplied)
+                    {
+                        requiresRemap = true;
+                        result = afterDocument.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+                    }
                 }
                 continue;
             }
@@ -297,7 +311,7 @@ public static partial class TextCleanupPipeline
         return "统一全角空格";
     }
 
-    private static bool IsSiteNotice(string line)
+    internal static bool IsSiteNotice(string line)
     {
         var value = line.Trim();
         if (SiteNoticePattern().IsMatch(value)) return true;

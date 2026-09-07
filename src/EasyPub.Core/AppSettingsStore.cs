@@ -36,6 +36,7 @@ public sealed record EasyPubAppSettings(
     public string? KindleGenPath { get; init; }
     public string TextEditorPath { get; init; } = "notepad.exe";
     public bool AutoOpenTaskCenter { get; init; }
+    public AutomaticCheckOptions AutomaticChecks { get; init; } = new();
     public bool AutoOpenOutputDirectory { get; init; }
     public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
     public string KindlePreviewDeviceId { get; init; } = "kpw6";

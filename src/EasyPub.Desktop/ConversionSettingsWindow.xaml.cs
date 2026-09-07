@@ -16,11 +16,16 @@ public partial class ConversionSettingsWindow : UserControl
     private ConversionSettingsDraft _openingDraft = ConversionSettingsDraft.CreateDefault(Path.GetTempPath());
     private LegacyConfigImport? _legacyImport;
     private bool _syncing;
+    private string _openingSnapshot = string.Empty;
+    private bool _feedbackQueued;
 
     public ConversionSettingsWindow()
     {
         InitializeComponent();
         Loaded += ConversionSettingsWindow_Loaded;
+        AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => QueueDraftFeedback()));
+        AddHandler(System.Windows.Controls.Primitives.Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => QueueDraftFeedback()));
+        AddHandler(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, new RoutedEventHandler((_, _) => QueueDraftFeedback()));
     }
 
     public ConversionSettingsWindow(ConversionSettingsDraft draft, ConversionSettingsContext context) : this() =>
@@ -42,18 +47,49 @@ public partial class ConversionSettingsWindow : UserControl
         PresetCombo.SelectedIndex = 0;
         ScopeSummaryText.Text = context.SelectedBookCount == 0
             ? "设置下次转换使用的默认值"
-            : $"应用于当前选择的 {context.SelectedBookCount} 本书稿";
+            : $"当前项目共用 · 本次选择 {context.SelectedBookCount} 本书稿";
         EpubScopeText.Text = context.SelectedEpubCount == 0
             ? "当前没有选择 EPUB，但仍可提前保存默认值；该设置只对 EPUB 输入生效。"
             : $"当前选择中包含 {context.SelectedEpubCount} 本 EPUB；固定版式书稿不能兼容重排。";
         KindleGenPathText.Text = string.IsNullOrWhiteSpace(context.KindleGenPath) ? "未配置路径" : context.KindleGenPath;
         ApplyDraftToControls(_draft);
+        _openingSnapshot = SnapshotDraft();
+        RefreshDraftFeedback();
         if (IsLoaded) _ = RefreshKindleGenStatusAsync();
     }
 
     public ConversionSettingsDraft Result => _draft.Normalize(_context.KindleGenPath);
 
     public bool OpenEngineSettingsAfterClose { get; private set; }
+
+    private string SnapshotDraft() => System.Text.Json.JsonSerializer.Serialize(CaptureDraftFromControls().Normalize(_context.KindleGenPath));
+
+    private void QueueDraftFeedback()
+    {
+        if (_syncing || _feedbackQueued) return;
+        _feedbackQueued = true;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _feedbackQueued = false;
+            RefreshDraftFeedback();
+        }));
+    }
+
+    private void RefreshDraftFeedback()
+    {
+        if (_syncing || _openingSnapshot.Length == 0) return;
+        try
+        {
+            var changed = SnapshotDraft() != _openingSnapshot;
+            DraftFeedbackText.Text = changed ? "有未应用的修改" : "当前设置未修改";
+            DraftFeedbackText.SetResourceReference(TextBlock.ForegroundProperty, changed ? "WarningBrush" : "SecondaryTextBrush");
+        }
+        catch (InvalidOperationException exception)
+        {
+            DraftFeedbackText.Text = exception.Message;
+            DraftFeedbackText.SetResourceReference(TextBlock.ForegroundProperty, "WarningBrush");
+        }
+    }
 
     public void UpdateScope(int selectedBookCount, int selectedEpubCount)
     {
@@ -64,7 +100,7 @@ public partial class ConversionSettingsWindow : UserControl
         };
         ScopeSummaryText.Text = selectedBookCount == 0
             ? "设置下次转换使用的默认值"
-            : $"应用于当前选择的 {selectedBookCount} 本书稿";
+            : $"当前项目共用 · 本次选择 {selectedBookCount} 本书稿";
         EpubScopeText.Text = selectedEpubCount == 0
             ? "当前没有选择 EPUB，但仍可提前保存默认值；该设置只对 EPUB 输入生效。"
             : $"当前选择中包含 {selectedEpubCount} 本 EPUB；固定版式书稿不能兼容重排。";
@@ -87,7 +123,7 @@ public partial class ConversionSettingsWindow : UserControl
         var result = await KindleGenHealthProbe.ProbeAsync(_context.KindleGenPath);
         KindleGenStatusText.Text = result.Message;
         var brushKey = result.IsReady ? "SuccessBrush" : result.Status == KindleGenHealthStatus.Missing ? "ErrorBrush" : "WarningBrush";
-        if (TryFindResource(brushKey) is Brush brush) KindleGenStatusText.Foreground = brush;
+        KindleGenStatusText.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
     }
 
     private void ApplyDraftToControls(ConversionSettingsDraft draft)
@@ -319,6 +355,8 @@ public partial class ConversionSettingsWindow : UserControl
         {
             _draft = CaptureDraftFromControls().Normalize(_context.KindleGenPath);
             _openingDraft = _draft;
+            _openingSnapshot = SnapshotDraft();
+            RefreshDraftFeedback();
             Applied?.Invoke(_draft);
         }
         catch (Exception exception)

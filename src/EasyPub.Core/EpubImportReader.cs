@@ -17,6 +17,12 @@ public sealed record EpubInspectionResult(
 
 public static class EpubInspectionService
 {
+    public static void ValidateCompatibleReflow(string epubPath)
+    {
+        using var package = EpubPackage.Open(epubPath);
+        EpubCompatibilityImporter.EnsureSafeReflow(package);
+    }
+
     public static EpubInspectionResult Inspect(string epubPath)
     {
         using var package = EpubPackage.Open(epubPath);
@@ -56,6 +62,25 @@ internal static class EpubCompatibilityImporter
         "p", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6",
     };
 
+    internal static void EnsureSafeReflow(EpubPackage package)
+    {
+        if (package.HasCollapsedNavigationTargets)
+            throw new InvalidDataException("EPUB 的多个目录项指向同一正文文件，兼容重排无法完整保留其章节锚点。请选择“保留原 EPUB 版式”。");
+        foreach (var item in package.Spine.Where(item => !item.IsNavigation && !item.IsCoverDocument))
+        {
+            var body = package.LoadXml(item.Path).Descendants().FirstOrDefault(element => element.Name.LocalName == "body");
+            if (body is null) continue;
+            var unsupportedText = body.DescendantNodes().OfType<XText>().Any(node =>
+                !string.IsNullOrWhiteSpace(node.Value)
+                && !node.Ancestors().Any(element => TextBlockNames.Contains(element.Name.LocalName))
+                && !node.Ancestors().Any(element => element.Name.LocalName is "script" or "style"));
+            var unsupportedStructure = body.Descendants().Any(element => element.Name.LocalName is "table" or "svg" or "math" or "ruby" or "br"
+                || element.Name.LocalName == "a" && (element.Attribute("href")?.Value.Contains('#') ?? false));
+            if (unsupportedText || unsupportedStructure)
+                throw new InvalidDataException($"EPUB 正文“{item.Path}”包含兼容重排尚不能可靠保留的文本、换行、表格或链接结构。请选择“保留原 EPUB 版式”，以免遗漏内容。");
+        }
+    }
+
     public static async Task<ImportedEpubBook> ImportAsync(
         string epubPath,
         CancellationToken cancellationToken)
@@ -65,6 +90,7 @@ internal static class EpubCompatibilityImporter
             throw new InvalidDataException("该 EPUB 含 DRM 或不支持的加密资源，无法转换。");
         if (package.IsFixedLayout)
             throw new NotSupportedException("该 EPUB 是固定版式电子书。请改用“保留原 EPUB 版式”模式。");
+        EnsureSafeReflow(package);
 
         var workingDirectory = Path.Combine(Path.GetTempPath(), "EasyPubModernEpubImport", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
@@ -263,6 +289,7 @@ internal sealed class EpubPackage : IDisposable
     public string? CoverImagePath { get; private init; }
     public bool IsFixedLayout { get; private init; }
     public bool HasUnsupportedEncryption { get; private init; }
+    public bool HasCollapsedNavigationTargets { get; private init; }
 
     public static EpubPackage Open(string epubPath)
     {
@@ -336,9 +363,10 @@ internal sealed class EpubPackage : IDisposable
 
             var navItem = manifestById.Values.FirstOrDefault(item =>
                 item.Properties.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("nav", StringComparer.OrdinalIgnoreCase));
+            bool collapsedNavigation;
             var navigation = navItem is null
-                ? ReadNcxNavigation(entries, manifestById, spineElement, opfPath)
-                : ReadHtmlNavigation(entries, navItem.Path);
+                ? ReadNcxNavigation(entries, manifestById, spineElement, opfPath, out collapsedNavigation)
+                : ReadHtmlNavigation(entries, navItem.Path, out collapsedNavigation);
 
             var coverImage = manifestById.Values.FirstOrDefault(item =>
                 item.Properties.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cover-image", StringComparer.OrdinalIgnoreCase));
@@ -388,6 +416,7 @@ internal sealed class EpubPackage : IDisposable
                 },
                 Spine = spine,
                 NavigationTitles = navigation,
+                HasCollapsedNavigationTargets = collapsedNavigation,
                 CoverImagePath = coverImage?.Path,
                 IsFixedLayout = string.Equals(layout, "pre-paginated", StringComparison.OrdinalIgnoreCase),
                 HasUnsupportedEncryption = unsupportedEncryption,
@@ -432,8 +461,10 @@ internal sealed class EpubPackage : IDisposable
 
     private static IReadOnlyDictionary<string, EpubNavigationTitle> ReadHtmlNavigation(
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
-        string navPath)
+        string navPath,
+        out bool collapsedNavigation)
     {
+        collapsedNavigation = false;
         var result = new Dictionary<string, EpubNavigationTitle>(StringComparer.OrdinalIgnoreCase);
         if (!entries.TryGetValue(navPath, out var entry)) return result;
         var document = LoadXml(entry);
@@ -443,7 +474,7 @@ internal sealed class EpubPackage : IDisposable
         nav ??= document.Descendants().FirstOrDefault(element => element.Name.LocalName == "nav");
         if (nav is null) return result;
         var rootList = nav.Elements().FirstOrDefault(element => element.Name.LocalName is "ol" or "ul");
-        if (rootList is not null) AddHtmlNavigationLevel(rootList, navPath, 1, result);
+        if (rootList is not null) AddHtmlNavigationLevel(rootList, navPath, 1, result, ref collapsedNavigation);
         return result;
     }
 
@@ -451,7 +482,8 @@ internal sealed class EpubPackage : IDisposable
         XElement list,
         string navPath,
         int level,
-        IDictionary<string, EpubNavigationTitle> result)
+        IDictionary<string, EpubNavigationTitle> result,
+        ref bool collapsedNavigation)
     {
         foreach (var item in list.Elements().Where(element => element.Name.LocalName == "li"))
         {
@@ -460,10 +492,10 @@ internal sealed class EpubPackage : IDisposable
             if (!string.IsNullOrWhiteSpace(href))
             {
                 var path = ResolvePath(navPath, href);
-                result.TryAdd(path, new EpubNavigationTitle(Regex.Replace(link!.Value, @"\s+", " ").Trim(), Math.Clamp(level, 1, 4)));
+                if (!result.TryAdd(path, new EpubNavigationTitle(Regex.Replace(link!.Value, @"\s+", " ").Trim(), Math.Clamp(level, 1, 4)))) collapsedNavigation = true;
             }
             var childList = item.Elements().FirstOrDefault(element => element.Name.LocalName is "ol" or "ul");
-            if (childList is not null) AddHtmlNavigationLevel(childList, navPath, level + 1, result);
+            if (childList is not null) AddHtmlNavigationLevel(childList, navPath, level + 1, result, ref collapsedNavigation);
         }
     }
 
@@ -471,8 +503,10 @@ internal sealed class EpubPackage : IDisposable
         IReadOnlyDictionary<string, ZipArchiveEntry> entries,
         IReadOnlyDictionary<string, ManifestItem> manifest,
         XElement? spine,
-        string opfPath)
+        string opfPath,
+        out bool collapsedNavigation)
     {
+        collapsedNavigation = false;
         var result = new Dictionary<string, EpubNavigationTitle>(StringComparer.OrdinalIgnoreCase);
         var tocId = spine is null ? null : Attribute(spine, "toc");
         var ncx = tocId is not null && manifest.TryGetValue(tocId, out var byId)
@@ -488,7 +522,7 @@ internal sealed class EpubPackage : IDisposable
             var title = node.Descendants().FirstOrDefault(element => element.Name.LocalName == "text")?.Value.Trim();
             if (string.IsNullOrWhiteSpace(title)) continue;
             var level = node.Ancestors().Count(element => element.Name.LocalName == "navPoint") + 1;
-            result.TryAdd(ResolvePath(ncx.Path, source), new EpubNavigationTitle(title, Math.Clamp(level, 1, 4)));
+            if (!result.TryAdd(ResolvePath(ncx.Path, source), new EpubNavigationTitle(title, Math.Clamp(level, 1, 4)))) collapsedNavigation = true;
         }
         return result;
     }
