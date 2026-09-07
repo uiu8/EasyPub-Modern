@@ -13,6 +13,7 @@ public sealed record TextCleanupChange(
 {
     public string Key { get; init; } = TextCleanupPipeline.CreateChangeKey(LineNumber, Rule, Before);
     public bool IsApplied { get; init; } = true;
+    public string? Reason { get; init; }
 }
 
 public sealed record TextCleanupPreview(
@@ -42,6 +43,7 @@ public static partial class TextCleanupPipeline
         CancellationToken cancellationToken = default)
     {
         options ??= new TextCleanupOptions();
+        options = BuiltinCleanupConfiguration.Prepare(options);
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
         var result = lines.ToArray();
         var changes = new List<TextCleanupChange>();
@@ -79,11 +81,18 @@ public static partial class TextCleanupPipeline
 
         if (options.RemoveSiteNotices)
         {
+            var match = options.Advertisement.CompileMatcher(options.Advertisement.Pattern, options.Advertisement.IsRegex);
+            var preserve = options.Advertisement.CompileMatcher(options.Advertisement.PreservePattern, options.Advertisement.PreserveIsRegex);
             for (var index = 0; index < result.Length; index++)
             {
                 if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if (result[index] == RemovedLine || !IsSiteNotice(result[index])) continue;
-                var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]);
+                if (result[index] == RemovedLine || preserve(lines[index]) || preserve(result[index])) continue;
+                var matchedPattern = match(result[index]);
+                if (!matchedPattern && !(options.Advertisement.UsePromotionHeuristics && IsPromotionNotice(result[index]))) continue;
+                var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]) with
+                {
+                    Reason = matchedPattern ? "命中广告匹配条件：" + options.Advertisement.Pattern : "同时命中网址、出版语境及多个推广信号",
+                };
                 changes.Add(change);
                 if (change.IsApplied) result[index] = RemovedLine;
             }
@@ -126,7 +135,7 @@ public static partial class TextCleanupPipeline
             {
                 if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
                 var nextIndex = index + 1;
-                while (nextIndex < result.Length && ShouldJoin(result[index], result[nextIndex]))
+                while (nextIndex < result.Length && ShouldJoin(result[index], result[nextIndex], options.HardWrapMinimumLength))
                 {
                     var before = result[index] + " ↵ " + result[nextIndex];
                     var after = result[index].TrimEnd() + result[nextIndex].TrimStart();
@@ -290,12 +299,12 @@ public static partial class TextCleanupPipeline
 
     private static string Abbreviate(string value) => value.Length <= 240 ? value : value[..237] + "…";
 
-    private static bool ShouldJoin(string current, string next)
+    private static bool ShouldJoin(string current, string next, int minimumLength)
     {
         if (current == RemovedLine || next == RemovedLine) return false;
         current = current.Trim();
         next = next.Trim();
-        if (current.Length < 8 || next.Length == 0) return false;
+        if (current.Length < Math.Clamp(minimumLength, 1, 1000) || next.Length == 0) return false;
         if (ChapterLinePattern().IsMatch(current) || ChapterLinePattern().IsMatch(next)) return false;
         if ("。！？!?；;：:…》）)]”’\"".Contains(current[^1])) return false;
         return char.IsLetterOrDigit(current[^1]) && (char.IsLetterOrDigit(next[0]) || "“‘\"（(".Contains(next[0]));
@@ -315,6 +324,11 @@ public static partial class TextCleanupPipeline
     {
         var value = line.Trim();
         if (SiteNoticePattern().IsMatch(value)) return true;
+        return IsPromotionNotice(value);
+    }
+
+    private static bool IsPromotionNotice(string value)
+    {
         return WebAddressPattern().IsMatch(value)
             && PublishingPromotionContextPattern().IsMatch(value)
             && PromotionalSignalPattern().Matches(value).Count >= 2;

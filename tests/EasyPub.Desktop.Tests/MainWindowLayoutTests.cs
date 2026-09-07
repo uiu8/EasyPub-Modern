@@ -17,6 +17,32 @@ namespace EasyPub.Desktop.Tests;
 public sealed class MainWindowLayoutTests
 {
     [Fact]
+    public void Cleanup_customization_keeps_book_state_isolated()
+    {
+        RunInWindow(window =>
+        {
+            var book = new InputBookItem(Path.Combine(Path.GetTempPath(), "demo.txt"));
+            book.SetCleanupOverride(new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new() { Pattern = "本书广告" } });
+            Assert.Equal("本书广告", book.Clone().CleanupOverride!.Advertisement.Pattern);
+            window.InputBooks.Add(book);
+            var capture = typeof(MainWindow).GetMethod("CaptureProjectDocument", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            Assert.Equal("本书广告", ((EasyPubProjectDocument)capture.Invoke(window, null)!).Books.Single().CleanupOverride!.Advertisement.Pattern);
+            var capturePath = Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH");
+            var editor = new BuiltinCleanupWindow(book.CleanupOverride!, "第一章\n本书广告") { Owner = window };
+            editor.Show(); editor.UpdateLayout();
+            Assert.Equal(11, FindVisualDescendants<ComboBox>(editor).First().Items.Count);
+            FindVisualDescendants<ComboBox>(editor).First().SelectedValue = nameof(TextCleanupOptions.RemoveSiteNotices);
+            editor.UpdateLayout();
+            if (!string.IsNullOrWhiteSpace(capturePath)) CaptureWindowVisual(editor, capturePath + "-rules.png");
+            editor.Close();
+            Assert.Equal("本书广告", book.CleanupOverride!.Advertisement.Pattern);
+            book.SetCleanupOverride(null);
+            Assert.Null(book.CleanupOverride);
+            Assert.Null(typeof(MainWindow).Assembly.GetType("EasyPub.Desktop.WelcomeGuideWindow"));
+        });
+    }
+
+    [Fact]
     public void Editable_combo_template_accepts_custom_text()
     {
         RunInWindow(window =>

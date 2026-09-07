@@ -1169,6 +1169,7 @@ public partial class MainWindow : Window
             MetadataOverrides = book.MetadataOverrides,
             MetadataRuleFolder = book.MetadataRuleFolder,
             ChapterTree = book.ChapterTree,
+            CleanupOverride = book.CleanupOverride,
         }).ToArray(),
         DateTimeOffset.Now)
     {
@@ -1202,6 +1203,7 @@ public partial class MainWindow : Window
             item.SetIllustrations(saved.Illustrations);
             item.SetMetadataOverrides(saved.MetadataOverrides, saved.MetadataRuleFolder);
             item.SetChapterTree(saved.ChapterTree);
+            item.SetCleanupOverride(saved.CleanupOverride);
             InputBooks.Add(item);
         }
         FilesList.SelectedItem = InputBooks.FirstOrDefault();
@@ -1263,7 +1265,8 @@ public partial class MainWindow : Window
             or nameof(InputBookItem.Illustrations)
             or nameof(InputBookItem.MetadataOverrides)
             or nameof(InputBookItem.MetadataRuleFolder)
-            or nameof(InputBookItem.ChapterTree))
+            or nameof(InputBookItem.ChapterTree)
+            or nameof(InputBookItem.CleanupOverride))
             MarkProjectDirty();
         if (e.PropertyName is nameof(InputBookItem.AnalysisStatus) or nameof(InputBookItem.ReadinessLabel) or nameof(InputBookItem.ReadinessDetail)
             && sender is InputBookItem book
@@ -1448,8 +1451,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.19.7"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.19.7";
+            ? "EasyPub Modern v1.20.1"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.20.1";
         UpdateWorkspaceScope();
     }
 
@@ -1829,22 +1832,30 @@ public partial class MainWindow : Window
         try
         {
             var encoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag!.ToString()!);
+            var effectiveCleanup = selected.CleanupOverride ?? _textCleanupOptions;
             var previewOptions = sender is ConversionPreflightIssue { Code: "cleanup_check" }
-                ? AutomaticCheckOptions.MergeCleanupForPreview(_textCleanupOptions, _automaticChecks.Cleanup)
+                ? AutomaticCheckOptions.MergeCleanupForPreview(effectiveCleanup, _automaticChecks.Cleanup)
                 : sender is ConversionPreflightIssue { Target: PreflightTargetKind.TextCleanup }
-                ? _textCleanupOptions with { RemoveSiteNotices = true }
-                : _textCleanupOptions;
+                ? effectiveCleanup with { RemoveSiteNotices = true }
+                : effectiveCleanup;
             var window = await TextCleanupWindow.CreateAsync(selected.InputPath, encoding, previewOptions);
             window.Owner = this;
+            window.ConfigureScope(_textCleanupOptions, selected.CleanupOverride is not null);
             if (window.ShowDialog() != true) return;
-            _textCleanupOptions = window.Result;
+            if (window.InheritShared) selected.SetCleanupOverride(null);
+            else if (window.ApplyToShared)
+            {
+                _textCleanupOptions = window.Result with { ExcludedChangeKeys = [] };
+                selected.SetCleanupOverride(window.Result.ExcludedChangeKeys.Count > 0 ? window.Result : null);
+            }
+            else selected.SetCleanupOverride(window.Result);
             UpdateTextCleanupSummary();
             MarkProjectDirty();
             _conversionMode = ConversionMode.Custom;
             CustomModeRadio.IsChecked = true;
-            StatusText.Text = _textCleanupOptions.Enabled
-                ? "已保存本项目全部 TXT 的清理规则；仅转换时处理，不修改源文件"
-                : "已关闭文本清理规则";
+            if (window.ApplyToShared) await _appSettingsStore.SaveAsync(CaptureAppSettings());
+            StatusText.Text = window.InheritShared ? "本书已恢复继承通用清理规则" : window.ApplyToShared ? "通用规则已保存；已有逐书覆盖保持不变" : "本书独立清理规则已保存，不影响其他书稿";
+            ScheduleAutomaticAnalysis();
         }
         catch (Exception exception)
         {
@@ -3572,7 +3583,8 @@ public partial class MainWindow : Window
                 book.Author,
                 book.Illustrations,
                 book.MetadataOverrides,
-                book.ChapterTree)),
+                book.ChapterTree,
+                book.CleanupOverride)),
             outputDirectory,
             profile.OutputFormat,
             profile.Author,
@@ -4382,6 +4394,12 @@ public sealed class InputBookItem : INotifyPropertyChanged
 
     public Visibility MetadataBadgeVisibility => MetadataOverrides.IsEmpty ? Visibility.Collapsed : Visibility.Visible;
     public ChapterTreePlan? ChapterTree => _chapterTree;
+    public TextCleanupOptions? CleanupOverride { get; private set; }
+    public void SetCleanupOverride(TextCleanupOptions? options)
+    {
+        CleanupOverride = options;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CleanupOverride)));
+    }
     public string ChapterTreeLabel => _chapterTree is null ? string.Empty : $"章节树 {_chapterTree.Entries.Count}";
     public Visibility ChapterTreeBadgeVisibility => _chapterTree is null ? Visibility.Collapsed : Visibility.Visible;
     public BookAnalysisSnapshot? AnalysisSnapshot => _analysisSnapshot;
@@ -4518,6 +4536,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
         clone.SetIllustrations(Illustrations);
         clone.SetMetadataOverrides(MetadataOverrides, MetadataRuleFolder);
         clone.SetChapterTree(ChapterTree);
+        clone.SetCleanupOverride(CleanupOverride);
         return clone;
     }
 
@@ -4531,6 +4550,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
         };
         item.SetIllustrations(request.Options?.Illustrations ?? []);
         item.SetChapterTree(request.ChapterTree);
+        item.SetCleanupOverride(request.Options?.TextCleanup);
         item.SetMetadataOverrides(new BookMetadataOverrides
         {
             Translator = request.Options?.Metadata.Translator,

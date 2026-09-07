@@ -7,7 +7,8 @@ public sealed record BookConversionSource(
     string? Author = null,
     IReadOnlyList<BookIllustration>? Illustrations = null,
     BookMetadataOverrides? MetadataOverrides = null,
-    ChapterTreePlan? ChapterTree = null);
+    ChapterTreePlan? ChapterTree = null,
+    TextCleanupOptions? CleanupOverride = null);
 
 public static class BatchConversionRequestFactory
 {
@@ -39,6 +40,7 @@ public static class BatchConversionRequestFactory
                 Options: baseOptions with
                 {
                     CoverImagePath = source.CoverImagePath,
+                    TextCleanup = source.CleanupOverride ?? baseOptions.TextCleanup,
                     Illustrations = source.Illustrations ?? [],
                     Metadata = MetadataMappingResolver.Apply(baseOptions.Metadata, metadataOverrides),
                 })

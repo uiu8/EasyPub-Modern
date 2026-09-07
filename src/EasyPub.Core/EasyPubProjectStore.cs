@@ -14,6 +14,7 @@ public sealed record EasyPubProjectBook(
     public BookMetadataOverrides MetadataOverrides { get; init; } = new();
     public string? MetadataRuleFolder { get; init; }
     public ChapterTreePlan? ChapterTree { get; init; }
+    public TextCleanupOptions? CleanupOverride { get; init; }
 }
 
 public sealed record EasyPubProjectDocument(

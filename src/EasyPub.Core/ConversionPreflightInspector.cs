@@ -148,7 +148,13 @@ public sealed class ConversionPreflightInspector
                             {
                                 try
                                 {
-                                    var preview = TextCleanupPipeline.Apply(sourceText, checks.Cleanup, token);
+                                    var checkOptions = checks.Cleanup with
+                                    {
+                                        Advertisement = options.TextCleanup.Advertisement,
+                                        BuiltinOverrides = options.TextCleanup.BuiltinOverrides,
+                                        HardWrapMinimumLength = options.TextCleanup.HardWrapMinimumLength,
+                                    };
+                                    var preview = TextCleanupPipeline.Apply(sourceText, checkOptions, token);
                                     var planned = (plannedCleanup?.Changes ?? []).Where(change => change.IsApplied)
                                         .Select(change => (change.Key, change.After)).ToHashSet();
                                     var excluded = options.TextCleanup.ExcludedChangeKeys.ToHashSet(StringComparer.Ordinal);
@@ -174,10 +180,13 @@ public sealed class ConversionPreflightInspector
                         var notices = 0;
                         int? firstNoticeLine = null;
                         var exclusions = new HashSet<string>(options.TextCleanup.ExcludedChangeKeys, StringComparer.Ordinal);
+                        var noticeOptions = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = options.TextCleanup.Advertisement, BuiltinOverrides = options.TextCleanup.BuiltinOverrides, ExcludedChangeKeys = options.TextCleanup.ExcludedChangeKeys };
+                        var noticePreview = TextCleanupPipeline.Apply(sourceText, noticeOptions, token);
+                        var noticeLines = noticePreview.Changes.Where(change => change.IsApplied).Select(change => change.LineNumber).ToHashSet();
                         foreach (var line in document.SourceLines)
                         {
                             if ((line.LineNumber & 1023) == 0) token.ThrowIfCancellationRequested();
-                            if (!TextCleanupPipeline.IsSiteNotice(line.Text)) continue;
+                            if (!noticeLines.Contains(line.LineNumber)) continue;
                             if (exclusions.Contains(TextCleanupPipeline.CreateChangeKey(line.LineNumber, "清理网站广告/下载说明", line.Text))) continue;
                             notices++;
                             firstNoticeLine ??= line.LineNumber;

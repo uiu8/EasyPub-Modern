@@ -13,6 +13,16 @@ public partial class TextCleanupWindow : Window
     private readonly HashSet<string> _excludedKeys = new(StringComparer.Ordinal);
     private IReadOnlyList<TextCleanupCustomRule> _customRules = [];
     private bool _loaded;
+    private TextCleanupOptions _behavior = new();
+    private TextCleanupOptions? _sharedOptions;
+    public bool ApplyToShared => SharedScopeCheck.IsChecked == true;
+    public bool InheritShared { get; private set; }
+
+    public void ConfigureScope(TextCleanupOptions shared, bool hasOverride)
+    {
+        _sharedOptions = shared;
+        ScopeHintText.Text = hasOverride ? "当前书稿使用独立规则。" : "当前书稿继承项目通用规则；应用后可保存为本书独立规则。";
+    }
     private CancellationTokenSource? _previewCancellation;
     private int _previewVersion;
 
@@ -50,7 +60,7 @@ public partial class TextCleanupWindow : Window
         return new TextCleanupWindow(inputPath, text, initial);
     }
 
-    private TextCleanupOptions CaptureOptions() => new()
+    private TextCleanupOptions CaptureOptions() => _behavior with
     {
         CollapseBlankLines = BlankLinesCheck.IsChecked == true,
         RepairHardWraps = HardWrapCheck.IsChecked == true,
@@ -70,6 +80,7 @@ public partial class TextCleanupWindow : Window
 
     private void ApplyOptions(TextCleanupOptions options)
     {
+        _behavior = options;
         BlankLinesCheck.IsChecked = options.CollapseBlankLines;
         HardWrapCheck.IsChecked = options.RepairHardWraps;
         SpacesCheck.IsChecked = options.NormalizeFullWidthSpaces;
@@ -175,7 +186,12 @@ public partial class TextCleanupWindow : Window
             (search.Length == 0 || row.Rule.Contains(search, StringComparison.CurrentCultureIgnoreCase) || row.Before.Contains(search, StringComparison.CurrentCultureIgnoreCase) || row.After.Contains(search, StringComparison.CurrentCultureIgnoreCase))).ToArray();
     }
     private void Undo_Click(object sender, RoutedEventArgs e) { ApplyOptions(_initial); RefreshPreview(); }
-    private void Clear_Click(object sender, RoutedEventArgs e) { ApplyOptions(new TextCleanupOptions()); RefreshPreview(); }
+    private void Clear_Click(object sender, RoutedEventArgs e)
+    {
+        var current = CaptureOptions();
+        ApplyOptions(new TextCleanupOptions { Advertisement = current.Advertisement, BuiltinOverrides = current.BuiltinOverrides, HardWrapMinimumLength = current.HardWrapMinimumLength, ExcludedChangeKeys = current.ExcludedChangeKeys, CustomRules = current.CustomRules.Select(rule => rule with { Enabled = false }).ToArray() });
+        RefreshPreview();
+    }
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
     private void Apply_Click(object sender, RoutedEventArgs e) { Result = CaptureOptions(); DialogResult = true; }
 
@@ -186,6 +202,20 @@ public partial class TextCleanupWindow : Window
         _customRules = manager.Rules;
         RefreshPreview();
     }
+
+    private void ManageBuiltins_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = new BuiltinCleanupWindow(CaptureOptions(), _sourceText) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+        ApplyOptions(editor.Result); RefreshPreview();
+    }
+
+    private void InheritShared_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sharedOptions is null) return;
+        if (InkDialog.Show(this, "移除本书独立规则，重新继承项目通用规则？原始书稿不会修改。", "恢复继承", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        InheritShared = true; Result = _sharedOptions; DialogResult = true;
+    }
 }
 
 public sealed class TextCleanupChangeRow(TextCleanupChange change)
@@ -194,6 +224,7 @@ public sealed class TextCleanupChangeRow(TextCleanupChange change)
     public string Key => Change.Key;
     public int LineNumber => Change.LineNumber;
     public string Rule => Change.Rule;
+    public string Reason => Change.Reason ?? Change.Rule;
     public string Before => Change.Before;
     public string After => Change.After;
     public string ToggleLabel => Change.IsApplied ? "排除" : "恢复";

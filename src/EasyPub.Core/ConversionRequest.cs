@@ -48,6 +48,9 @@ public sealed record ArtifactValidationOptions
 
 public sealed record TextCleanupOptions
 {
+    public IReadOnlyDictionary<string, BuiltinCleanupOverride> BuiltinOverrides { get; init; } = new Dictionary<string, BuiltinCleanupOverride>();
+    public AdvertisementRuleOptions Advertisement { get; init; } = new();
+    public int HardWrapMinimumLength { get; init; } = 8;
     public bool CollapseBlankLines { get; init; }
     public bool RepairHardWraps { get; init; }
     public bool NormalizeFullWidthSpaces { get; init; }

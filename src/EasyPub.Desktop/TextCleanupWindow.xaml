@@ -8,7 +8,8 @@
         <StackPanel>
             <TextBlock Text="文本清理流水线" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryTextBrush}"/>
             <TextBlock x:Name="BookPathText" Margin="0,5,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis"/>
-            <TextBlock Margin="0,4,0,0" Text="预览当前书稿；应用后影响本项目全部 TXT。转换时在内存中处理，不修改原文件。" Foreground="{DynamicResource SuccessBrush}" FontWeight="SemiBold"/>
+            <TextBlock x:Name="ScopeHintText" Margin="0,4,0,0" Text="仅预览，转换时处理，不修改原文件。" Foreground="{DynamicResource SuccessBrush}"/>
+            <WrapPanel Margin="0,8,0,0"><CheckBox x:Name="SharedScopeCheck" Content="应用为项目通用规则，并保存为下次默认（已有逐书覆盖不受影响）" VerticalAlignment="Center"/><Button Content="本书恢复继承通用规则" Margin="12,0,0,0" Click="InheritShared_Click"/></WrapPanel>
         </StackPanel>
 
         <Border Grid.Row="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="14">
@@ -29,6 +30,7 @@
                     <ComboBoxItem Content="不转换" Tag="None"/><ComboBoxItem Content="繁体转简体" Tag="ToSimplified"/><ComboBoxItem Content="简体转繁体" Tag="ToTraditional"/>
                 </ComboBox>
                 <Button x:Name="ManageCustomRulesButton" Content="编辑自定义规则与测试…" Margin="18,0,0,8" Padding="14,6" Click="ManageCustomRules_Click" ToolTip="编辑普通替换或正则规则；返回后会在下方显示真实修改并支持逐项排除"/>
+                <Button Content="内置规则自定义 / 恢复默认…" Margin="12,0,0,8" Click="ManageBuiltins_Click"/>
             </WrapPanel>
         </Border>
 
@@ -51,6 +53,7 @@
                             <DataGridTemplateColumn Header="采用" Width="72"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="{Binding ToggleLabel}" Tag="{Binding Key}" Click="ToggleChange_Click" Padding="7,3" Margin="2" AutomationProperties.Name="{Binding AccessibleToggleLabel}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                             <DataGridTextColumn Header="行" Binding="{Binding LineNumber}" Width="48"/>
                             <DataGridTextColumn Header="规则" Binding="{Binding Rule}" Width="130"/>
+                            <DataGridTextColumn Header="命中依据" Binding="{Binding Reason}" Width="150"/>
                             <DataGridTextColumn Header="修改前" Binding="{Binding Before}" Width="2*"/>
                             <DataGridTextColumn Header="修改后" Binding="{Binding After}" Width="2*"/>
                         </DataGrid.Columns>
@@ -72,7 +75,7 @@
 
         <Grid Grid.Row="6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal"><Button Content="恢复打开时设置" Padding="14,8" Margin="0,0,8,0" Click="Undo_Click"/><Button Content="关闭所有规则" Padding="14,8" Margin="0,0,8,0" Click="Clear_Click"/><TextBlock x:Name="CustomRuleSummaryText" VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="取消" Padding="16,8" Margin="0,0,8,0" Click="Cancel_Click"/><Button Content="应用到本项目" Padding="20,8" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" BorderBrush="{DynamicResource PrimaryActionBrush}" Click="Apply_Click"/></StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="取消" Padding="16,8" Margin="0,0,8,0" Click="Cancel_Click"/><Button Content="应用规则" Padding="20,8" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}" BorderBrush="{DynamicResource PrimaryActionBrush}" Click="Apply_Click"/></StackPanel>
         </Grid>
     </Grid>
 </Window>
