@@ -17,6 +17,336 @@ namespace EasyPub.Desktop.Tests;
 public sealed class MainWindowLayoutTests
 {
     [Fact]
+    public void Large_cleanup_latest_options_win_and_group_choices_roundtrip()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var source = string.Join("\n", Enumerable.Repeat("正文\u200b\n请记住本站", 2000));
+            var options = new TextCleanupOptions { RemoveInvisibleCharacters = true, RemoveSiteNotices = true };
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["大量记录验收", source, options]);
+            window.Owner = owner;
+            try
+            {
+                window.Show();
+                var apply = (Button)window.FindName("ApplyRulesButton");
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                PumpDispatcherUntil(() => apply.IsEnabled && grid.Items.Count == 4000, TimeSpan.FromSeconds(4));
+                var notice = (CheckBox)window.FindName("NoticeCheck");
+                for (var i = 0; i < 9; i++)
+                {
+                    notice.IsChecked = i % 2 == 1;
+                    notice.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, notice));
+                }
+                PumpDispatcherUntil(() => apply.IsEnabled && grid.Items.Count == 2000, TimeSpan.FromSeconds(4));
+                Assert.False(window.Result.RemoveSiteNotices);
+                var group = (CheckBox)window.FindName("GroupAdsCheck");
+                group.IsChecked = true;
+                group.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, group));
+                Assert.Single(grid.Items.Cast<TextCleanupChangeRow>());
+                var row = (TextCleanupChangeRow)grid.Items[0];
+                Assert.Equal(2000, row.Members.Count);
+                typeof(TextCleanupWindow).GetMethod("ToggleChange_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(window, [new Button { Tag = row.Key }, new RoutedEventArgs()]);
+                PumpDispatcherUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(4));
+                var restored = System.Text.Json.JsonSerializer.Deserialize<TextCleanupOptions>(System.Text.Json.JsonSerializer.Serialize(window.Result))!;
+                Assert.Equal(2000, restored.ExcludedChangeKeys.Count);
+                Assert.Equal(source, TextCleanupPipeline.Apply(source, restored).Text.Replace("\r\n", "\n"));
+                Assert.Empty(options.ExcludedChangeKeys);
+                Assert.True(options.RemoveSiteNotices);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Folding_supports_builtin_and_custom_rules_without_merging_distinct_rule_ids()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var options = new TextCleanupOptions { RemoveInvisibleCharacters = true, CustomRules = [
+                new() { Id = "first", Name = "同名", Pattern = "foo", Replacement = "bar", Order = 0 },
+                new() { Id = "reverse", Name = "同名", Pattern = "bar", Replacement = "foo", Order = 1 },
+                new() { Id = "third", Name = "同名", Pattern = "foo", Replacement = "bar", Order = 2 }] };
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["全部规则折叠", "正文\u200b\n正文\u200b\nfoo\nfoo", options]);
+            window.Owner = owner;
+            try
+            {
+                window.Show();
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                var apply = (Button)window.FindName("ApplyRulesButton");
+                PumpDispatcherUntil(() => apply.IsEnabled && grid.Items.Count == 8, TimeSpan.FromSeconds(3));
+                var check = (CheckBox)window.FindName("GroupAdsCheck");
+                check.IsChecked = true; check.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, check));
+                Assert.Equal(4, grid.Items.Count);
+                Assert.All(grid.Items.Cast<TextCleanupChangeRow>(), row => Assert.Equal(2, row.Members.Count));
+                Assert.Equal(3, grid.Items.Cast<TextCleanupChangeRow>().Count(row => row.Change.CustomRuleId is not null));
+                Assert.Contains("将替换 2", ((TextCleanupChangeRow)grid.Items[0]).Status);
+                var before = window.Result;
+                var toggle = new Button { Tag = ((TextCleanupChangeRow)grid.Items[0]).Key };
+                typeof(TextCleanupWindow).GetMethod("ToggleChange_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [toggle, new RoutedEventArgs()]);
+                PumpDispatcherUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Equal(2, window.Result.ExcludedChangeKeys.Count);
+                var expand = (Button)window.FindName("ExpandAdGroupButton");
+                expand.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, expand));
+                Assert.Equal(2, grid.Items.Count);
+                Assert.All(grid.Items.Cast<TextCleanupChangeRow>(), row => Assert.False(row.Change.IsApplied));
+                Assert.Empty(before.ExcludedChangeKeys);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Managing_saved_ad_condition_does_not_add_removed_exception_back()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var options = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new AdvertisementRuleOptions().AddKeyword("请记住本站", true) };
+            var dialog = new AdvertisementConditionWindow("请记住本站", options, "请记住本站", true) { Owner = owner };
+            Exception? failure = null;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+            try
+            {
+                dialog.Show();
+                var save = (Button)dialog.FindName("SaveConditionButton");
+                PumpDispatcherUntil(() => save.IsEnabled, TimeSpan.FromSeconds(3));
+                timer.Tick += (_, _) =>
+                {
+                    var manager = dialog.OwnedWindows.OfType<BuiltinCleanupWindow>().FirstOrDefault();
+                    if (manager is null) return;
+                    timer.Stop();
+                    try
+                    {
+                        Assert.False(FindVisualDescendants<ComboBox>(manager).First().IsEnabled);
+                        var field = (TextBox)typeof(BuiltinCleanupWindow).GetField("_preserveKeywords", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+                        field.Text = "";
+                        var button = FindVisualDescendants<Button>(manager).Single(b => b.Content?.ToString() == "保存并返回预览");
+                        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button));
+                    }
+                    catch (Exception ex) { failure = ex; manager.Close(); }
+                };
+                timer.Start();
+                typeof(AdvertisementConditionWindow).GetMethod("ManageConditions_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, [dialog, new RoutedEventArgs()]);
+                if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+                PumpDispatcherUntil(() => save.IsEnabled, TimeSpan.FromSeconds(3));
+                var candidate = (TextCleanupOptions)typeof(AdvertisementConditionWindow).GetField("_candidate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+                Assert.Empty(candidate.Advertisement.PreserveKeywords);
+                Assert.Contains("新增广告删除 1", ((TextBlock)dialog.FindName("ImpactSummary")).Text);
+                Assert.Single(options.Advertisement.PreserveKeywords);
+                Assert.Null(dialog.Result);
+            }
+            finally { timer.Stop(); dialog.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Distinct_ads_do_not_silently_appear_grouped()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var source = string.Join("\n", Enumerable.Range(1, 8).Select(i => $"请记住本站 www.example.org 不同广告{i}"));
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["措辞不同的八条广告", source, new TextCleanupOptions { RemoveSiteNotices = true }]);
+            window.Owner = owner;
+            try
+            {
+                window.Show();
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                PumpDispatcherUntil(() => grid.Items.Count == 8 && ((Button)window.FindName("ApplyRulesButton")).IsEnabled, TimeSpan.FromSeconds(3));
+                var check = (CheckBox)window.FindName("GroupAdsCheck");
+                check.IsChecked = true; check.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, check));
+                Assert.Equal(8, grid.Items.Count);
+                Assert.Contains("未发现完全重复", ((TextBlock)window.FindName("GroupingSummaryText")).Text);
+                Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("ExpandAdGroupButton")).Visibility);
+                Assert.Empty(window.Result.ExcludedChangeKeys);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Advertisement_draft_cancels_stale_analysis_and_keeps_settings_private()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var initial = new TextCleanupOptions { RemoveSiteNotices = true };
+            var dialog = new AdvertisementConditionWindow("请记住本站\n漏掉的推广\n普通正文", initial, "漏掉的推广") { Owner = owner };
+            try
+            {
+                dialog.Show();
+                var save = (Button)dialog.FindName("SaveConditionButton");
+                var input = (TextBox)dialog.FindName("KeywordText");
+                PumpDispatcherUntil(() => save.IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Contains("新增广告删除 1", ((TextBlock)dialog.FindName("ImpactSummary")).Text);
+                input.Text = "";
+                Assert.False(save.IsEnabled);
+                save.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, save));
+                Assert.Null(dialog.Result);
+                input.Text = "请记住本站";
+                ((ComboBox)dialog.FindName("IntentCombo")).SelectedIndex = 1;
+                PumpDispatcherUntil(() => save.IsEnabled, TimeSpan.FromSeconds(3));
+                Assert.Contains("不再被广告规则删除 1", ((TextBlock)dialog.FindName("ImpactSummary")).Text);
+                Assert.Null(dialog.Result);
+                Assert.Empty(initial.Advertisement.PreserveKeywords);
+            }
+            finally { dialog.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Cleanup_context_routes_non_ad_and_duplicate_custom_names()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var options = new TextCleanupOptions { RemoveInvisibleCharacters = true, CustomRules = [
+                new() { Id = "a", Name = "同名", Pattern = "alpha", Replacement = "A" },
+                new() { Id = "b", Name = "同名", Pattern = "beta", Replacement = "B" }] };
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["测试", "正文\u200b\nalpha\nbeta", options]);
+            window.Owner = owner;
+            try
+            {
+                window.Show();
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                PumpDispatcherUntil(() => ((Button)window.FindName("ApplyRulesButton")).IsEnabled && grid.Items.Count == 3, TimeSpan.FromSeconds(3));
+                Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("AddAdvertisementRuleButton")).Visibility);
+                var actions = (WrapPanel)window.FindName("CurrentRuleActions");
+                Assert.Contains("零宽", ((Button)actions.Children[0]).Content.ToString());
+                grid.SelectedItem = grid.Items.Cast<TextCleanupChangeRow>().Single(row => row.Change.CustomRuleId == "b");
+                Assert.Single(actions.Children.Cast<object>());
+                Assert.Contains("同名", ((Button)actions.Children[0]).Content.ToString());
+                var editor = new TextCleanupRuleManagerWindow(options.CustomRules, "beta", "b");
+                Assert.Equal("beta", ((TextBox)editor.FindName("RulePatternText")).Text);
+                editor.Close();
+                var builtin = new BuiltinCleanupWindow(options, "正文", nameof(TextCleanupOptions.RemoveInvisibleCharacters));
+                builtin.Show(); builtin.UpdateLayout();
+                Assert.Equal(nameof(TextCleanupOptions.RemoveInvisibleCharacters), FindVisualDescendants<ComboBox>(builtin).First().SelectedValue);
+                builtin.Close();
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Cleanup_quick_actions_update_preview_without_changing_opening_options()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var initial = new TextCleanupOptions { RemoveSiteNotices = true };
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["测试书稿", "第一章 开始\n请记住本站\n请记住本站\n漏掉的特殊推广\n普通正文", initial]);
+            window.Owner = owner;
+            try
+            {
+                window.Show();
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                var apply = (Button)window.FindName("ApplyRulesButton");
+                void Wait() => PumpDispatcherUntil(() => apply.IsEnabled && grid.Items.Count >= 0, TimeSpan.FromSeconds(3));
+                void Click(string name) { var button = (Button)window.FindName(name); button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button)); Wait(); }
+                void ToggleRow() { var button = new Button { Tag = ((TextCleanupChangeRow)grid.SelectedItem).Key }; typeof(TextCleanupWindow).GetMethod("ToggleChange_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [button, new RoutedEventArgs()]); Wait(); }
+                void EditCondition(string entry, string? keyword, bool preserve, bool cancel = false)
+                {
+                    var original = window.Result;
+                    Exception? failure = null;
+                    AdvertisementConditionWindow? dialog = null;
+                    var initialized = false;
+                    var started = DateTime.UtcNow;
+                    var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+                    timer.Tick += (_, _) =>
+                    {
+                        dialog ??= window.OwnedWindows.OfType<AdvertisementConditionWindow>().FirstOrDefault();
+                        if (dialog is null) return;
+                        try
+                        {
+                            if (!initialized)
+                            {
+                                if (entry == "RecentRuleButton") Assert.Equal("请记住本站", dialog.Keyword);
+                                if (keyword is not null) ((TextBox)dialog.FindName("KeywordText")).Text = keyword;
+                                ((ComboBox)dialog.FindName("IntentCombo")).SelectedIndex = preserve ? 1 : 0;
+                                initialized = true;
+                            }
+                            Assert.Same(original, window.Result);
+                            var save = (Button)dialog.FindName("SaveConditionButton");
+                            if (!save.IsEnabled)
+                            {
+                                if (DateTime.UtcNow - started > TimeSpan.FromSeconds(4)) throw new TimeoutException("自动影响分析超时");
+                                return;
+                            }
+                            var summary = ((TextBlock)dialog.FindName("ImpactSummary")).Text;
+                            Assert.Contains(preserve ? "不再被广告规则删除" : "新增广告删除", summary);
+                            var capture = Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH");
+                            if (!string.IsNullOrWhiteSpace(capture)) { dialog.UpdateLayout(); CaptureWindowVisual(dialog, capture + "-dialog.png"); }
+                            timer.Stop();
+                            if (cancel) dialog.Close(); else save.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, save));
+                        }
+                        catch (Exception exception) { failure = exception; timer.Stop(); dialog.Close(); }
+                    };
+                    timer.Start();
+                    try { Click(entry); } finally { timer.Stop(); dialog?.Close(); }
+                    if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+                    if (cancel) Assert.Same(original, window.Result);
+                }
+                Wait(); Assert.Equal(2, grid.Items.Count);
+                Assert.Null(window.FindName("AddPreserveKeywordButton"));
+                Assert.Null(window.FindName("AddAdKeywordButton"));
+                Assert.False(((Expander)window.FindName("RulesExpander")).IsExpanded);
+                Assert.False(((Expander)window.FindName("DetailsExpander")).IsExpanded);
+                var grouping = (CheckBox)window.FindName("GroupAdsCheck");
+                grouping.IsChecked = true; grouping.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, grouping));
+                Assert.Single(grid.Items.Cast<object>());
+                Assert.Contains("2 条 → 1 项", ((TextBlock)window.FindName("GroupingSummaryText")).Text);
+                ToggleRow(); Assert.Equal(2, window.Result.ExcludedChangeKeys.Count);
+                ToggleRow(); Assert.Empty(window.Result.ExcludedChangeKeys);
+                Click("ExpandAdGroupButton"); Assert.Equal(2, grid.Items.Count);
+                Click("BackToGroupsButton"); Assert.Single(grid.Items.Cast<object>());
+                grouping.IsChecked = false; grouping.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, grouping));
+                var preview = (TextBox)window.FindName("PreviewText");
+                Assert.Equal("请记住本站", preview.SelectedText);
+                ((RadioButton)window.FindName("ProcessedPreviewRadio")).IsChecked = true;
+                Assert.DoesNotContain("请记住本站", preview.Text);
+                ((RadioButton)window.FindName("OriginalPreviewRadio")).IsChecked = true;
+                Click("NextChangeButton"); Assert.Equal(1, grid.SelectedIndex);
+                Click("PreviousChangeButton"); Assert.Equal(0, grid.SelectedIndex);
+                ToggleRow(); Assert.Single(window.Result.ExcludedChangeKeys);
+                EditCondition("AddAdvertisementRuleButton", null, true, cancel: true);
+                EditCondition("AddAdvertisementRuleButton", null, true);
+                Assert.Empty(grid.Items.Cast<object>());
+                Assert.Contains("请记住本站", window.Result.Advertisement.PreserveKeywords);
+                var resume = (Button)window.FindName("RecentRuleButton");
+                Assert.True(resume.IsVisible && resume.IsEnabled);
+                EditCondition("RecentRuleButton", null, true, cancel: true);
+                Click("UndoConditionButton"); Assert.Empty(window.Result.Advertisement.PreserveKeywords);
+                Assert.Single(window.Result.ExcludedChangeKeys);
+                EditCondition("AddAdvertisementRuleButton", "请记住本站", true);
+                EditCondition("RecentRuleButton", "漏掉的特殊推广", false);
+                Assert.Single(grid.Items.Cast<object>());
+                Assert.Contains("漏掉的特殊推广", window.Result.Advertisement.MatchKeywords);
+                grouping.IsChecked = true; grouping.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, grouping));
+                Assert.Contains("未发现完全重复", ((TextBlock)window.FindName("GroupingSummaryText")).Text);
+                Assert.Empty(initial.Advertisement.MatchKeywords);
+                Assert.Empty(initial.Advertisement.PreserveKeywords);
+                Assert.Empty(initial.ExcludedChangeKeys);
+                var search = (TextBox)window.FindName("ChangeSearchText");
+                search.Text = "不存在";
+                Assert.Equal("0 / 0", ((TextBlock)window.FindName("ChangePositionText")).Text);
+                search.Text = "";
+                var capturePath = Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH");
+                if (!string.IsNullOrWhiteSpace(capturePath)) { window.UpdateLayout(); CaptureWindowVisual(window, capturePath + "-main.png"); }
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
     public void Cleanup_customization_keeps_book_state_isolated()
     {
         RunInWindow(window =>

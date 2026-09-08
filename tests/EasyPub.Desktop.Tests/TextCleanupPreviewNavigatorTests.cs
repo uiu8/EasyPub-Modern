@@ -76,7 +76,13 @@ public sealed class TextCleanupPreviewNavigatorTests
 
                     var preview = Assert.IsType<TextBox>(window.FindName("PreviewText"));
                     var location = Assert.IsType<TextBlock>(window.FindName("PreviewLocationText"));
+                    Assert.Equal("001 雨夜", preview.SelectedText);
+                    var optionsBefore = window.Result;
+                    ((RadioButton)window.FindName("ProcessedPreviewRadio")).IsChecked = true;
                     Assert.Equal("第一章 雨夜", preview.SelectedText);
+                    ((RadioButton)window.FindName("OriginalPreviewRadio")).IsChecked = true;
+                    Assert.Equal("001 雨夜", preview.SelectedText);
+                    Assert.Same(optionsBefore, window.Result);
                     Assert.Contains("原文第 1 行", location.Text);
                 }
                 catch (Exception exception)

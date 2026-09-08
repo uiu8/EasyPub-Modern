@@ -16,13 +16,15 @@ public sealed class BuiltinCleanupWindow : Window
     private readonly CheckBox _preserveRegex = new() { Content = "保留条件使用正则表达式" };
     private readonly CheckBox _heuristics = new() { Content = "同时使用网址与推广语境组合识别" };
     private readonly TextBox _minimum = new();
+    private readonly TextBox _matchKeywords = new() { AcceptsReturn = true, Height = 75, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    private readonly TextBox _preserveKeywords = new() { AcceptsReturn = true, Height = 75, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private readonly StackPanel _adPanel = new();
     private readonly StackPanel _wrapPanel = new();
     private readonly TextBlock _summary = new() { TextWrapping = TextWrapping.Wrap };
     private string? _key;
     public TextCleanupOptions Result => _options;
 
-    public BuiltinCleanupWindow(TextCleanupOptions options, string source)
+    public BuiltinCleanupWindow(TextCleanupOptions options, string source, string? selectedKey = null, bool singleRuleOnly = false)
     {
         _options = options;
         _source = source;
@@ -44,6 +46,8 @@ public sealed class BuiltinCleanupWindow : Window
         _rules.ItemsSource = AutomaticCheckOptions.CleanupLabels.Select(pair => new RuleChoice(pair.Key, pair.Value)).ToArray();
         panel.Children.Add(_rules);
         panel.Children.Add(_original);
+        AddField(_adPanel, "包含这些词时标记广告（每行一个，满足任意一条；不需要正则）", _matchKeywords);
+        AddField(_adPanel, "包含这些词时保留（每行一个，优先于所有广告匹配；不影响其他清理规则）", _preserveKeywords);
         AddField(_adPanel, "广告匹配条件（普通文本为包含匹配，正则可用 | 分隔多个条件）", _pattern);
         _adPanel.Children.Add(_regex); _adPanel.Children.Add(_heuristics);
         AddField(_adPanel, "保留条件（优先于广告匹配；仅豁免广告算法，不影响其他规则）", _preserve);
@@ -64,7 +68,7 @@ public sealed class BuiltinCleanupWindow : Window
         });
         var resetButtons = new WrapPanel(); panel.Children.Add(resetButtons);
         AddButton(resetButtons, "恢复本条默认", () => Restore(false));
-        AddButton(resetButtons, "恢复全部内置规则默认", () => Restore(true));
+        if (!singleRuleOnly) AddButton(resetButtons, "恢复全部内置规则默认", () => Restore(true));
         var actions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) }; panel.Children.Add(actions);
         AddButton(actions, "取消", Close);
         AddButton(actions, "保存并返回预览", () => { if (SaveCurrent()) DialogResult = true; });
@@ -76,6 +80,8 @@ public sealed class BuiltinCleanupWindow : Window
             _key = next; LoadCurrent();
         };
         _rules.SelectedIndex = 0;
+        if (selectedKey is not null) _rules.SelectedValue = selectedKey;
+        if (singleRuleOnly) _rules.IsEnabled = false;
     }
 
     private static void AddField(Panel panel, string label, Control control)
@@ -96,6 +102,8 @@ public sealed class BuiltinCleanupWindow : Window
         _adPanel.Visibility = _key == nameof(TextCleanupOptions.RemoveSiteNotices) ? Visibility.Visible : Visibility.Collapsed;
         _wrapPanel.Visibility = _key == nameof(TextCleanupOptions.RepairHardWraps) ? Visibility.Visible : Visibility.Collapsed;
         _pattern.Text = _options.Advertisement.Pattern; _regex.IsChecked = _options.Advertisement.IsRegex;
+        _matchKeywords.Text = string.Join(Environment.NewLine, _options.Advertisement.MatchKeywords);
+        _preserveKeywords.Text = string.Join(Environment.NewLine, _options.Advertisement.PreserveKeywords);
         _preserve.Text = _options.Advertisement.PreservePattern; _preserveRegex.IsChecked = _options.Advertisement.PreserveIsRegex;
         _heuristics.IsChecked = _options.Advertisement.UsePromotionHeuristics;
         _minimum.Text = _options.HardWrapMinimumLength.ToString();
@@ -107,6 +115,7 @@ public sealed class BuiltinCleanupWindow : Window
         {
             var ad = _options.Advertisement with { Pattern = _pattern.Text, IsRegex = _regex.IsChecked == true, PreservePattern = _preserve.Text, PreserveIsRegex = _preserveRegex.IsChecked == true, UsePromotionHeuristics = _heuristics.IsChecked == true };
             ad.CompileMatcher(ad.Pattern, ad.IsRegex); ad.CompileMatcher(ad.PreservePattern, ad.PreserveIsRegex);
+            ad = ad with { MatchKeywords = AdvertisementRuleOptions.ParseKeywords(_matchKeywords.Text), PreserveKeywords = AdvertisementRuleOptions.ParseKeywords(_preserveKeywords.Text) };
             if (!int.TryParse(_minimum.Text, out var minimum) || minimum is < 1 or > 1000) throw new InvalidOperationException("最少字符数须为 1–1000。");
             var values = _options.BuiltinOverrides.ToDictionary(pair => pair.Key, pair => pair.Value);
             values[_key!] = values.GetValueOrDefault(_key!, new()) with { UseDefaultAlgorithm = _original.IsChecked == true };

@@ -6,6 +6,58 @@ namespace EasyPub.Core.Tests;
 public sealed class CleanupCustomizationTests
 {
     [Fact]
+    public async Task Optional_real_book_preservation_and_conversion_smoke()
+    {
+        var path = Environment.GetEnvironmentVariable("EASYPUB_CLEANUP_REAL_BOOK");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var bytes = await File.ReadAllBytesAsync(path);
+        var source = System.Text.Encoding.UTF8.GetString(bytes);
+        var options = new TextCleanupOptions { RemoveSiteNotices = true };
+        var preview = TextCleanupPipeline.Apply(source, options);
+        Assert.NotEmpty(preview.Changes);
+        var line = source.Split('\n')[preview.Changes[0].LineNumber - 1].Trim();
+        Assert.NotEmpty(line);
+        options = options with { Advertisement = options.Advertisement.AddKeyword(line, true) };
+        Assert.Contains(line, TextCleanupPipeline.Apply(source, options).Text);
+        var output = Path.Combine(Path.GetTempPath(), "easypub-real-" + Guid.NewGuid() + ".epub");
+        try
+        {
+            await new EasyPubConverter().ConvertAsync(new(path, output, Options: new() { TextCleanup = options }));
+            using var zip = System.IO.Compression.ZipFile.OpenRead(output);
+            var content = string.Join("\n", zip.Entries.Where(e => e.FullName.Contains("chapter") && e.FullName.EndsWith(".html")).Select(e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); }));
+            Assert.Contains(line, System.Net.WebUtility.HtmlDecode(content));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(path));
+        }
+        finally { File.Delete(output); }
+    }
+
+    [Fact]
+    public void Literal_keywords_ignore_blank_lines_deduplicate_and_preserve_regex()
+    {
+        Assert.Equal(new[] { "abc", "广告" }, AdvertisementRuleOptions.ParseKeywords(" abc\r\n\nABC\n广告 "));
+        var ad = new AdvertisementRuleOptions { Pattern = "existing.*pattern" }.AddKeyword("[推广].*", false).AddKeyword("[推广].*", false);
+        Assert.Single(ad.MatchKeywords);
+        Assert.Equal("existing.*pattern", ad.Pattern);
+        var preview = TextCleanupPipeline.Apply("[推广].*\n普通推广文字", new() { RemoveSiteNotices = true, Advertisement = ad with { UsePromotionHeuristics = false } });
+        Assert.Single(preview.Changes);
+        Assert.Contains("普通推广文字", preview.Text);
+        Assert.Throws<ArgumentException>(() => ad.AddKeyword("\n ", false));
+        Assert.Throws<ArgumentException>(() => ad.AddKeyword("甲\n乙", false));
+    }
+
+    [Fact]
+    public void Preserve_keyword_wins_over_keyword_regex_and_heuristics_and_roundtrips()
+    {
+        var ad = new AdvertisementRuleOptions().AddKeyword("本站", false).AddKeyword("正文", true);
+        var options = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = ad };
+        var loaded = JsonSerializer.Deserialize<TextCleanupOptions>(JsonSerializer.Serialize(options))!;
+        var result = TextCleanupPipeline.Apply("请记住本站 正文\n更新不易 书友分享 www.example.org 正文\n本站独有广告", loaded);
+        Assert.Single(result.Changes);
+        Assert.Contains("正文", result.Text);
+        Assert.Empty(BuiltinCleanupConfiguration.Restore(loaded).Advertisement.MatchKeywords);
+        Assert.Empty(BuiltinCleanupConfiguration.Restore(loaded).Advertisement.PreserveKeywords);
+    }
+    [Fact]
     public async Task Actual_epub_uses_book_override_and_preserves_source()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
@@ -14,7 +66,7 @@ public sealed class CleanupCustomizationTests
         try
         {
             await File.WriteAllTextAsync(path, source);
-            var options = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new() { Pattern = "独有推广行", IsRegex = false, UsePromotionHeuristics = false } };
+            var options = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new AdvertisementRuleOptions { Pattern = "", UsePromotionHeuristics = false }.AddKeyword("独有推广行", false) };
             var request = BatchConversionRequestFactory.Create([new(path, CleanupOverride: options)], Path.GetTempPath(), "epub", null, new()).Single();
             await new EasyPubConverter().ConvertAsync(request);
             using var zip = System.IO.Compression.ZipFile.OpenRead(output);
@@ -83,7 +135,7 @@ public sealed class CleanupCustomizationTests
         try
         {
             await File.WriteAllTextAsync(path, "第一章 开始\n请记住本站，角色正在说话。");
-            var cleanup = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new() { PreservePattern = "角色" } };
+            var cleanup = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new AdvertisementRuleOptions().AddKeyword("角色", true) };
             var request = new ConversionRequest(path, Path.ChangeExtension(path, ".epub"), Options: new() { TextCleanup = cleanup }) { AutomaticChecks = new() { Targets = [], Cleanup = new() { RemoveSiteNotices = true } } };
             var report = await new ConversionPreflightInspector().InspectAsync([request]);
             Assert.DoesNotContain(report.Issues, issue => issue.Code == "cleanup_check");

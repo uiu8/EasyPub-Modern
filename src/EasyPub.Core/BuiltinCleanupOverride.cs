@@ -16,6 +16,20 @@ public sealed record AdvertisementRuleOptions
     public bool UsePromotionHeuristics { get; init; } = true;
     public string PreservePattern { get; init; } = string.Empty;
     public bool PreserveIsRegex { get; init; }
+    public IReadOnlyList<string> MatchKeywords { get; init; } = [];
+    public IReadOnlyList<string> PreserveKeywords { get; init; } = [];
+
+    public static string[] ParseKeywords(string text) => text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+        .Select(value => value.Trim()).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    public AdvertisementRuleOptions AddKeyword(string text, bool preserve)
+    {
+        var words = ParseKeywords(text);
+        if (words.Length != 1) throw new ArgumentException("请输入一个非空的单行条件。多条条件请在内置规则设置中逐行填写。");
+        return preserve
+            ? this with { PreserveKeywords = PreserveKeywords.Concat(words).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() }
+            : this with { MatchKeywords = MatchKeywords.Concat(words).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
+    }
 
     public Func<string, bool> CompileMatcher(string pattern, bool regex)
     {

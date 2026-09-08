@@ -14,6 +14,8 @@ public sealed record TextCleanupChange(
     public string Key { get; init; } = TextCleanupPipeline.CreateChangeKey(LineNumber, Rule, Before);
     public bool IsApplied { get; init; } = true;
     public string? Reason { get; init; }
+    public IReadOnlyList<string> RuleKeys { get; init; } = [];
+    public string? CustomRuleId { get; init; }
 }
 
 public sealed record TextCleanupPreview(
@@ -54,25 +56,27 @@ public static partial class TextCleanupPipeline
             if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
             var original = result[index];
             var current = original;
+            List<string>? ruleKeys = null;
+            void Track(string key, string value) { if (value != current) (ruleKeys ??= []).Add(key); current = value; }
 
             if (options.RemoveInvisibleCharacters)
-                current = InvisibleCharacterPattern().Replace(current, string.Empty);
+                Track(nameof(TextCleanupOptions.RemoveInvisibleCharacters), InvisibleCharacterPattern().Replace(current, string.Empty));
             if (options.NormalizeFullWidthSpaces)
-                current = NormalizeSpaces(current);
+                Track(nameof(TextCleanupOptions.NormalizeFullWidthSpaces), NormalizeSpaces(current));
             if (options.NormalizeChapterNumbers && ChapterTitleNormalizer.TryNormalizeNumericTitle(current, out var title))
-                current = title;
+                Track(nameof(TextCleanupOptions.NormalizeChapterNumbers), title);
             if (options.ChineseVariant != ChineseVariantConversion.None)
-                current = ChineseVariantMapper.Convert(current, options.ChineseVariant);
+                Track(nameof(TextCleanupOptions.ChineseVariant), ChineseVariantMapper.Convert(current, options.ChineseVariant));
             if (options.NormalizePunctuation)
-                current = NormalizeChinesePunctuation(current);
+                Track(nameof(TextCleanupOptions.NormalizePunctuation), NormalizeChinesePunctuation(current));
             if (options.ApplyOcrCorrections)
-                current = ApplySafeOcrCorrections(current);
+                Track(nameof(TextCleanupOptions.ApplyOcrCorrections), ApplySafeOcrCorrections(current));
             if (options.RepairParagraphBoundaries)
-                current = ParagraphBoundaryPattern().Replace(current, "$1" + Environment.NewLine + "　　");
+                Track(nameof(TextCleanupOptions.RepairParagraphBoundaries), ParagraphBoundaryPattern().Replace(current, "$1" + Environment.NewLine + "　　"));
 
             if (!string.Equals(original, current, StringComparison.Ordinal))
             {
-                var change = CreateChange(index + 1, DescribeInlineRules(original, current, options), original, current, exclusions);
+                var change = CreateChange(index + 1, DescribeInlineRules(original, current, options), original, current, exclusions) with { RuleKeys = ruleKeys ?? [] };
                 changes.Add(change);
                 result[index] = change.IsApplied ? current : original;
             }
@@ -86,12 +90,14 @@ public static partial class TextCleanupPipeline
             for (var index = 0; index < result.Length; index++)
             {
                 if ((index & 1023) == 0) cancellationToken.ThrowIfCancellationRequested();
-                if (result[index] == RemovedLine || preserve(lines[index]) || preserve(result[index])) continue;
+                if (result[index] == RemovedLine || preserve(lines[index]) || preserve(result[index])
+                    || options.Advertisement.PreserveKeywords.Any(word => !string.IsNullOrWhiteSpace(word) && (lines[index].Contains(word, StringComparison.OrdinalIgnoreCase) || result[index].Contains(word, StringComparison.OrdinalIgnoreCase)))) continue;
+                var keyword = options.Advertisement.MatchKeywords.FirstOrDefault(word => !string.IsNullOrWhiteSpace(word) && result[index].Contains(word, StringComparison.OrdinalIgnoreCase));
                 var matchedPattern = match(result[index]);
-                if (!matchedPattern && !(options.Advertisement.UsePromotionHeuristics && IsPromotionNotice(result[index]))) continue;
+                if (keyword is null && !matchedPattern && !(options.Advertisement.UsePromotionHeuristics && IsPromotionNotice(result[index]))) continue;
                 var change = CreateChange(index + 1, "清理网站广告/下载说明", result[index], string.Empty, exclusions, lines[index]) with
                 {
-                    Reason = matchedPattern ? "命中广告匹配条件：" + options.Advertisement.Pattern : "同时命中网址、出版语境及多个推广信号",
+                    Reason = keyword is not null ? "命中广告关键词：" + keyword : matchedPattern ? "命中广告匹配条件：" + options.Advertisement.Pattern : "同时命中网址、出版语境及多个推广信号",
                 };
                 changes.Add(change);
                 if (change.IsApplied) result[index] = RemovedLine;
@@ -267,7 +273,7 @@ public static partial class TextCleanupPipeline
                     var firstDifference = 0;
                     while (firstDifference < beforeDocument.Length && firstDifference < afterDocument.Length && beforeDocument[firstDifference] == afterDocument[firstDifference]) firstDifference++;
                     var lineNumber = 1 + beforeDocument.AsSpan(0, Math.Min(firstDifference, beforeDocument.Length)).Count('\n');
-                    var change = CreateChange(lineNumber, $"自定义：{rule.Name}", Abbreviate(beforeDocument), Abbreviate(afterDocument), exclusions, $"{rule.Id}\n{beforeDocument}");
+                    var change = CreateChange(lineNumber, $"自定义：{rule.Name}", Abbreviate(beforeDocument), Abbreviate(afterDocument), exclusions, $"{rule.Id}\n{beforeDocument}") with { CustomRuleId = rule.Id };
                     changes.Add(change);
                     if (change.IsApplied)
                     {
@@ -289,7 +295,7 @@ public static partial class TextCleanupPipeline
                     ? before.Replace(rule.Pattern, rule.Replacement, rule.IgnoreCase ? StringComparison.CurrentCultureIgnoreCase : StringComparison.Ordinal)
                     : regex.Replace(before, rule.Replacement);
                 if (string.Equals(before, after, StringComparison.Ordinal)) continue;
-                var change = CreateChange(index + 1, $"自定义：{rule.Name}", before, after, exclusions, $"{rule.Id}\n{before}");
+                var change = CreateChange(index + 1, $"自定义：{rule.Name}", before, after, exclusions, $"{rule.Id}\n{before}") with { CustomRuleId = rule.Id };
                 changes.Add(change);
                 if (change.IsApplied) result[index] = after;
             }

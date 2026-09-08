@@ -13,6 +13,16 @@ public static class TextCleanupPreviewNavigator
 {
     public const int DefaultMaximumCharacters = 120_000;
 
+    public static TextCleanupPreviewView CreateOriginal(IReadOnlyList<string> lines, TextCleanupChange? change = null,
+        int maximumCharacters = DefaultMaximumCharacters)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        if (maximumCharacters < 1) throw new ArgumentOutOfRangeException(nameof(maximumCharacters));
+        if (change is null || lines.Count == 0) return CreateInitialWindow(lines, maximumCharacters);
+        return CreateTargetWindow(lines, Math.Clamp(change.LineNumber - 1, 0, lines.Count - 1), maximumCharacters,
+            $"原文第 {change.LineNumber} 行 · {change.Rule}（查看原文不改变清理选择）");
+    }
+
     public static TextCleanupPreviewView Create(
         TextCleanupPreview preview,
         TextCleanupChange? selectedChange = null,

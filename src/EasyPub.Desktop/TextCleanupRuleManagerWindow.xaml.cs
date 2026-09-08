@@ -19,7 +19,7 @@ public partial class TextCleanupRuleManagerWindow : Window
     private TextCleanupRuleRow? _editingRow;
     private bool _changingSelection;
 
-    public TextCleanupRuleManagerWindow(IReadOnlyList<TextCleanupCustomRule> rules, string sourceText)
+    public TextCleanupRuleManagerWindow(IReadOnlyList<TextCleanupCustomRule> rules, string sourceText, string? selectedId = null)
     {
         InitializeComponent();
         _sourceText = sourceText;
@@ -27,6 +27,7 @@ public partial class TextCleanupRuleManagerWindow : Window
         RulesGrid.DataContext = _rows;
         RulesGrid.ItemsSource = _rows;
         if (_rows.Count > 0) RulesGrid.SelectedIndex = 0;
+        if (selectedId is not null) RulesGrid.SelectedItem = _rows.FirstOrDefault(row => row.Rule.Id == selectedId);
     }
 
     public IReadOnlyList<TextCleanupCustomRule> Rules => _rows.Select((row, index) => row.Rule with { Order = index }).ToArray();
