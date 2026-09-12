@@ -57,6 +57,6 @@ public static partial class ChapterTitleNormalizer
         return result.ToString();
     }
 
-    [GeneratedRegex(@"^\s*(?<number>\d{1,6})(?:\s+|[.\uff0e、:_：\-—]\s*)(?<title>\S.*?)\s*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(?<number>\d{1,6})(?:\s+|[.\uff0e](?!\d)\s*|[、:_：\-—]\s*)(?<title>\S.*?)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex NumericChapterPattern();
 }

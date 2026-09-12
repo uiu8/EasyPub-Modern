@@ -16,7 +16,8 @@ public sealed class ConversionPreflightCache
 
     public async Task<(ConversionPreflightReport Report, bool Reused)> InspectAsync(
         IEnumerable<ConversionRequest> requests,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ChapterTreeDocumentCache? documentCache = null)
     {
         ArgumentNullException.ThrowIfNull(requests);
         var jobs = requests.ToArray();
@@ -41,7 +42,7 @@ public sealed class ConversionPreflightCache
 
         await Parallel.ForEachAsync(misses, cancellationToken, async (miss, token) =>
         {
-            var report = await new ConversionPreflightInspector().InspectAsync([miss.Request], token).ConfigureAwait(false);
+            var report = await new ConversionPreflightInspector(documentCache).InspectAsync([miss.Request], token).ConfigureAwait(false);
             reports[miss.Index] = report;
             StoreSingle(miss.Request, miss.Key, report);
         }).ConfigureAwait(false);

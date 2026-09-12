@@ -44,9 +44,24 @@ public static partial class TextCleanupPipeline
         TextCleanupOptions? options,
         CancellationToken cancellationToken = default)
     {
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        return Apply(lines, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Applies cleanup directly to already decoded source lines. Chapter parsing already
+    /// owns the normalized line array, so callers should use this overload to avoid
+    /// rebuilding a large full-text string and splitting it a second time.
+    /// </summary>
+    public static TextCleanupPreview Apply(
+        IReadOnlyList<string> sourceLines,
+        TextCleanupOptions? options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sourceLines);
         options ??= new TextCleanupOptions();
         options = BuiltinCleanupConfiguration.Prepare(options);
-        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        var lines = sourceLines as string[] ?? sourceLines.ToArray();
         var result = lines.ToArray();
         var changes = new List<TextCleanupChange>();
         var exclusions = new HashSet<string>(options.ExcludedChangeKeys ?? [], StringComparer.Ordinal);

@@ -40,6 +40,8 @@ public static class BatchConversionRequestFactory
                 Options: baseOptions with
                 {
                     CoverImagePath = source.CoverImagePath,
+                    TocHierarchy = source.ChapterTree?.NumericHeadingRecognition is not null
+                        ? baseOptions.TocHierarchy.ForBook(source.ChapterTree) : baseOptions.TocHierarchy,
                     TextCleanup = source.CleanupOverride ?? baseOptions.TextCleanup,
                     Illustrations = source.Illustrations ?? [],
                     Metadata = MetadataMappingResolver.Apply(baseOptions.Metadata, metadataOverrides),

@@ -35,6 +35,8 @@ public sealed record EasyPubAppSettings(
     public string? LegacyConfigPath { get; init; }
     public string? KindleGenPath { get; init; }
     public string TextEditorPath { get; init; } = "notepad.exe";
+    public TocHierarchyOptions NumericHeadingDefaults { get; init; } = new();
+    public IReadOnlyList<NamedNumericHeadingPreset> NumericHeadingPresets { get; init; } = [];
     public bool AutoOpenTaskCenter { get; init; }
     public AutomaticCheckOptions AutomaticChecks { get; init; } = new();
     public bool AutoOpenOutputDirectory { get; init; }

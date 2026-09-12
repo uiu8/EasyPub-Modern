@@ -22,9 +22,16 @@ public partial class ChapterEditorWindow : Window
     private Point _dragStart;
     private ChapterTreeNode? _draggedNode;
     private ChapterTreeNode? _selectedNode;
+    private bool _refreshingSuggestions;
+    private bool _detectUnrecognized;
+    private int _nextSuggestionIndex;
+    private string _numericPattern = NumericHeadingRule.DefaultPattern;
+    public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();
+    public IReadOnlyList<NamedNumericHeadingPreset> NumericPresets { get; set; } = [];
+    public bool InheritNumericDefaults { get; set; } = true;
 
     public ChapterEditorWindow(ChapterTreeDocument document)
-        : this(document, new TocHierarchyOptions(), null, TextEncodingMode.Auto)
+        : this(document, document.RecognitionOptions, null, TextEncodingMode.Auto)
     {
     }
 
@@ -32,26 +39,34 @@ public partial class ChapterEditorWindow : Window
         ChapterTreeDocument document,
         TocHierarchyOptions hierarchy,
         string? chapterPattern,
-        TextEncodingMode encodingMode)
+        TextEncodingMode encodingMode,
+        bool detectUnrecognized = true)
     {
         InitializeComponent();
         _document = document;
         _encodingMode = encodingMode;
+        _detectUnrecognized = detectUnrecognized;
         Roots = BuildTree(document.Entries);
         DataContext = this;
-        SourceText.Text = document.SourcePath;
+        SourceText.Text = System.IO.Path.GetFileName(document.SourcePath);
         SourceText.ToolTip = document.SourcePath;
         ChapterPatternText.Text = chapterPattern ?? string.Empty;
         IncludeHtmlTocPageCheck.IsChecked = hierarchy.IncludeHtmlTocPage;
         IncludeChapterTopNavigationCheck.IsChecked = hierarchy.IncludeChapterTopNavigation;
         HierarchyEnabledCheck.IsChecked = hierarchy.Enabled;
+        NumericHeadingsCheck.IsChecked = hierarchy.RecognizeNumericHeadings;
+        NumericMinimumLinesText.Text = hierarchy.NumericHeadingMinimumBodyLines.ToString();
+        _numericPattern = hierarchy.NumericHeadingPattern;
         Level1PatternText.Text = hierarchy.Level1Pattern;
         Level2PatternText.Text = hierarchy.Level2Pattern;
         Level3PatternText.Text = hierarchy.Level3Pattern;
+        _recognitionState = CaptureRules();
         SubscribeToNodes(Roots);
         _currentSnapshot = CaptureSnapshot();
+        _initialSnapshot = _currentSnapshot;
         UpdateSummary();
         UpdateUndoRedoButtons();
+        InitializeWorkbench();
     }
 
     public ObservableCollection<ChapterTreeNode> Roots { get; }
@@ -60,9 +75,56 @@ public partial class ChapterEditorWindow : Window
     public TocHierarchyOptions? ResultHierarchyOptions { get; private set; }
     public string? ResultChapterPattern { get; private set; }
 
+    public void NavigateToSuggestion(ConversionPreflightIssue issue)
+    {
+        ReviewOnlyCheck.IsChecked = true;
+        AllChaptersRadio.IsChecked = false;
+        IssueCategoryCombo.SelectedIndex = 0;
+        UpdateReviewVisibility();
+        var match = ChapterSuggestionsCombo.Items.Cast<ConversionPreflightIssue>()
+            .FirstOrDefault(candidate => candidate.Code == issue.Code && candidate.LineNumber == issue.LineNumber);
+        if (match is not null) ChapterSuggestionsCombo.SelectedItem = match;
+        else if (issue.LineNumber is int line) NavigateToSourceLine(line);
+    }
+
+    public void NavigateToSourceLine(int lineNumber)
+    {
+        ClearReviewResult();
+        _expandSource = false;
+        if (!_refreshingSuggestions)
+        {
+            var match = ChapterSuggestionsCombo.Items.Cast<ConversionPreflightIssue>().FirstOrDefault(issue => issue.LineNumber == lineNumber);
+            _refreshingSuggestions = true;
+            try { ChapterSuggestionsCombo.SelectedItem = match; }
+            finally { _refreshingSuggestions = false; }
+            UpdateSuggestionButtons();
+        }
+        _selectedNode = Flatten().FirstOrDefault(node => node.ToEntry().TitleLineNumber == lineNumber)
+            ?? Flatten().FirstOrDefault(node => node.ToEntry().ContentRanges.Any(range => lineNumber >= range.StartLine && lineNumber <= range.EndLine));
+        if (_selectedNode is null) { ShowReviewFeedback($"原文第 {lineNumber} 行不属于当前章节树。"); return; }
+        _selectedNode.IsReviewVisible = true;
+        for (var ancestor = _selectedNode.Parent; ancestor is not null; ancestor = ancestor.Parent) ancestor.IsReviewVisible = true;
+        SelectRestoredNode();
+        if (!_applyingMultiSelection) { SetOperationSelection([_selectedNode]); _selectionAnchor = _selectedNode; }
+        RefreshSelectedLines();
+        UpdateActionButtons();
+        var line = SelectedLines.FirstOrDefault(item => item.LineNumber == lineNumber);
+          if (line is null)
+        {
+              _expandSource = true;
+              RefreshSelectedLines();
+              line = SelectedLines.FirstOrDefault(item => item.LineNumber == lineNumber);
+        }
+        if (line is null) return;
+        SourceLinesList.SelectedItem = line;
+        SourceLinesList.ScrollIntoView(line);
+        if (_selectedNode.ToEntry().TitleLineNumber == lineNumber) SplitButton.IsEnabled = false;
+    }
+
     private void ChapterTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
         _selectedNode = e.NewValue as ChapterTreeNode;
+        if (!_applyingMultiSelection) SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
         RefreshSelectedLines();
         UpdateActionButtons();
     }
@@ -71,7 +133,7 @@ public partial class ChapterEditorWindow : Window
     private void MoveDown_Click(object sender, RoutedEventArgs e) => MoveSelected(1);
     private void MoveSelected(int direction)
     {
-        if (_selectedNode is null) return;
+        if (_selectedNode is null || OperationSelection().Length != 1 || _sourceChanged) return;
         var siblings = Siblings(_selectedNode);
         var index = siblings.IndexOf(_selectedNode);
         var target = index + direction;
@@ -83,10 +145,13 @@ public partial class ChapterEditorWindow : Window
 
     private void Promote_Click(object sender, RoutedEventArgs e)
     {
+        if (OperationSelection().Length != 1 || _sourceChanged) return;
         var selected = _selectedNode;
         if (selected?.Parent is not { } parent) return;
         var selectedIndex = parent.Children.IndexOf(selected);
         if (selectedIndex < 0) return;
+        var followingCount = parent.Children.Count - selectedIndex - 1;
+        if (followingCount > 0 && !ConfirmWorkbench($"「{selected.Title}」将移出父章节。为保持正文顺序，后续 {followingCount} 个同级章节将归入它的子章节。\n可撤销，是否继续？", "提升章节层级")) return;
         Mutate(() =>
         {
             var followingSiblings = parent.Children.Skip(selectedIndex + 1).ToArray();
@@ -110,6 +175,7 @@ public partial class ChapterEditorWindow : Window
 
     private void Demote_Click(object sender, RoutedEventArgs e)
     {
+        if (TryBatchChapterAction(merge: false)) return;
         var selected = _selectedNode;
         if (selected is null) return;
         if (selected.IsFrontMatter)
@@ -146,6 +212,7 @@ public partial class ChapterEditorWindow : Window
 
     private void Merge_Click(object sender, RoutedEventArgs e)
     {
+        if (TryBatchChapterAction(merge: true)) return;
         if (_selectedNode is null) return;
         var siblings = Siblings(_selectedNode);
         var index = siblings.IndexOf(_selectedNode);
@@ -155,6 +222,7 @@ public partial class ChapterEditorWindow : Window
             return;
         }
         var previous = siblings[index - 1];
+        if (_selectedNode.IsFrontMatter || previous.IsFrontMatter) { ShowReviewFeedback("前置项不参与正文归并。"); return; }
         if (previous.Children.Count > 0 || _selectedNode.Children.Count > 0)
         {
             ShowInfo("含有子章节的节点不能直接合并。请先调整子章节层级，避免正文顺序发生歧义。", "无法合并");
@@ -162,11 +230,12 @@ public partial class ChapterEditorWindow : Window
         }
         Mutate(() =>
         {
-            previous.ContentRanges = previous.ContentRanges.Concat(_selectedNode.ContentRanges).ToArray();
+            previous.ContentRanges = previous.ContentRanges.Concat(WithOriginalTitle(_selectedNode)).ToArray();
             siblings.Remove(_selectedNode);
             previous.NotifyLineCount();
         });
         _selectedNode = previous;
+        SetOperationSelection([previous]);
         RefreshSelectedLines();
         UpdateSummary();
         UpdateActionButtons();
@@ -174,7 +243,8 @@ public partial class ChapterEditorWindow : Window
 
     private void Split_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedNode is null || SourceLinesList.SelectedItem is not ChapterTreeSourceLine selectedLine) return;
+        if (!CanSplitSelectedLine() || _selectedNode is null || SourceLinesList.SelectedItem is not ChapterTreeSourceLine selectedLine
+            || _selectedNode.ToEntry().TitleLineNumber == selectedLine.LineNumber) return;
         var before = new List<ChapterSourceRange>();
         var after = new List<ChapterSourceRange>();
         foreach (var range in _selectedNode.ContentRanges)
@@ -198,7 +268,7 @@ public partial class ChapterEditorWindow : Window
             _selectedNode.ContentRanges = before;
             _selectedNode.NotifyLineCount();
             var newNode = new ChapterTreeNode(new ChapterTreeEntry(
-                Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after))
+                Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after) { RecognitionSource = "manual" })
             {
                 Parent = _selectedNode.Parent,
                 IsFrontMatter = _selectedNode.IsFrontMatter,
@@ -214,12 +284,16 @@ public partial class ChapterEditorWindow : Window
 
     private void NormalizeAll_Click(object sender, RoutedEventArgs e)
     {
-        Mutate(() =>
-        {
-            foreach (var node in Flatten())
-                if (ChapterTitleNormalizer.TryNormalizeNumericTitle(node.Title, out var normalized)) node.Title = normalized;
-        });
+        var changes = Flatten().Select(n => (Node: n, Title: ChapterTitleNormalizer.TryNormalizeNumericTitle(n.Title, out var normalized) ? normalized : n.Title))
+            .Where(x => x.Node.Title != x.Title).ToArray();
+        if (changes.Length == 0) { ShowReviewFeedback("没有需要规范化的数字标题。"); return; }
+        if (!PreviewChanges("规范化全书数字标题", changes.Select(x => x.Node.Title + " → " + x.Title).ToArray(),
+            "只修改成品标题与目录，不重新编号、不修改原始 TXT。")) return;
+        Mutate(() => { foreach (var change in changes) change.Node.Title = change.Title; });
+        RefreshSelectedLines();
+        SetReviewResult($"已规范化 {changes.Length} 个成品标题，原始 TXT 不变。");
     }
+
     private void SelectAll_Click(object sender, RoutedEventArgs e)
     {
         Mutate(() => { foreach (var node in Flatten()) node.IncludeInToc = true; });
@@ -232,13 +306,25 @@ public partial class ChapterEditorWindow : Window
         UpdateSummary();
         UpdateActionButtons();
     }
-    private void Save_Click(object sender, RoutedEventArgs e)
+    private async void Save_Click(object sender, RoutedEventArgs e)
     {
         try
         {
+            ValidateRules();
+            if (RecognitionRulesChanged() && !ConfirmWorkbench("识别规则已调整，当前树尚未重新识别。\n选择“是”保留当前手调树并保存规则（规则用于后续识别）。\n选择“否”返回，可在识别设置中先重新识别。", "保留当前章节树？")) return;
+            var bytes = await System.IO.File.ReadAllBytesAsync(_document.SourcePath);
+            if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)) != _document.SourceSha256)
+                throw new InvalidOperationException("原始 TXT 已修改，当前章节位置可能失效。请先按当前规则重新识别，再保存章节树。");
             ResultPlan = _document.CreatePlan(Flatten().Select(node => node.ToEntry()));
             ResultHierarchyOptions = ReadHierarchyOptions();
+            ResultPlan = ResultPlan with
+            {
+                NumericHeadingRecognition = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.RecognizeNumericHeadings,
+                NumericHeadingMinimumBodyLines = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingMinimumBodyLines,
+                NumericHeadingPattern = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingPattern,
+            };
             ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
+            _allowClose = true;
             DialogResult = true;
         }
         catch (Exception exception)
@@ -250,8 +336,15 @@ public partial class ChapterEditorWindow : Window
 
     private void ChapterTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (FindAncestor<System.Windows.Controls.Primitives.ToggleButton>(e.OriginalSource as DependencyObject) is not null) { _draggedNode = null; return; }
         _dragStart = e.GetPosition(ChapterTree);
         _draggedNode = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext as ChapterTreeNode;
+        if (_draggedNode is not null)
+        {
+            SelectChapterForOperation(_draggedNode, Keyboard.Modifiers);
+            if (e.ClickCount == 1 || Keyboard.Modifiers != ModifierKeys.None) e.Handled = true;
+            if (OperationSelection().Length > 1) _draggedNode = null;
+        }
     }
     private void ChapterTree_PreviewMouseMove(object sender, MouseEventArgs e)
     {
@@ -299,35 +392,16 @@ public partial class ChapterEditorWindow : Window
 
     private async void RebuildFromRules_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = InkDialog.Show(
-            this,
-            "重新识别会用当前规则重建章节树。你可以使用“撤销”恢复当前结构。是否继续？",
-            "重新识别章节",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (confirm != MessageBoxResult.Yes) return;
+        if (!ConfirmWorkbench("重新识别会替换当前手动章节树。同一原文版本可撤销；原文变化时开启新历史。是否继续？", "重新识别章节")) return;
         try
         {
-            var replacement = await ChapterTreeDocument.LoadAsync(
-                _document.SourcePath,
-                NormalizePattern(ChapterPatternText.Text),
-                ReadHierarchyOptions(),
-                _encodingMode);
-            Mutate(() =>
-            {
-                _document = replacement;
-                Roots.Clear();
-                foreach (var root in BuildTree(replacement.Entries)) Roots.Add(root);
-                _selectedNode = null;
-            });
-            RefreshSelectedLines();
-            UpdateSummary();
-            UpdateActionButtons();
+            ValidateRules();
+            RebuildRulesButton.IsEnabled = false;
+            var replacement = await ChapterTreeDocument.LoadAsync(_document.SourcePath, NormalizePattern(ChapterPatternText.Text), ReadHierarchyOptions(), _encodingMode);
+            ApplyRebuiltDocument(replacement);
         }
-        catch (Exception exception)
-        {
-            InkDialog.Show(this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        catch (Exception exception) { InkDialog.Show(_rulesDialog ?? this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error); }
+        finally { RebuildRulesButton.IsEnabled = true; }
     }
 
     private void ResetRules_Click(object sender, RoutedEventArgs e)
@@ -341,6 +415,9 @@ public partial class ChapterEditorWindow : Window
     private TocHierarchyOptions ReadHierarchyOptions() => new()
     {
         Enabled = HierarchyEnabledCheck.IsChecked == true,
+        RecognizeNumericHeadings = NumericHeadingsCheck.IsChecked == true,
+        NumericHeadingMinimumBodyLines = ReadNumericMinimumLines(),
+        NumericHeadingPattern = _numericPattern,
         IncludeHtmlTocPage = IncludeHtmlTocPageCheck.IsChecked == true,
         IncludeChapterTopNavigation = IncludeChapterTopNavigationCheck.IsChecked == true,
         Level1Pattern = NormalizePattern(Level1PatternText.Text) ?? TocHierarchyOptions.DefaultLevel1Pattern,
@@ -350,11 +427,43 @@ public partial class ChapterEditorWindow : Window
 
     private static string? NormalizePattern(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private int ReadNumericMinimumLines()
+    {
+        if (!int.TryParse(NumericMinimumLinesText.Text.Trim(), out var minimum) || minimum < 0)
+            throw new InvalidOperationException("数字章节正文行数请输入大于或等于 0 的整数；0 表示不限。");
+        return minimum;
+    }
+
+    private bool UsesGlobalNumeric(TocHierarchyOptions value) => InheritNumericDefaults
+        && value.RecognizeNumericHeadings == GlobalNumericDefaults.RecognizeNumericHeadings
+        && value.NumericHeadingMinimumBodyLines == GlobalNumericDefaults.NumericHeadingMinimumBodyLines
+        && value.NumericHeadingPattern == GlobalNumericDefaults.NumericHeadingPattern;
+
+    private void NumericRules_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var current = ReadHierarchyOptions();
+            var dialog = new NumericHeadingRulesWindow(current, GlobalNumericDefaults, NumericPresets, UsesGlobalNumeric(current)) { Owner = _rulesDialog ?? this };
+            if (dialog.ShowDialog() != true) return;
+            NumericPresets = dialog.Presets;
+            if (dialog.Scope == 1) GlobalNumericDefaults = dialog.Result;
+            InheritNumericDefaults = dialog.Scope != 0;
+            NumericHeadingsCheck.IsChecked = dialog.Result.RecognizeNumericHeadings;
+            NumericMinimumLinesText.Text = dialog.Result.NumericHeadingMinimumBodyLines.ToString();
+            _numericPattern = dialog.Result.NumericHeadingPattern;
+            NumericScopeText.Text = InheritNumericDefaults ? "本书继承全局数字规则；独立覆盖不受影响。" : "本书独立数字规则；不影响其他书。";
+        }
+        catch (Exception error) { InkDialog.Show(this, error.Message, "数字识别规则"); }
+    }
+
     private void Undo_Click(object sender, RoutedEventArgs e) => Undo();
     private void Redo_Click(object sender, RoutedEventArgs e) => Redo();
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.OriginalSource is System.Windows.Controls.Primitives.TextBoxBase) return;
+        if (e.Key == Key.Escape) { if (ChapterActionsPopup.IsOpen) ChapterActionsPopup.IsOpen = false; else Close(); e.Handled = true; return; }
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
         if (e.Key == Key.Z)
         {
@@ -370,6 +479,8 @@ public partial class ChapterEditorWindow : Window
 
     private void Undo()
     {
+        if (_sourceChanged) return;
+        ClearReviewResult();
         if (_undo.Count == 0) return;
         _redo.Push(CaptureSnapshot());
         RestoreSnapshot(_undo.Pop());
@@ -377,6 +488,8 @@ public partial class ChapterEditorWindow : Window
 
     private void Redo()
     {
+        if (_sourceChanged) return;
+        ClearReviewResult();
         if (_redo.Count == 0) return;
         _undo.Push(CaptureSnapshot());
         RestoreSnapshot(_redo.Pop());
@@ -384,6 +497,7 @@ public partial class ChapterEditorWindow : Window
 
     private void Mutate(Action change)
     {
+        if (_sourceChanged) { ShowReviewFeedback("原文已变化，请先重新识别。"); return; }
         var before = CaptureSnapshot();
         _trackingPaused = true;
         try { change(); }
@@ -392,11 +506,15 @@ public partial class ChapterEditorWindow : Window
         var after = CaptureSnapshot();
         if (!SnapshotsEqual(before, after))
         {
+            _detectUnrecognized = false;
             _undo.Push(before);
             _redo.Clear();
         }
         _currentSnapshot = after;
         UpdateUndoRedoButtons();
+        UpdateSummary();
+        if (!SnapshotsEqual(before, after)) SetReviewResult("修改已完成，原始 TXT 不变；请核对原文，或撤销本次处理。");
+        UpdateSaveState();
     }
 
     private void Node_Changed(object? sender, EventArgs e)
@@ -424,17 +542,24 @@ public partial class ChapterEditorWindow : Window
 
     private ChapterEditorSnapshot CaptureSnapshot() => new(
         Flatten().Select(node => node.ToEntry() with { ContentRanges = node.ContentRanges.ToArray() }).ToArray(),
-        _selectedNode?.Id);
+        _selectedNode?.Id, _document, _recognitionState, _detectUnrecognized,
+        OperationSelection().Select(n => n.Id).ToArray(), Flatten().Where(n => n.IsExpanded).Select(n => n.Id).ToArray());
 
     private void RestoreSnapshot(ChapterEditorSnapshot snapshot)
     {
         _trackingPaused = true;
         try
         {
+            if (!ReferenceEquals(_document, snapshot.Document)) ApplyRules(snapshot.RecognitionRules);
+            _document = snapshot.Document;
+            _recognitionState = snapshot.RecognitionRules;
+            _detectUnrecognized = snapshot.DetectUnrecognized;
             Roots.Clear();
             foreach (var root in BuildTree(snapshot.Entries)) Roots.Add(root);
             SubscribeToNodes(Roots);
             _selectedNode = Flatten().FirstOrDefault(node => node.Id == snapshot.SelectedId);
+            foreach (var node in Flatten()) node.IsExpanded = snapshot.ExpandedIds.Contains(node.Id);
+            SetOperationSelection(Flatten().Where(n => snapshot.SelectedIds.Contains(n.Id)));
         }
         finally
         {
@@ -445,7 +570,7 @@ public partial class ChapterEditorWindow : Window
         UpdateSummary();
         UpdateActionButtons();
         UpdateUndoRedoButtons();
-        Dispatcher.BeginInvoke(SelectRestoredNode, DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(() => { _applyingMultiSelection = true; try { SelectRestoredNode(); } finally { _applyingMultiSelection = false; } }, DispatcherPriority.Loaded);
     }
 
     private void SelectRestoredNode()
@@ -458,6 +583,16 @@ public partial class ChapterEditorWindow : Window
         {
             parent.UpdateLayout();
             var node = path.Pop();
+            if (parent.ItemContainerGenerator.ContainerFromItem(node) is null)
+            {
+                var presenter = FindItemsPresenter(parent);
+                if (presenter is not null && VisualTreeHelper.GetChildrenCount(presenter) > 0
+                    && VisualTreeHelper.GetChild(presenter, 0) is VirtualizingPanel panel)
+                {
+                    panel.BringIndexIntoViewPublic(parent.Items.IndexOf(node));
+                    parent.UpdateLayout();
+                }
+            }
             if (parent.ItemContainerGenerator.ContainerFromItem(node) is not TreeViewItem container) return;
             if (path.Count == 0)
             {
@@ -470,8 +605,21 @@ public partial class ChapterEditorWindow : Window
         }
     }
 
+    private static ItemsPresenter? FindItemsPresenter(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ItemsPresenter presenter) return presenter;
+            if (child is TreeViewItem) continue;
+            if (FindItemsPresenter(child) is { } nested) return nested;
+        }
+        return null;
+    }
+
     private static bool SnapshotsEqual(ChapterEditorSnapshot left, ChapterEditorSnapshot right)
     {
+        if (!ReferenceEquals(left.Document, right.Document)) return false;
         if (left.Entries.Count != right.Entries.Count) return false;
         for (var index = 0; index < left.Entries.Count; index++)
         {
@@ -488,23 +636,39 @@ public partial class ChapterEditorWindow : Window
     {
         UndoButton.IsEnabled = _undo.Count > 0;
         RedoButton.IsEnabled = _redo.Count > 0;
+        UpdateSaveState();
     }
 
-    private void SourceLinesList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        SplitButton.IsEnabled = _selectedNode is not null && SourceLinesList.SelectedItem is not null;
+    private void SourceLinesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SplitButton.IsEnabled = !_sourceChanged && OperationSelection().Length == 1 && CanSplitSelectedLine();
+        SplitButton.Visibility = SplitButton.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        UpdateReviewCard();
+    }
+
+    private bool CanSplitSelectedLine() => _selectedNode is not null
+        && SourceLinesList.SelectedItem is ChapterTreeSourceLine line
+        && _selectedNode.ContentRanges.Any(range => line.LineNumber >= range.StartLine && line.LineNumber <= range.EndLine)
+        && line.LineNumber != _selectedNode.ToEntry().TitleLineNumber
+        && _selectedNode.ContentRanges.Any(range => range.StartLine < line.LineNumber);
 
     private void RefreshSelectedLines()
     {
         SelectedLines.Clear();
         SplitButton.IsEnabled = false;
-        if (_selectedNode is null)
-        {
-            SelectionHint.Text = "请选择章节";
-            return;
-        }
-        foreach (var line in _document.GetSourceLines(_selectedNode.ToEntry())) SelectedLines.Add(line);
-        SelectionHint.Text = $"{SelectedLines.Count} 行";
+        SplitButton.Visibility = Visibility.Collapsed;
+        if (_selectedNode is null) { SelectionHint.Text = "请选择章节"; return; }
+        var lines = WithOriginalTitle(_selectedNode).SelectMany(range => Enumerable.Range(range.StartLine, range.EndLine - range.StartLine + 1));
+        var limit = _expandSource ? int.MaxValue : 160;
+        foreach (var number in lines.Distinct().Take(limit))
+            if (_document.SourceLine(number) is { } source) SelectedLines.Add(source);
+        var count = _selectedNode.ContentRanges.Sum(r => r.EndLine - r.StartLine + 1);
+        SelectionHint.Text = $"正文 {count} 行 · 原始标题一并显示";
+        ExpandSourceButton.Visibility = count >= 160 && !_expandSource ? Visibility.Visible : Visibility.Collapsed;
+        RefreshReviewGroupPreview();
+        if (SelectedLines.Count > 0) SourceLinesList.ScrollIntoView(SelectedLines[0]);
     }
+
     private void UpdateSummary()
     {
         var nodes = Flatten().ToArray();
@@ -513,10 +677,72 @@ public partial class ChapterEditorWindow : Window
         var depth = normalNodes.Length == 0 ? 0 : normalNodes.Max(node => node.Level);
         var frontMatterLabel = frontMatterCount == 0 ? string.Empty : $" · 前置 {frontMatterCount} 项";
         SummaryText.Text = $"{normalNodes.Length} 章{frontMatterLabel} · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
+        RefreshSuggestions(nodes.Select(node => node.ToEntry()).ToArray());
     }
+
+    private void RefreshSuggestions(IReadOnlyList<ChapterTreeEntry> entries)
+    {
+        var selected = ChapterSuggestionsCombo.SelectedItem as ConversionPreflightIssue;
+        var oldIndex = ChapterSuggestionsCombo.SelectedIndex;
+        var analysis = ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, _reviewLimit);
+        _reviewGroups = analysis.Groups.ToArray();
+        _reviewGroupIndex.Clear();
+        foreach (var group in _reviewGroups)
+            _reviewGroupIndex.TryAdd((group.Issue.Code, group.Issue.LineNumber), group);
+        _totalReviewGroups = analysis.TotalGroups;
+        _allReviewIssues = _reviewGroups.Where(g => !_confirmedGroups.ContainsKey(ReviewKey(g))).Select(g => g.Issue).ToArray();
+        var issues = FilteredReviewIssues();
+        _refreshingSuggestions = true;
+        try
+        {
+            ChapterSuggestionsCombo.ItemsSource = issues;
+            ChapterSuggestionsCombo.SelectedItem = issues.FirstOrDefault(issue => selected is not null && issue.Code == selected.Code && issue.LineNumber == selected.LineNumber);
+            if (oldIndex >= 0) _nextSuggestionIndex = Math.Min(oldIndex, Math.Max(0, issues.Length - 1));
+            _nextSuggestionIndex = Math.Min(_nextSuggestionIndex, Math.Max(0, issues.Length - 1));
+        }
+        finally { _refreshingSuggestions = false; }
+        LoadMoreIssuesButton.Visibility = _reviewGroups.Length < _totalReviewGroups ? Visibility.Visible : Visibility.Collapsed;
+        LoadMoreIssuesButton.Content = $"已加载 {_reviewGroups.Length} / {_totalReviewGroups} 组 · 继续加载";
+        UpdateSuggestionButtons();
+        UpdateReviewVisibility();
+    }
+
+    private void UpdateSuggestionButtons()
+    {
+        var count = ChapterSuggestionsCombo.Items.Count;
+        var index = ChapterSuggestionsCombo.SelectedIndex;
+        SuggestionCountText.Text = count == 0 ? (_allReviewIssues.Length == 0 ? "暂无待核对组" : "当前筛选无匹配组") : index < 0 ? $"待核对 {count} 组 / 已加载 {_allReviewIssues.Length} 组" : $"第 {index + 1} / {count} 组";
+        PreviousSuggestionButton.IsEnabled = count > 0 && (index > 0 || index < 0 && _nextSuggestionIndex > 0);
+        NextSuggestionButton.IsEnabled = count > 0 && index < count - 1;
+        ChapterSuggestionsCombo.IsEnabled = count > 0;
+        UpdateReviewCard();
+    }
+
+    private void ChapterSuggestions_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_refreshingSuggestions) return;
+        ClearReviewResult();
+        OnlyCurrentIssueCheck.IsChecked = false;
+        if (ChapterSuggestionsCombo.SelectedItem is ConversionPreflightIssue { LineNumber: int line })
+        {
+            // Keep separate suggestions at the same source line individually selectable.
+            _refreshingSuggestions = true;
+            try { NavigateToSourceLine(line); }
+            finally { _refreshingSuggestions = false; }
+        }
+        UpdateSuggestionButtons();
+    }
+
+    private void PreviousSuggestion_Click(object sender, RoutedEventArgs e) =>
+        ChapterSuggestionsCombo.SelectedIndex = Math.Max(0, (ChapterSuggestionsCombo.SelectedIndex < 0 ? _nextSuggestionIndex : ChapterSuggestionsCombo.SelectedIndex) - 1);
+
+    private void NextSuggestion_Click(object sender, RoutedEventArgs e) =>
+        ChapterSuggestionsCombo.SelectedIndex = Math.Min(ChapterSuggestionsCombo.Items.Count - 1,
+            ChapterSuggestionsCombo.SelectedIndex < 0 ? _nextSuggestionIndex : ChapterSuggestionsCombo.SelectedIndex + 1);
 
     private void UpdateActionButtons()
     {
+        UpdateNumberSuggestion();
         if (_selectedNode is null)
         {
             MoveUpButton.IsEnabled = false;
@@ -525,6 +751,7 @@ public partial class ChapterEditorWindow : Window
             DemoteButton.IsEnabled = false;
             MergeButton.IsEnabled = false;
             SplitButton.IsEnabled = false;
+            UpdateReviewCard();
             return;
         }
 
@@ -537,10 +764,14 @@ public partial class ChapterEditorWindow : Window
             && index > 0
             && !siblings[index - 1].IsFrontMatter
             && MaxRelativeDepth(_selectedNode) + siblings[index - 1].Level <= 4;
-        MergeButton.IsEnabled = index > 0
+        MergeButton.IsEnabled = !_selectedNode.IsFrontMatter && index > 0 && !siblings[index - 1].IsFrontMatter
             && siblings[index - 1].Children.Count == 0
             && _selectedNode.Children.Count == 0;
-        SplitButton.IsEnabled = SourceLinesList.SelectedItem is not null;
+        SplitButton.IsEnabled = CanSplitSelectedLine();
+        UpdateBatchActionButtons();
+        if (_sourceChanged) MoveUpButton.IsEnabled = MoveDownButton.IsEnabled = PromoteButton.IsEnabled = DemoteButton.IsEnabled = MergeButton.IsEnabled = SplitButton.IsEnabled = false;
+        SplitButton.Visibility = SplitButton.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        UpdateReviewCard();
     }
     private IEnumerable<ChapterTreeNode> Flatten()
     {
@@ -606,7 +837,12 @@ public partial class ChapterEditorWindow : Window
 
 internal sealed record ChapterEditorSnapshot(
     IReadOnlyList<ChapterTreeEntry> Entries,
-    string? SelectedId);
+    string? SelectedId,
+    ChapterTreeDocument Document,
+    ChapterRuleState RecognitionRules,
+    bool DetectUnrecognized,
+    string[] SelectedIds,
+    string[] ExpandedIds);
 
 public sealed class ChapterTreeNode : INotifyPropertyChanged
 {
@@ -614,11 +850,22 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     private int _level;
     private bool _includeInToc;
     private IReadOnlyList<ChapterSourceRange> _contentRanges;
+    private bool _operationSelected;
+    private bool _reviewVisible = true;
+    public bool IsReviewVisible { get => _reviewVisible; set { if (_reviewVisible == value) return; _reviewVisible = value; OnPropertyChanged(nameof(IsReviewVisible)); } }
+    public bool IsOperationSelected { get => _operationSelected; set { if (_operationSelected == value) return; _operationSelected = value; OnPropertyChanged(nameof(IsOperationSelected)); } }
+    private bool _expanded;
+    public bool IsExpanded { get => _expanded; set { if (_expanded == value) return; _expanded = value; OnPropertyChanged(nameof(IsExpanded)); } }
+    private string _reviewDescription = "";
+    public string ReviewDescription { get => _reviewDescription; set { if (_reviewDescription == value) return; _reviewDescription = value; OnPropertyChanged(nameof(ReviewDescription)); OnPropertyChanged(nameof(ReviewMarker)); } }
+    public string ReviewMarker => string.IsNullOrEmpty(ReviewDescription) ? "" : "•";
+    public string? RecognitionSource { get; set; }
     public ChapterTreeNode(ChapterTreeEntry entry)
     {
         Id = entry.Id; _title = entry.Title; _level = entry.Level; _includeInToc = entry.IncludeInToc;
         TitleLineNumber = entry.TitleLineNumber; _contentRanges = entry.ContentRanges ?? [];
         IsFrontMatter = entry.IsFrontMatter;
+        RecognitionSource = entry.RecognitionSource;
         HeadingLevel = entry.HeadingLevel is >= 1 and <= 4 ? entry.HeadingLevel : entry.Level;
     }
     public string Id { get; }
@@ -647,6 +894,7 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     {
         IsFrontMatter = IsFrontMatter,
         HeadingLevel = HeadingLevel,
+        RecognitionSource = RecognitionSource,
     };
     public void NotifyLineCount() => OnPropertyChanged(nameof(LineCountLabel));
     public event EventHandler? Changed;

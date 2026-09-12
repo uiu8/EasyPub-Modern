@@ -36,6 +36,19 @@ internal static partial class LegacyTextParser
             ? CreateHierarchyRegexes(hierarchy)
             : [];
 
+        var numericHeadings = new HashSet<int>();
+        if (hierarchy.RecognizeNumericHeadings)
+        {
+            var numericRegex = NumericHeadingRule.Compile(hierarchy.NumericHeadingPattern);
+            var headingLines = Enumerable.Range(0, sourceLines.Count)
+                .Where(index => !TextCleanupPipeline.IsRemovedLine(sourceLines[index])
+                    && (TryGetTocLevel(sourceLines[index], hierarchyRegexes, out _)
+                        || chapterRegex.IsMatch(sourceLines[index])
+                        || NumericHeadingRule.Matches(numericRegex, sourceLines[index])))
+                .ToArray();
+            numericHeadings = NumericHeadingFilter.AcceptedLines(sourceLines, headingLines, hierarchy.NumericHeadingMinimumBodyLines);
+        }
+
         var positionedIllustrations = options.Illustrations
             .Where(illustration => illustration.InsertAfterLine.HasValue)
             .GroupBy(illustration => illustration.InsertAfterLine!.Value)
@@ -57,7 +70,8 @@ internal static partial class LegacyTextParser
             {
                 if (!options.RemoveBlankLines) chapters[^1].Paragraphs.Add(string.Empty);
             }
-            else if (TryGetTocLevel(rawLine, hierarchyRegexes, out var tocLevel) || chapterRegex.IsMatch(rawLine))
+            else if (TryGetTocLevel(rawLine, hierarchyRegexes, out var tocLevel) || chapterRegex.IsMatch(rawLine)
+                || numericHeadings.Contains(index))
                 chapters.Add(new MutableChapter(line, tocLevel == 0 ? 2 : tocLevel));
             else
                 chapters[^1].Paragraphs.Add(line);

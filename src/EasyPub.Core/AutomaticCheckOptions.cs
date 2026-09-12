@@ -23,7 +23,7 @@ public sealed record AutomaticCheckOptions
     public static IReadOnlyDictionary<PreflightTargetKind, string> TargetLabels { get; } = new Dictionary<PreflightTargetKind, string>
     {
         [PreflightTargetKind.InputBook] = "文件可读性/EPUB 兼容性",
-        [PreflightTargetKind.Chapters] = "章节识别",
+        [PreflightTargetKind.Chapters] = "章节识别与目录校验",
         [PreflightTargetKind.Output] = "输出路径与格式",
         [PreflightTargetKind.Cover] = "封面资源",
         [PreflightTargetKind.Illustrations] = "插图资源",

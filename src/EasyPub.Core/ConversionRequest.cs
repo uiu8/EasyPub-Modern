@@ -110,6 +110,17 @@ public sealed record TocHierarchyOptions
     public bool Enabled { get; init; }
     public bool IncludeHtmlTocPage { get; init; }
     public bool IncludeChapterTopNavigation { get; init; }
+    public bool RecognizeNumericHeadings { get; init; }
+    public int NumericHeadingMinimumBodyLines { get; init; } = 5;
+    public string NumericHeadingPattern { get; init; } = NumericHeadingRule.DefaultPattern;
+
+    public TocHierarchyOptions ForBook(ChapterTreePlan? plan) => this with
+    {
+        RecognizeNumericHeadings = plan?.NumericHeadingRecognition ?? RecognizeNumericHeadings,
+        NumericHeadingMinimumBodyLines = Math.Max(0, plan?.NumericHeadingMinimumBodyLines ?? NumericHeadingMinimumBodyLines),
+        NumericHeadingPattern = plan?.NumericHeadingRecognition is not null
+            ? plan.NumericHeadingPattern ?? NumericHeadingRule.DefaultPattern : NumericHeadingPattern,
+    };
     public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
     public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
     public string Level3Pattern { get; init; } = DefaultLevel3Pattern;

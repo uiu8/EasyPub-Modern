@@ -41,10 +41,9 @@ public partial class MainWindow : Window
     private readonly MetadataMappingStore _metadataMappingStore = MetadataMappingStore.CreateDefault();
     private readonly AppSettingsStore _appSettingsStore = AppSettingsStore.CreateDefault();
     private readonly ConversionHistoryStore _historyStore = ConversionHistoryStore.CreateDefault();
-    private readonly BookAnalysisCoordinator _analysisCoordinator = new();
+    private readonly ChapterTreeDocumentCache _chapterDocumentCache = new();
+    private readonly BookAnalysisCoordinator _analysisCoordinator;
     private AutomaticCheckOptions _automaticChecks = new();
-    private readonly object _chapterDocumentCacheGate = new();
-    private readonly Dictionary<ChapterDocumentCacheKey, Task<ChapterTreeDocument>> _chapterDocumentCache = [];
     private readonly EasyPubProjectStore _recoveryStore = EasyPubProjectStore.CreateRecoveryDefault();
     private readonly DispatcherTimer _recoveryTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _bookFilterTimer = new() { Interval = TimeSpan.FromMilliseconds(180) };
@@ -57,6 +56,15 @@ public partial class MainWindow : Window
     private string? _customCss;
     private string? _customCssSourcePath;
     private TocHierarchyOptions _tocHierarchy = new();
+    private TocHierarchyOptions _numericDefaults = new();
+    private IReadOnlyList<NamedNumericHeadingPreset> _numericPresets = [];
+
+    private TocHierarchyOptions BookHierarchy(ChapterTreePlan? plan) => (_tocHierarchy with
+    {
+        RecognizeNumericHeadings = _numericDefaults.RecognizeNumericHeadings,
+        NumericHeadingMinimumBodyLines = _numericDefaults.NumericHeadingMinimumBodyLines,
+        NumericHeadingPattern = _numericDefaults.NumericHeadingPattern,
+    }).ForBook(plan);
     private TextCleanupOptions _textCleanupOptions = new();
     private ConversionMode _conversionMode = ConversionMode.OriginalCompatible;
     private bool _applyingProfile;
@@ -113,6 +121,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _analysisCoordinator = new BookAnalysisCoordinator(documentCache: _chapterDocumentCache);
         InitializeComponent();
         DataContext = this;
         ConversionSettingsPane.Applied += ConversionSettingsPane_Applied;
@@ -795,7 +804,20 @@ public partial class MainWindow : Window
         ConversionPresets.Clear();
         foreach (var preset in settings.Presets.OrderBy(preset => preset.Name, StringComparer.CurrentCultureIgnoreCase))
             ConversionPresets.Add(preset);
-        ApplyProfile(settings.LastProfile);
+        // Optional in-book navigation is opt-in for each new session. Explicit
+        // project/preset loading still restores the user's saved choices.
+        var startupProfile = settings.LastProfile;
+        ApplyProfile(startupProfile with
+        {
+            Options = startupProfile.Options with
+            {
+                TocHierarchy = (startupProfile.Options.TocHierarchy ?? new()) with
+                {
+                    IncludeHtmlTocPage = false,
+                    IncludeChapterTopNavigation = false,
+                },
+            },
+        });
         KindleGenText.Text = KindleGenPathPreference.ResolveForCurrentInstallation(
             settings.KindleGenPath ?? settings.LastProfile.Options.Mobi.KindleGenPath,
             AppContext.BaseDirectory) ?? string.Empty;
@@ -813,6 +835,8 @@ public partial class MainWindow : Window
         _rememberWindowPlacement = settings.RememberWindowPlacement;
         _reduceMotion = settings.ReduceMotion;
         _textEditorPath = string.IsNullOrWhiteSpace(settings.TextEditorPath) ? "notepad.exe" : settings.TextEditorPath;
+        _numericDefaults = settings.NumericHeadingDefaults ?? new();
+        _numericPresets = settings.NumericHeadingPresets ?? [];
         ApplyAppearanceSettings();
         ApplyWindowPlacement(settings);
     }
@@ -990,6 +1014,8 @@ public partial class MainWindow : Window
             LegacyConfigPath = _useLegacyConfig ? _legacyConfig?.SourcePath : null,
             KindleGenPath = EmptyToNull(KindleGenText.Text),
             TextEditorPath = _textEditorPath,
+            NumericHeadingDefaults = _numericDefaults,
+            NumericHeadingPresets = _numericPresets,
             AutoOpenTaskCenter = AutoOpenTaskCenterCheck.IsChecked == true,
             AutoOpenOutputDirectory = AutoOpenOutputDirectoryCheck.IsChecked == true,
             OutputCollisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var collisionPolicy) ? collisionPolicy : OutputCollisionPolicy.AutoRename,
@@ -1451,8 +1477,8 @@ public partial class MainWindow : Window
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.21.0"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.21.0";
+            ? "EasyPub Modern v1.22.0"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.22.0";
         UpdateWorkspaceScope();
     }
 
@@ -1679,13 +1705,14 @@ public partial class MainWindow : Window
             var encoding = Enum.Parse<TextEncodingMode>(
                 ((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!);
             var chapterPattern = EmptyToNull(ChapterRegexText.Text);
+            var bookHierarchy = BookHierarchy(book.ChapterTree);
             ChapterTreeDocument document;
             try
             {
                 document = await GetChapterDocumentAsync(
                     inputPath,
                     chapterPattern,
-                    _tocHierarchy,
+                    bookHierarchy,
                     encoding,
                     book.ChapterTree);
             }
@@ -1702,15 +1729,30 @@ public partial class MainWindow : Window
                 document = await GetChapterDocumentAsync(
                     inputPath,
                     chapterPattern,
-                    _tocHierarchy,
+                    bookHierarchy,
                     encoding,
                     existingPlan: null);
             }
-            var editor = new ChapterEditorWindow(document, _tocHierarchy, chapterPattern, encoding) { Owner = this };
+            var editor = new ChapterEditorWindow(document, bookHierarchy, chapterPattern, encoding, book.ChapterTree is null) { Owner = this };
+            editor.TextEditorPath = _textEditorPath;
+            editor.GlobalNumericDefaults = _numericDefaults;
+            editor.NumericPresets = _numericPresets;
+            editor.InheritNumericDefaults = book.ChapterTree?.NumericHeadingRecognition is null;
+            if (sender is ConversionPreflightIssue diagnosticIssue)
+                editor.Loaded += (_, _) => editor.NavigateToSuggestion(diagnosticIssue);
             if (editor.ShowDialog() == true && editor.ResultPlan is not null)
             {
                 book.SetChapterTree(editor.ResultPlan);
-                if (editor.ResultHierarchyOptions is not null) _tocHierarchy = editor.ResultHierarchyOptions;
+                _numericDefaults = editor.GlobalNumericDefaults;
+                _numericPresets = editor.NumericPresets;
+                _textEditorPath = editor.TextEditorPath;
+                if (editor.ResultHierarchyOptions is not null)
+                    _tocHierarchy = editor.ResultHierarchyOptions with
+                    {
+                        RecognizeNumericHeadings = _tocHierarchy.RecognizeNumericHeadings,
+                        NumericHeadingMinimumBodyLines = _tocHierarchy.NumericHeadingMinimumBodyLines,
+                        NumericHeadingPattern = _tocHierarchy.NumericHeadingPattern,
+                    };
                 ChapterRegexText.Text = editor.ResultChapterPattern ?? string.Empty;
                 InvalidateChapterDocumentCache(inputPath);
                 UpdateTocHierarchySummary();
@@ -1718,6 +1760,7 @@ public partial class MainWindow : Window
                 UpdateSelectedBookInspector(book);
                 StatusText.Text = $"已保存《{book.DisplayName}》的章节树，共 {editor.ResultPlan.Entries.Count} 章";
                 _ = RefreshInlineChapterPreviewAsync(book);
+                await _appSettingsStore.SaveAsync(CaptureAppSettings());
             }
             else
             {
@@ -2642,7 +2685,7 @@ public partial class MainWindow : Window
             ChapterPreviewSearchText.IsEnabled = false;
             var inputPath = book.InputPath;
             var chapterRegex = string.IsNullOrWhiteSpace(ChapterRegexText.Text) ? null : ChapterRegexText.Text;
-            var hierarchy = _tocHierarchy;
+            var hierarchy = BookHierarchy(book.ChapterTree);
             var encoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag!.ToString()!);
             var document = await GetChapterDocumentAsync(
                 inputPath,
@@ -2943,7 +2986,7 @@ public partial class MainWindow : Window
         SelectedBookNameText.Text = book.DisplayName;
         SelectedBookNameText.ToolTip = book.InputPath;
         SelectedBookFormatText.Text = book.FormatLabel;
-        SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
+        SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{ChapterTreeStatusLabel(book)}";
         SelectedBookPathText.Text = book.DirectoryDisplayName;
         SelectedBookPathText.ToolTip = book.DirectoryPath;
         SelectedBookReadinessText.Text = book.ReadinessLabel;
@@ -2997,7 +3040,21 @@ public partial class MainWindow : Window
 
     private void UpdateSelectedBookInspectorSummaryOnly(InputBookItem book)
     {
-        SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{(book.ChapterTree is null ? "无" : book.ChapterTree.Entries.Count + " 项")}";
+        SelectedBookSummaryText.Text = $"封面：{(book.CoverImagePath is null ? "无" : "有")} · 元数据：{(book.MetadataOverrides.IsEmpty ? "无" : "有")} · 插图：{book.Illustrations.Count} · 章节树：{ChapterTreeStatusLabel(book)}";
+    }
+
+    private static string ChapterTreeStatusLabel(InputBookItem book)
+    {
+        if (book.ChapterTree is { } savedTree)
+            return $"{savedTree.Entries.Count} 项";
+        if (book.ChapterCandidateCount > 0)
+            return $"已识别 {book.ChapterCandidateCount} 项（未保存）";
+        return book.AnalysisStatus switch
+        {
+            BookAnalysisStatus.Pending => "待识别",
+            BookAnalysisStatus.Running => "识别中…",
+            _ => "无",
+        };
     }
 
     private void UpdateLayoutIllustrationSummary()
@@ -3219,7 +3276,7 @@ public partial class MainWindow : Window
                 EditTextCleanup_Click(issue, new RoutedEventArgs());
                 break;
             case PreflightTargetKind.Chapters:
-                EditChapters_Click(this, new RoutedEventArgs());
+                EditChapters_Click(issue, new RoutedEventArgs());
                 break;
             case PreflightTargetKind.Output:
                 ShowWorkspacePage(WorkspacePage.Convert);
@@ -3571,7 +3628,7 @@ public partial class MainWindow : Window
             && !string.Equals(profile.OutputFormat, "mobi", StringComparison.OrdinalIgnoreCase)
             && operationBooks.Any(book => book.IsEpub))
             throw new InvalidOperationException("EPUB 输入只能输出 MOBI。请把输出格式切换为 MOBI。");
-        var options = profile.Options;
+        var options = profile.Options with { TocHierarchy = BookHierarchy(null) };
         if (string.IsNullOrWhiteSpace(options.AdditionalCss) &&
             !string.IsNullOrWhiteSpace(profile.AdditionalCssFilePath))
             options = options with { AdditionalCss = await File.ReadAllTextAsync(profile.AdditionalCssFilePath) };
@@ -3655,67 +3712,17 @@ public partial class MainWindow : Window
         ChapterTreePlan? existingPlan,
         CancellationToken cancellationToken = default)
     {
-        var source = new FileInfo(Path.GetFullPath(inputPath));
-        var key = new ChapterDocumentCacheKey(
-            source.FullName.ToUpperInvariant(),
-            source.Length,
-            source.LastWriteTimeUtc.Ticks,
-            chapterPattern ?? string.Empty,
-            hierarchy.Enabled,
-            hierarchy.Level1Pattern,
-            hierarchy.Level2Pattern,
-            hierarchy.Level3Pattern,
+        return await _chapterDocumentCache.GetOrLoadAsync(
+            inputPath,
+            chapterPattern,
+            hierarchy,
             encoding,
-            existingPlan?.SourceSha256 ?? string.Empty,
-            existingPlan?.Entries.Count ?? 0);
-        Task<ChapterTreeDocument> task;
-        lock (_chapterDocumentCacheGate)
-        {
-            foreach (var staleKey in _chapterDocumentCache.Keys
-                         .Where(candidate => candidate.SourcePath == key.SourcePath && candidate != key)
-                         .ToArray())
-                _chapterDocumentCache.Remove(staleKey);
-            if (!_chapterDocumentCache.TryGetValue(key, out task!))
-            {
-                task = Task.Run(() => ChapterTreeDocument.LoadAsync(
-                    source.FullName,
-                    chapterPattern,
-                    hierarchy,
-                    encoding,
-                    existingPlan,
-                    CancellationToken.None));
-                _chapterDocumentCache[key] = task;
-                while (_chapterDocumentCache.Count > 2)
-                {
-                    var oldestOtherKey = _chapterDocumentCache.Keys.First(candidate => candidate != key);
-                    _chapterDocumentCache.Remove(oldestOtherKey);
-                }
-            }
-        }
-
-        try
-        {
-            return await task.WaitAsync(cancellationToken);
-        }
-        catch
-        {
-            if (task.IsCanceled || task.IsFaulted)
-            {
-                lock (_chapterDocumentCacheGate)
-                    if (_chapterDocumentCache.TryGetValue(key, out var cached) && ReferenceEquals(cached, task))
-                        _chapterDocumentCache.Remove(key);
-            }
-            throw;
-        }
+            existingPlan,
+            cancellationToken);
     }
 
     private void InvalidateChapterDocumentCache(string inputPath)
-    {
-        var fullPath = Path.GetFullPath(inputPath).ToUpperInvariant();
-        lock (_chapterDocumentCacheGate)
-            foreach (var key in _chapterDocumentCache.Keys.Where(candidate => candidate.SourcePath == fullPath).ToArray())
-                _chapterDocumentCache.Remove(key);
-    }
+        => _chapterDocumentCache.Invalidate(inputPath);
 
     private void ApplyMetadataMapping(InputBookItem book)
     {
@@ -3760,17 +3767,20 @@ public partial class MainWindow : Window
         var count = InputBooks.Count;
         var epubCount = 0;
         var chapterTreeCount = 0;
+        var recognizedChapterCount = 0;
         foreach (var book in InputBooks)
         {
             if (book.IsEpub) epubCount++;
             if (book.ChapterTree is not null) chapterTreeCount++;
+            else if (book.ChapterCandidateCount > 0) recognizedChapterCount++;
         }
         FileCountText.Text = $"{count} 本";
         EmptyFilesHint.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateContextualControls();
         StatusText.Text = count == 0
             ? "准备就绪，可添加或拖入多个 TXT / EPUB 文件"
-            : $"已添加 {count} 本 · TXT {count - epubCount} · EPUB {epubCount} · {chapterTreeCount} 本有章节树";
+            : $"已添加 {count} 本 · TXT {count - epubCount} · EPUB {epubCount} · 已保存章节树 {chapterTreeCount} 本"
+                + (recognizedChapterCount > 0 ? $" · 自动识别 {recognizedChapterCount} 本" : string.Empty);
         if (LibrarySelectionSummaryText is not null)
             LibrarySelectionSummaryText.Text = FilesList.SelectedItems.Count == 0
                 ? $"共 {count} 本书稿"
@@ -3829,7 +3839,7 @@ public partial class MainWindow : Window
                 book.SetAnalysisSnapshot(snapshot);
         _bookWorklistView?.Refresh();
         UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
-        UpdateConversionSummary();
+        UpdateStatus();
     }
 
     private void UpdateContextualControls()
@@ -4245,19 +4255,6 @@ public partial class MainWindow : Window
         public string DisplayTitle => $"{new string('　', Math.Max(0, Entry.Level - 1))}{Entry.Title}";
         public override string ToString() => DisplayTitle;
     }
-
-    private sealed record ChapterDocumentCacheKey(
-        string SourcePath,
-        long SourceLength,
-        long SourceLastWriteUtcTicks,
-        string ChapterPattern,
-        bool HierarchyEnabled,
-        string Level1Pattern,
-        string Level2Pattern,
-        string Level3Pattern,
-        TextEncodingMode Encoding,
-        string PlanSourceSha256,
-        int PlanEntryCount);
 
     private sealed record SourceFileStamp(long Length, long LastWriteUtcTicks)
     {

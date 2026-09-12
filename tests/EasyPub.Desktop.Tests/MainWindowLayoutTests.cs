@@ -17,6 +17,105 @@ namespace EasyPub.Desktop.Tests;
 public sealed class MainWindowLayoutTests
 {
     [Fact]
+    public async Task Suggested_title_is_undoable_and_preserves_original_text()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        const string source = "第66章 甲\n正文\n第66章 乙\n正文\n第68章 丙\n正文";
+        try
+        {
+            await File.WriteAllTextAsync(path, source);
+            var document = await ChapterTreeDocument.LoadAsync(path);
+            RunInWindow(owner =>
+            {
+                var editor = new ChapterEditorWindow(document) { Owner = owner };
+                try
+                {
+                    editor.Show(); editor.UpdateLayout(); editor.NavigateToSourceLine(3);
+                    var fix = (Button)editor.FindName("CorrectNumberButton");
+                    Assert.Equal(Visibility.Visible, fix.Visibility);
+                    fix.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.Equal("第67章 乙", editor.Roots.Single(n => n.TitleLineNumber == 3).Title);
+                    Assert.Equal("第66章 乙", editor.SelectedLines[0].Text);
+                    Assert.Equal(Visibility.Collapsed, fix.Visibility);
+                    ((Button)editor.FindName("UndoButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.Equal("第66章 乙", editor.Roots.Single(n => n.TitleLineNumber == 3).Title);
+                    Assert.Equal(Visibility.Visible, fix.Visibility);
+                }
+                finally { editor.Close(); }
+            });
+            Assert.Equal(source, await File.ReadAllTextAsync(path));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("notepad.exe", 1)]
+    [InlineData("Notepad3.exe", 3)]
+    [InlineData("notepad++.exe", 2)]
+    [InlineData("Code.exe", 2)]
+    public void External_editor_arguments_keep_paths_separate(string editor, int count)
+    {
+        var info = ChapterEditorWindow.CreateEditorStartInfo(editor, @"C:\books\a b.txt", 42);
+        Assert.Equal(count, info.ArgumentList.Count);
+        Assert.Contains(@"C:\books\a b.txt", info.ArgumentList.Last());
+        if (count == 2) Assert.Contains("42", string.Join(" ", info.ArgumentList));
+    }
+
+    [Fact]
+    public async Task Chapter_diagnostic_navigation_reaches_virtualized_distant_chapter()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        try
+        {
+            File.WriteAllText(path, string.Join("\n", Enumerable.Range(1, 1000).Select(i => $"第{i}章 标题\n正文")));
+            var document = await ChapterTreeDocument.LoadAsync(path);
+            RunInWindow(owner =>
+            {
+                var editor = new ChapterEditorWindow(document) { Owner = owner };
+                try
+                {
+                    editor.Show();
+                    editor.UpdateLayout();
+                    editor.NavigateToSourceLine(1999);
+                    var tree = (TreeView)editor.FindName("ChapterTree");
+                    Assert.Equal("第1000章 标题", Assert.IsType<ChapterTreeNode>(tree.SelectedItem).Title);
+                    Assert.Equal(1999, Assert.IsType<ChapterTreeSourceLine>(((ListBox)editor.FindName("SourceLinesList")).SelectedItem).LineNumber);
+                    Assert.Null(editor.ResultPlan);
+                }
+                finally { editor.Close(); }
+            });
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Startup_navigation_is_opt_in_but_explicit_profile_keeps_choices()
+    {
+        RunInWindow(window =>
+        {
+            var profile = ConversionProfile.Default with
+            {
+                Options = ConversionProfile.Default.Options with
+                {
+                    TocHierarchy = new() { IncludeHtmlTocPage = true, IncludeChapterTopNavigation = true },
+                },
+            };
+            typeof(MainWindow).GetMethod("ApplyAppSettings", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [EasyPubAppSettings.Default with { LastProfile = profile }]);
+            var field = typeof(MainWindow).GetField("_tocHierarchy", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var startup = (TocHierarchyOptions)field.GetValue(window)!;
+            Assert.False(startup.IncludeHtmlTocPage);
+            Assert.False(startup.IncludeChapterTopNavigation);
+            typeof(MainWindow).GetMethod("ApplyProfile", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [profile]);
+            var explicitProfile = (TocHierarchyOptions)field.GetValue(window)!;
+            Assert.True(explicitProfile.IncludeHtmlTocPage);
+            Assert.True(explicitProfile.IncludeChapterTopNavigation);
+            Assert.True(profile.Options.TocHierarchy.IncludeChapterTopNavigation);
+        });
+    }
+
+    [Fact]
     public void Large_cleanup_latest_options_win_and_group_choices_roundtrip()
     {
         RunInWindow(owner =>
@@ -1179,6 +1278,14 @@ public sealed class MainWindowLayoutTests
                     .GetAwaiter().GetResult();
 
                 Assert.Same(first, second);
+                arguments[2] = new TocHierarchyOptions { RecognizeNumericHeadings = true, NumericHeadingMinimumBodyLines = 2 };
+                var changed = Assert.IsAssignableFrom<Task<ChapterTreeDocument>>(load.Invoke(window, arguments))
+                    .GetAwaiter().GetResult();
+                Assert.NotSame(first, changed);
+                arguments[2] = new TocHierarchyOptions { RecognizeNumericHeadings = true, NumericHeadingMinimumBodyLines = 3 };
+                var changedMinimum = Assert.IsAssignableFrom<Task<ChapterTreeDocument>>(load.Invoke(window, arguments))
+                    .GetAwaiter().GetResult();
+                Assert.NotSame(changed, changedMinimum);
             });
         }
         finally
@@ -1292,6 +1399,9 @@ public sealed class MainWindowLayoutTests
                 Assert.True(book.HasBeenChecked);
                 Assert.Equal("所选检查通过", book.ReadinessLabel);
                 Assert.Equal(1, book.ChapterCandidateCount);
+                Assert.Null(book.ChapterTree);
+                var summary = Assert.IsType<TextBlock>(window.FindName("SelectedBookSummaryText"));
+                Assert.Contains("章节树：已识别 1 项（未保存）", summary.Text);
             });
         }
         finally

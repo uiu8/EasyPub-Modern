@@ -15,11 +15,17 @@ public sealed record ChapterTreeEntry(
 {
     public bool IsFrontMatter { get; init; }
     public int HeadingLevel { get; init; }
+    public string? RecognitionSource { get; init; }
 }
 
 public sealed record ChapterTreePlan(
     string SourceSha256,
-    IReadOnlyList<ChapterTreeEntry> Entries);
+    IReadOnlyList<ChapterTreeEntry> Entries)
+{
+    public bool? NumericHeadingRecognition { get; init; }
+    public int? NumericHeadingMinimumBodyLines { get; init; }
+    public string? NumericHeadingPattern { get; init; }
+}
 
 public sealed record ChapterTreeSourceLine(int LineNumber, string Text);
 
@@ -44,6 +50,12 @@ public sealed class ChapterTreeDocument
     public int LineCount => _sourceLines.Count;
     internal IReadOnlyList<ChapterTreeSourceLine> SourceLines => _sourceLines;
     public IReadOnlyList<ChapterTreeEntry> Entries { get; }
+    public TocHierarchyOptions RecognitionOptions { get; private init; } = new();
+    public ChapterTreeSourceLine? SourceLine(int number) => number >= 1 && number <= _sourceLines.Count ? _sourceLines[number - 1] : null;
+
+    /// <summary>Creates a new in-memory tree for the same TXT, preserving its source hash and recognition options.</summary>
+    public ChapterTreeDocument WithEntries(IEnumerable<ChapterTreeEntry> entries)
+        => new(SourcePath, SourceSha256, _sourceLines, entries.ToArray()) { RecognitionOptions = RecognitionOptions };
 
     public static async Task<ChapterTreeDocument> LoadAsync(
         string sourcePath,
@@ -59,6 +71,7 @@ public sealed class ChapterTreeDocument
 
         var bytes = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
         var sourceHash = Convert.ToHexString(SHA256.HashData(bytes));
+        var hierarchyOptions = hierarchy ?? new TocHierarchyOptions();
         var editingDocument = ChapterEditingDocument.FromBytes(
             fullPath, bytes, chapterPattern, encodingMode, cancellationToken);
         var sourceLines = editingDocument.GetLines()
@@ -71,10 +84,9 @@ public sealed class ChapterTreeDocument
                 throw new InvalidDataException("TXT 内容已发生变化，已保存的章节树不能继续套用，请重新识别。");
             existingPlan = NormalizePersistedPlan(existingPlan);
             ValidatePlan(existingPlan, sourceLines.Length);
-            return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries);
+            return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries) { RecognitionOptions = hierarchyOptions.ForBook(existingPlan) };
         }
 
-        var hierarchyOptions = hierarchy ?? new TocHierarchyOptions();
         var levelPatterns = hierarchyOptions.Enabled
             ? new[]
             {
@@ -83,7 +95,16 @@ public sealed class ChapterTreeDocument
                 CompilePattern(hierarchyOptions.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern),
             }
             : [];
-        var candidates = editingDocument.Candidates.ToDictionary(candidate => candidate.LineNumber);
+        var candidates = editingDocument.Candidates
+            .Where(candidate => candidate.Kind != ChapterCandidateKind.NumericTitle)
+            .ToDictionary(candidate => candidate.LineNumber);
+        if (hierarchyOptions.RecognizeNumericHeadings)
+        {
+            var numericRegex = NumericHeadingRule.Compile(hierarchyOptions.NumericHeadingPattern);
+            foreach (var line in sourceLines)
+                if (!candidates.ContainsKey(line.LineNumber) && NumericHeadingRule.Matches(numericRegex, line.Text))
+                    candidates.Add(line.LineNumber, new ChapterCandidate(line.LineNumber, line.Text.Trim(), line.Text.Trim(), ChapterCandidateKind.NumericTitle));
+        }
         var headings = new List<(int LineNumber, string Title, int Level)>();
         foreach (var line in sourceLines)
         {
@@ -94,6 +115,15 @@ public sealed class ChapterTreeDocument
                 : line.Text.Trim();
             headings.Add((line.LineNumber, suggested, level == 0 ? 2 : level));
         }
+
+        var numericLines = NumericHeadingFilter.AcceptedLines(
+            sourceLines.Select(line => line.Text).ToArray(),
+            headings.Select(heading => heading.LineNumber - 1).ToArray(),
+            hierarchyOptions.NumericHeadingMinimumBodyLines);
+        headings.RemoveAll(heading => candidates.TryGetValue(heading.LineNumber, out var candidate)
+            && candidate.Kind == ChapterCandidateKind.NumericTitle
+            && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns) == 0
+            && !numericLines.Contains(heading.LineNumber - 1));
 
         var entries = new List<ChapterTreeEntry>();
         var firstHeadingLine = headings.Count == 0 ? sourceLines.Length + 1 : headings[0].LineNumber;
@@ -122,13 +152,16 @@ public sealed class ChapterTreeDocument
                 CreateRange(heading.LineNumber + 1, endLine))
             {
                 HeadingLevel = heading.Level,
+                RecognitionSource = candidates.TryGetValue(heading.LineNumber, out var sourceCandidate)
+                    && sourceCandidate.Kind == ChapterCandidateKind.NumericTitle
+                    && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns) == 0 ? "numeric" : "pattern",
             });
         }
 
         entries = NormalizeHierarchyLevels(entries).ToList();
         var plan = new ChapterTreePlan(sourceHash, entries);
         ValidatePlan(plan, sourceLines.Length);
-        return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries);
+        return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries) { RecognitionOptions = hierarchyOptions };
     }
 
     public IReadOnlyList<ChapterTreeSourceLine> GetSourceLines(ChapterTreeEntry entry)

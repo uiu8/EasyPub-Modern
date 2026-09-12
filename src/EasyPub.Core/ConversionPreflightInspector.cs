@@ -44,6 +44,13 @@ public sealed record ConversionPreflightReport(
 
 public sealed class ConversionPreflightInspector
 {
+    private readonly ChapterTreeDocumentCache _documentCache;
+
+    public ConversionPreflightInspector(ChapterTreeDocumentCache? documentCache = null)
+    {
+        _documentCache = documentCache ?? new ChapterTreeDocumentCache();
+    }
+
     public async Task<ConversionPreflightReport> InspectAsync(
         IEnumerable<ConversionRequest> requests,
         CancellationToken cancellationToken = default)
@@ -119,7 +126,7 @@ public sealed class ConversionPreflightInspector
                 {
                     try
                     {
-                        var document = await ChapterTreeDocument.LoadAsync(
+                        var document = await _documentCache.GetOrLoadAsync(
                             request.InputPath,
                             options.ChapterPattern,
                             options.TocHierarchy,
@@ -127,13 +134,16 @@ public sealed class ConversionPreflightInspector
                             request.ChapterTree,
                             token);
                         inputLineCount = document.LineCount;
-                        var sourceText = string.Join("\n", document.SourceLines.Select(line => line.Text));
+                        // Chapter parsing has already decoded and normalized every line;
+                        // keep that array instead of joining the whole novel and splitting
+                        // it again for cleanup checks.
+                        var sourceLines = document.SourceLines.Select(line => line.Text).ToArray();
                         TextCleanupPreview? plannedCleanup = null;
                         try
                         {
                             if (options.TextCleanup.Enabled)
                             {
-                                plannedCleanup = TextCleanupPipeline.Apply(sourceText, options.TextCleanup, token);
+                                plannedCleanup = TextCleanupPipeline.Apply(sourceLines, options.TextCleanup, token);
                                 plannedCleanup.EnsureSourcePositionsAreSafe(request.ChapterTree is not null || options.Illustrations.Any(image => image.InsertAfterLine.HasValue));
                             }
                         }
@@ -154,7 +164,7 @@ public sealed class ConversionPreflightInspector
                                         BuiltinOverrides = options.TextCleanup.BuiltinOverrides,
                                         HardWrapMinimumLength = options.TextCleanup.HardWrapMinimumLength,
                                     };
-                                    var preview = TextCleanupPipeline.Apply(sourceText, checkOptions, token);
+                                    var preview = TextCleanupPipeline.Apply(sourceLines, checkOptions, token);
                                     var planned = (plannedCleanup?.Changes ?? []).Where(change => change.IsApplied)
                                         .Select(change => (change.Key, change.After)).ToHashSet();
                                     var excluded = options.TextCleanup.ExcludedChangeKeys.ToHashSet(StringComparer.Ordinal);
@@ -181,7 +191,7 @@ public sealed class ConversionPreflightInspector
                         int? firstNoticeLine = null;
                         var exclusions = new HashSet<string>(options.TextCleanup.ExcludedChangeKeys, StringComparer.Ordinal);
                         var noticeOptions = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = options.TextCleanup.Advertisement, BuiltinOverrides = options.TextCleanup.BuiltinOverrides, ExcludedChangeKeys = options.TextCleanup.ExcludedChangeKeys };
-                        var noticePreview = TextCleanupPipeline.Apply(sourceText, noticeOptions, token);
+                        var noticePreview = TextCleanupPipeline.Apply(sourceLines, noticeOptions, token);
                         var noticeLines = noticePreview.Changes.Where(change => change.IsApplied).Select(change => change.LineNumber).ToHashSet();
                         foreach (var line in document.SourceLines)
                         {
@@ -204,7 +214,16 @@ public sealed class ConversionPreflightInspector
                         }
                         var candidateCount = document.Entries.Count(entry => entry.TitleLineNumber.HasValue);
                         books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
-                        if (candidateCount == 0)
+                        if (Check(PreflightTargetKind.Chapters))
+                        {
+                            var review = ChapterReviewAnalyzer.Analyze(document, detectUnrecognized: request.ChapterTree is null, cancellationToken: token);
+                            issues.AddRange(review.Groups.Select(group => group.Issue));
+                            if (review.TotalGroups > review.Groups.Count)
+                                issues.Add(new(request.InputPath, PreflightSeverity.Warning, "chapter_diagnostics_limit",
+                                    $"共 {review.TotalGroups} 组提醒，已显示 {review.Groups.Count} 组；章节工作台可继续加载。", PreflightTargetKind.Chapters));
+                        }
+                        if (Check(PreflightTargetKind.Chapters) && candidateCount == 0
+                            && !issues.Any(i => i.InputPath == request.InputPath && i.Code == "numeric_chapters_suspected"))
                         {
                             issues.Add(new ConversionPreflightIssue(
                                 request.InputPath,

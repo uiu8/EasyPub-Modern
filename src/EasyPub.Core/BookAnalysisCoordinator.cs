@@ -73,9 +73,12 @@ public sealed record BookAnalysisResult(
 /// The underlying cache is keyed per book so changing the current selection does not force
 /// unchanged long novels to be parsed again.
 /// </summary>
-public sealed class BookAnalysisCoordinator(ConversionPreflightCache? cache = null)
+public sealed class BookAnalysisCoordinator(
+    ConversionPreflightCache? cache = null,
+    ChapterTreeDocumentCache? documentCache = null)
 {
     private readonly ConversionPreflightCache _cache = cache ?? new ConversionPreflightCache();
+    private readonly ChapterTreeDocumentCache _documentCache = documentCache ?? new ChapterTreeDocumentCache();
 
     public async Task<BookAnalysisResult> AnalyzeAsync(
         IEnumerable<ConversionRequest> requests,
@@ -84,7 +87,7 @@ public sealed class BookAnalysisCoordinator(ConversionPreflightCache? cache = nu
         ArgumentNullException.ThrowIfNull(requests);
         var jobs = requests.ToArray();
         var stopwatch = Stopwatch.StartNew();
-        var (report, reused) = await _cache.InspectAsync(jobs, cancellationToken).ConfigureAwait(false);
+        var (report, reused) = await _cache.InspectAsync(jobs, cancellationToken, _documentCache).ConfigureAwait(false);
         if (jobs.Any(job => job.AutomaticChecks is not null))
         {
             var settings = jobs.ToDictionary(job => Path.GetFullPath(job.InputPath), job => job.AutomaticChecks, StringComparer.OrdinalIgnoreCase);

@@ -8,12 +8,12 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.20.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.20.1)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.22.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.20.1/EasyPubModern-Setup-v1.20.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.20.1/EasyPubModern-v1.20.1-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.20.1)
+**[下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-v1.22.0-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.20.1) 下载正式安装包；无需安装时也可以选择便携版。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0) 下载便携版，完整解压后运行 `EasyPub.Desktop.exe`。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -60,6 +60,18 @@
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.22.0 章节工作台与长文本性能
+
+- 章节工作台按“全部章节 / 待核对”统一筛选，支持问题分类、上一处/下一处、原文定位、连续多选和批量归并。
+- 增加重复标题清理、数字章节安全识别、全局默认规则、逐书覆盖和命名识别方案；自动识别结果与已保存章节树明确区分，不修改原始 TXT。
+- 无章节的书稿会提示疑似数字章节，并允许选择“规范成品标题”或“保留原始数字标题”。
+- 识别、章节预览和转换前检查共享长文本缓存；章节列表和正文预览使用虚拟化，减少打开长篇小说时的重复读取。
+- 外部编辑器支持 Notepad3 等程序，编辑源文件后会重新检查章节树有效性。
+- 章节树状态显示“已保存”“已识别但未保存”“识别中”和“待识别”，避免把自动识别成功误报为无章节。
+- 本版已通过 Core 179 项、Desktop 70 项回归测试，并完成便携版启动冒烟验证。
+
+完整说明见 [v1.22.0 发布说明](docs/RELEASE_v1.22.0.md)。
 
 ## v1.20.1 清理规则定制
 
@@ -186,4 +198,4 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前正式版本为 **v1.18**，首页只描述当前可下载版本。
+当前正式版本为 **v1.22.0**，首页只描述当前可下载版本。
