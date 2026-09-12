@@ -13,7 +13,7 @@
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-v1.22.0-win-x64.zip)** · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-Setup-v1.22.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-v1.22.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0) 下载便携版，完整解压后运行 `EasyPub.Desktop.exe`。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。

@@ -5,9 +5,11 @@
 ## 下载
 
 - 便携版：`EasyPubModern-v1.22.0-win-x64.zip`
+- 安装版：`EasyPubModern-Setup-v1.22.0-x64.exe`
 - 解压后运行 `EasyPub.Desktop.exe`；请保留同目录的 `config.xml` 和 `bin` 文件夹。
 - 便携包包含 `bin/kindlegen_v2.9.exe`，MOBI 转换仍需遵守 KindleGen 的兼容边界。
 - SHA-256：`330D26148E7352EA445AE5E87BF01622E0A77B9358C0EDCA29B08FC0C3DC9665`
+- 安装版 SHA-256：`E3038228F58057166E8DDD3A4C10CA9F86C9D8869655865717DACA462AE93C5C`
 
 ## 主要变化
 
