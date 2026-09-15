@@ -122,7 +122,7 @@
                     ItemContainerStyle="{StaticResource CategoryTab}" Padding="12">
             <TabItem Header="基本输出">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="20,8,20,16">
+                    <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="基本输出" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="设置格式、目录与可复用排版方案" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
 
@@ -190,7 +190,7 @@
 
             <TabItem Header="EPUB 输入">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="20,8,20,16">
+                    <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="EPUB 输入" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="设置 EPUB 转 MOBI 时的默认处理方式" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
 
@@ -215,7 +215,7 @@
 
             <TabItem Header="MOBI / Kindle">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="20,8,20,16">
+                    <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="MOBI / Kindle" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="配置 KindleGen 与 MOBI 专用参数" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
 
@@ -264,7 +264,7 @@
 
             <TabItem Header="性能与文件">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="20,8,20,16">
+                    <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="性能与文件" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="控制并发、文件冲突与超长小说处理" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
 
@@ -305,7 +305,7 @@
 
             <TabItem Header="验收与完成">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="20,8,20,16">
+                    <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="验收与完成" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="设置报告与转换过程中的完成动作" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
 

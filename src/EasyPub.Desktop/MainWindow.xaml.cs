@@ -1542,7 +1542,7 @@ public partial class MainWindow : Window
             var recovery = await _recoveryStore.LoadAsync();
             if (recovery.Books.Count == 0) { _recoveryStore.Delete(); return; }
             _pendingRecovery = recovery;
-            RecoveryBannerText.Text = $"{recovery.Books.Count} 本书，保存于 {recovery.UpdatedAt.LocalDateTime:g}。暂不恢复不会删除快照。";
+            RecoveryBannerText.Text = $"{recovery.Books.Count} 本书，保存于 {recovery.UpdatedAt.LocalDateTime:g}。选「暂不恢复」不会删除这份快照。";
             RecoveryBanner.Visibility = Visibility.Visible;
         }
         catch
