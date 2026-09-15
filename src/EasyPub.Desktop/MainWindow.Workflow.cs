@@ -62,12 +62,19 @@ public partial class MainWindow
         }
         var issues = InputBooks.SelectMany(book => book.PreflightIssues).Distinct().ToArray();
         var category = WorkflowCategoryCombo.SelectedItem as string;
-        WorkflowIssuesGrid.ItemsSource = issues
+        var rows = issues
             .Where(issue => WorkflowIncludeInformation.IsChecked == true || issue.Severity != PreflightSeverity.Information)
             .Where(issue => category is null or "全部问题" || IssueCategory.For(issue) == category)
             .OrderByDescending(issue => issue.Severity)
             .ThenBy(issue => issue.InputPath).ThenBy(issue => issue.LineNumber)
             .Select(PreflightIssueRow.From).ToArray();
+        // Same folding the preflight report uses. Without it the overview listed every reminder of
+        // every book one per line, so a single book with forty near-identical chapter-gap warnings
+        // filled the table and buried the other books' problems entirely. Choosing one category is
+        // already a drill-down, so those rows stay individual and actionable.
+        WorkflowIssuesGrid.ItemsSource = category is null or "全部问题"
+            ? PreflightWindow.Collapse(rows)
+            : rows;
         var pending = InputBooks.Count(book => !book.HasBeenChecked || book.AnalysisStatus is BookAnalysisStatus.Pending or BookAnalysisStatus.Running);
         WorkflowSummaryText.Text = InputBooks.Count == 0 ? "请先导入书稿。"
             : $"共 {InputBooks.Count} 本 · 必须修正 {issues.Count(i => i.Severity == PreflightSeverity.Error)} · 待核对 {issues.Count(i => i.Severity == PreflightSeverity.Warning)} · 信息 / 已安排处理 {issues.Count(i => i.Severity == PreflightSeverity.Information)}"

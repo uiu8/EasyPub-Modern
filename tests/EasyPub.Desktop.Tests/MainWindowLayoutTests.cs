@@ -75,11 +75,14 @@ public sealed class MainWindowLayoutTests
                 ReadinessEvaluator.Evaluate(issues), issues, DateTimeOffset.UtcNow));
             typeof(MainWindow).GetMethod("RefreshWorkflowRows", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
             var grid = Assert.IsType<DataGrid>(window.FindName("WorkflowIssuesGrid"));
-            Assert.Equal(2, grid.Items.Count);
+            // Both warnings belong to 漏识别 for the same book, so the overview folds them into one
+            // row instead of listing them separately. The folded row keeps the group's first issue,
+            // which is why the jump-gap assertions below still find their row.
+            var overview = Assert.Single(grid.Items.Cast<PreflightIssueRow>());
+            Assert.Contains("共 2 条同类提醒", overview.Message);
             var combo = Assert.IsType<ComboBox>(window.FindName("WorkflowCategoryCombo"));
             combo.SelectedItem = ReviewCategories.Missing;
-            // 漏识别 now groups jump gaps together with missing headings, so pick the jump-gap row
-            // instead of assuming the filter yields exactly one entry.
+            // Choosing one category is a drill-down, so those rows stay individual and actionable.
             var row = grid.Items.Cast<PreflightIssueRow>().Single(item => item.Issue!.Code == "chapter_number_gap");
             Assert.Equal("核对跳章区间", row.ActionLabel);
             Assert.Equal(42, row.Issue!.LineNumber);
@@ -87,7 +90,8 @@ public sealed class MainWindowLayoutTests
             var information = Assert.IsType<CheckBox>(window.FindName("WorkflowIncludeInformation"));
             information.IsChecked = true;
             information.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, information));
-            Assert.Equal(3, grid.Items.Count);
+            // Cleanup is a different category, so it forms its own group: two rows again.
+            Assert.Equal(2, grid.Items.Count);
             Assert.Equal("查看清理计划", grid.Items.Cast<PreflightIssueRow>().Last().ActionLabel);
             var capture = Environment.GetEnvironmentVariable("EASYPUB_WORKFLOW_CAPTURE_PATH");
             if (!string.IsNullOrWhiteSpace(capture))
