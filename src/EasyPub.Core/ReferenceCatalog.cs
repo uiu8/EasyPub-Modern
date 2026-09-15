@@ -503,6 +503,14 @@ private static readonly Regex QidianVolume = new(
         if (Uri.TryCreate(book.Trim(), UriKind.Absolute, out var pasted) && Supported(pasted))
             return [await FetchAsync(pasted.AbsoluteUri, token)];
         var name = Regex.Replace(book.Trim(), @"\s*[（(].*?[）)]", "").Trim();
+        // Repairs are iterative: the same book gets fixed, checked, adjusted and fixed again, and each
+        // pass used to ask every site from scratch — measured at 98% of the wall clock. A recent answer
+        // is reused instead. Clearing the cache or waiting out its lifetime asks the sources again.
+        if (CatalogCache.TryRead(name, preferred, out var remembered))
+        {
+            LastTimings = [];
+            return remembered;
+        }
         var ordered = Arrange(Sources.Where(source => source.Enabled), preferred).ToArray();
         var searchable = ordered.Count(source => source.Searchable || (source.Direct && LooksLikeIdentifier(name)));
 
@@ -564,6 +572,7 @@ private static readonly Regex QidianVolume = new(
         // Only a total failure is reported as an error; otherwise return whatever was found.
         if (result.Count == 0 && searchable > 0 && failures.Count == searchable)
             throw new InvalidOperationException($"全部目录源查询失败（{string.Join("；", failures)}），可能被限流或网络不通，请稍后重试");
+        CatalogCache.Write(name, preferred, result);
         return result;
     }
 
