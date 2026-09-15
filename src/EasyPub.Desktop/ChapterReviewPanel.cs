@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Text.RegularExpressions;
+using System.Windows.Threading;
 using EasyPub.Core;
 
 namespace EasyPub.Desktop;
@@ -18,6 +19,9 @@ public partial class ChapterEditorWindow
     private int _resultUndoDepth;
     private bool _expandSource;
     private string _searchQuery = "";
+    private ReferenceCatalog? _referenceCatalog;
+    private bool _referenceCatalogLoaded;
+    private string? _breakpointSignature;
 
     private ChapterReviewGroup? ReviewGroup(ConversionPreflightIssue? issue) => issue is null ? null
         : _reviewGroupIndex.TryGetValue((issue.Code, issue.LineNumber), out var group)
@@ -71,8 +75,7 @@ public partial class ChapterEditorWindow
         UpdateActionButtons();
     }
 
-    private void UpdateReviewVisibility(bool userChange = false)
-    {
+    private void UpdateReviewVisibility(bool userChange = false)    {
         if (_document is null || Roots is null) return;
         var nodes = Flatten().ToArray();
         var nodesById = nodes.ToDictionary(node => node.Id);
@@ -134,9 +137,11 @@ public partial class ChapterEditorWindow
         FilterSummaryText.Text = reviewOnly
             ? $"当前 {relevant.Length} 组 / 已加载 {_allReviewIssues.Length} 组 · 提醒不一定是错误"
             : string.IsNullOrWhiteSpace(_searchQuery) ? "搜索标题，或输入 行:51397 · 勾选框仅控制目录" : $"匹配 {matches} 章（含原始标题）；祖先和上下文不计入匹配数";
+        ScheduleBreakpoints();
     }
 
     private bool _refreshingTreeView;
+    private bool _breakpointsPending;
 
     private void RefreshFilteredTree()
     {
@@ -153,6 +158,88 @@ public partial class ChapterEditorWindow
             // Explicit chapter/suggestion navigation still uses SelectRestoredNode.
         }
         finally { _refreshingTreeView = false; }
+    }
+
+    /// <summary>
+    /// The saved directory this book was reconciled against, when there is one. A book that has been
+    /// through 一键修复 has one stored next to its source hash, and it is what lets the tree say
+    /// "this is the chapter the official release has here" instead of only "some numbers are missing".
+    /// </summary>
+    private ReferenceCatalog? SavedReference()
+    {
+        if (_referenceCatalogLoaded) return _referenceCatalog;
+        _referenceCatalogLoaded = true;
+        var saved = ReferenceCatalogInput.Load(_document.SourceSha256);
+        if (!string.IsNullOrWhiteSpace(saved?.Text)) _referenceCatalog = ReferenceCatalogInput.ParseText(saved.Text);
+        return _referenceCatalog;
+    }
+
+    /// <summary>Same source hash, so the directory that was found for the old tree still belongs to this one.</summary>
+    private void InvalidateBreakpoints()
+    {
+        _referenceCatalogLoaded = false;
+        _breakpointSignature = null;
+    }
+
+    /// <summary>
+    /// Marks each row that does not join up with the chapter before it, so a skipped stretch of numbers —
+    /// or a chapter the official directory has and the text lacks — is visible exactly where it happens
+    /// instead of only inside one summary sentence. Recomputing is deferred to the dispatcher because
+    /// alignment against the directory is not free and a single edit calls this several times.
+    /// </summary>
+    private void ScheduleBreakpoints()
+    {
+        if (_breakpointsPending) return;
+        _breakpointsPending = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _breakpointsPending = false;
+            ApplyBreakpoints();
+        }, DispatcherPriority.Background);
+    }
+
+    private void ApplyBreakpoints()
+    {
+        if (_document is null || Roots is null) return;
+        var nodes = Flatten().ToArray();
+        var signature = BreakpointSignature(nodes);
+        if (signature == _breakpointSignature) return;
+        _breakpointSignature = signature;
+
+        var breaks = ChapterBreakpoints.Between(_document, nodes.Select(node => node.ToEntry()).ToArray(), SavedReference());
+        var byAnchor = breaks.Where(item => item.AnchorId is not null)
+            .GroupBy(item => item.AnchorId!).ToDictionary(group => group.Key, group => group.ToArray());
+        foreach (var node in nodes)
+        {
+            if (!byAnchor.TryGetValue(node.Id, out var items)) { node.ClearBreak(); continue; }
+            node.BreakLabel = BreakLabel(items);
+            node.BreakDetail = string.Join("\n", items.Select(item => item.Detail));
+            node.BreakAccent = items.Any(item => item.Kind != ChapterBreakpointKind.NumberGap) ? "Error" : "Warning";
+        }
+    }
+
+    /// <summary>Identity of the tree plus the directory, so an unchanged tree is never analysed twice.</summary>
+    private string BreakpointSignature(IReadOnlyList<ChapterTreeNode> nodes) => string.Join("|",
+        (_document.SourceSha256, SavedReference()?.Titles.Count ?? 0).ToString(),
+        nodes.Count,
+        string.Join(";", nodes.Select(node => node.Id + ":" + node.Title + ":" + node.Level)));
+
+    private static string BreakLabel(IReadOnlyList<ChapterBreakpoint> items)
+    {
+        var gap = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.NumberGap);
+        var reference = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.ReferenceMissing);
+        var typo = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.HeadingTypo);
+        var parts = new List<string>();
+        if (gap is not null)
+            parts.Add(gap.MissingNumbers.Count == 1
+                ? $"此处跳过：缺第 {gap.MissingNumbers[0]} 章"
+                : $"此处跳过：缺第 {gap.MissingNumbers[0]}–{gap.MissingNumbers[^1]} 章");
+        if (typo is not null) parts.Add("编号写法有误");
+        if (reference is not null)
+            parts.Add(reference.MissingTitles.Count == 1
+                ? $"目录里有「{reference.MissingTitles[0]}」"
+                : $"目录里有 {reference.MissingTitles.Count} 章找不到");
+        return parts.Count == 0 ? "" : "↕ " + string.Join(" · ", parts);
     }
 
     private ConversionPreflightIssue? CurrentReviewIssue()

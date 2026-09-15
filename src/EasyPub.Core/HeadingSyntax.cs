@@ -59,7 +59,12 @@ public static class HeadingSyntax
             {
                 var unit = ch switch { '十' or '拾' => 10, '百' or '佰' => 100, '千' or '仟' => 1000, _ => 0 };
                 if (unit == 0) return null;
-                section += (hasNumber ? number : 1) * unit; number = 0; hasNumber = false;
+                // A 零 directly in front of a unit means "one" of it, not "zero" of it: releases write
+                // "第四百零十章" for 第四百一十章 and "第一千零十章" for 第一千零一十章. Carrying the 0
+                // through as the coefficient silently turns 410 into 400 and 1010 into 1000 — which is how
+                // a chapter sitting in plain sight gets reported as missing. A 零 in front of a digit keeps
+                // its literal value, so "一千零八" still reads 1008.
+                section += (hasNumber && number > 0 ? number : 1) * unit; number = 0; hasNumber = false;
             }
             if (total + section + number > int.MaxValue) return null;
         }

@@ -65,23 +65,40 @@
             </Setter>
         </Style>
         <HierarchicalDataTemplate DataType="{x:Type local:ChapterTreeNode}" ItemsSource="{Binding VisibleChildren}">
-            <Border Padding="5,6" CornerRadius="5">
-                <Border.Style><Style TargetType="Border"><Style.Triggers>
-                    <DataTrigger Binding="{Binding IsOperationSelected}" Value="True"><Setter Property="Background" Value="{DynamicResource SelectedSurfaceBrush}"/></DataTrigger>
-                </Style.Triggers></Style></Border.Style>
-                <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <CheckBox IsChecked="{Binding IncludeInToc}" ToolTip="加入阅读器目录；与批量操作选中无关，不删除正文" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                    <TextBlock Grid.Column="1" Text="{Binding ReviewMarker}" ToolTip="{Binding ReviewDescription}" Foreground="{DynamicResource SecondaryTextBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                    <Border Grid.Column="2" Background="{DynamicResource SubtleSurfaceBrush}" CornerRadius="7" Padding="5,1" Margin="0,0,7,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding LevelLabel}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11"/>
-                    </Border>
-                    <TextBlock Grid.Column="3" Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource PrimaryTextBrush}"
-                               VerticalAlignment="Center" MouseLeftButtonDown="Title_MouseLeftButtonDown" ToolTip="{Binding Title}"/>
-                    <TextBlock Grid.Column="4" Text="{Binding LineCountLabel}" ToolTip="正文源行数，不含独立标题；重复标题清理使用此行数"
-                               Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                </Grid>
-            </Border>
+            <!-- The break strip sits directly above the row it belongs to, so it reads as the space between
+                 this chapter and the one before it rather than as part of either chapter. -->
+            <StackPanel>
+                <Border Background="{DynamicResource WarningSurfaceBrush}" BorderThickness="3,0,0,0" CornerRadius="3"
+                        Padding="7,4" Margin="0,4,0,2" ToolTip="{Binding BreakDetail}">
+                    <Border.Style><Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasBreak}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                            <DataTrigger Binding="{Binding BreakAccent}" Value="Error"><Setter Property="BorderBrush" Value="{DynamicResource ErrorBrush}"/></DataTrigger>
+                        </Style.Triggers>
+                    </Style></Border.Style>
+                    <TextBlock Text="{Binding BreakLabel}" TextWrapping="Wrap" FontSize="11" FontWeight="SemiBold"
+                               Foreground="{DynamicResource WarningBrush}"/>
+                </Border>
+                <Border Padding="5,6" CornerRadius="5">
+                    <Border.Style><Style TargetType="Border"><Style.Triggers>
+                        <DataTrigger Binding="{Binding IsOperationSelected}" Value="True"><Setter Property="Background" Value="{DynamicResource SelectedSurfaceBrush}"/></DataTrigger>
+                    </Style.Triggers></Style></Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <CheckBox IsChecked="{Binding IncludeInToc}" ToolTip="加入阅读器目录；与批量操作选中无关，不删除正文" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                        <TextBlock Grid.Column="1" Text="{Binding ReviewMarker}" ToolTip="{Binding ReviewDescription}" Foreground="{DynamicResource SecondaryTextBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <Border Grid.Column="2" Background="{DynamicResource SubtleSurfaceBrush}" CornerRadius="7" Padding="5,1" Margin="0,0,7,0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding LevelLabel}" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11"/>
+                        </Border>
+                        <TextBlock Grid.Column="3" Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource PrimaryTextBrush}"
+                                   VerticalAlignment="Center" MouseLeftButtonDown="Title_MouseLeftButtonDown" ToolTip="{Binding Title}"/>
+                        <TextBlock Grid.Column="4" Text="{Binding LineCountLabel}" ToolTip="正文源行数，不含独立标题；重复标题清理使用此行数"
+                                   Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
         </HierarchicalDataTemplate>
     </Window.Resources>
     <Grid Margin="20">

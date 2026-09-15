@@ -873,6 +873,24 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     private string _reviewDescription = "";
     public string ReviewDescription { get => _reviewDescription; set { if (_reviewDescription == value) return; _reviewDescription = value; OnPropertyChanged(nameof(ReviewDescription)); OnPropertyChanged(nameof(ReviewMarker)); } }
     public string ReviewMarker => string.IsNullOrEmpty(ReviewDescription) ? "" : "•";
+
+    /// <summary>
+    /// The break this row sits under: the strip drawn between it and the chapter before it. Filled by the
+    /// workbench from <see cref="ChapterBreakpoints"/>, so a skipped stretch of chapter numbers — or a
+    /// chapter the reference directory has and the text lacks — is shown where it happens, not folded into
+    /// one summary sentence somewhere else on the screen.
+    /// </summary>
+    private string _breakLabel = "";
+    private string _breakAccent = "";
+    public string BreakLabel { get => _breakLabel; set { if (_breakLabel == value) return; _breakLabel = value; OnPropertyChanged(nameof(BreakLabel)); OnPropertyChanged(nameof(HasBreak)); } }
+    public string BreakAccent { get => _breakAccent; set { if (_breakAccent == value) return; _breakAccent = value; OnPropertyChanged(nameof(BreakAccent)); } }
+    public bool HasBreak => _breakLabel.Length > 0;
+    public string BreakDetail { get; set; } = "";
+    internal void ClearBreak()
+    {
+        BreakLabel = "";
+        BreakDetail = "";
+    }
     public string? RecognitionSource { get; set; }
     public ChapterTreeNode(ChapterTreeEntry entry)
     {

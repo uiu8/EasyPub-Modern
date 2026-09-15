@@ -15,6 +15,9 @@ public partial class ChapterEditorWindow
             foreach (var root in BuildTree(entries)) Roots.Add(root);
             _selectedNode = Flatten().FirstOrDefault();
         });
+        // The pass just wrote the directory it used next to this source hash, so re-read it: the rows can
+        // now name the chapters the release has and this file does not.
+        InvalidateBreakpoints();
         SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
         RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
     }

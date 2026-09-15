@@ -177,6 +177,8 @@ public partial class ChapterEditorWindow
         });
         if (changedSource) { _undo.Clear(); _redo.Clear(); }
         _detectUnrecognized = true;
+        // A different TXT means a different saved directory, so the rows must be marked again from scratch.
+        InvalidateBreakpoints();
         RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons(); UpdateUndoRedoButtons();
         SetReviewResult(changedSource ? "已按新 TXT 重新识别，旧行号历史已清除。" : "已重新识别；同一原文版本可撤销恢复旧章节树。");
         if (_rulesDialog is not null) _rulesDialog.DialogResult = true;
