@@ -17,11 +17,11 @@
 
 | 项 | 值 |
 |---|---|
-| 最新提交 | `b577798` docs: NEXT_TASK.md 顶部加指针，指向 v1.55.1 交接文档 |
+| 最新提交 | `75d7b15` fix: 降级缺口提示条会下标越界崩溃 (v1.55.2) |
 | 工作区 | 干净 |
-| 测试基线 | 运行结果 Core **327** + Desktop **114**，必须保持全绿 |
-| 当前版本 | `1.55.1` |
-| 交付物 | ✅ 已发布（2026-09-15）：<br>`outputs/EasyPubModern-v1.55.1-breakpoint-catalog-win-x64/`（exe 67.59 MB）<br>`outputs/EasyPubModern-v1.55.1-breakpoint-catalog-win-x64.zip`（64.92 MB）<br>`outputs/EasyPubModern-Setup-v1.55.1-x64.exe`（64.43 MB）<br>exe `FileVersion = 1.55.1.0`；发布版冒烟通过，标题 `EasyPub Modern v1.55.1` |
+| 测试基线 | 运行结果 Core **327** + Desktop **120**，必须保持全绿 |
+| 当前版本 | `1.55.2` |
+| 交付物 | ✅ 已发布（2026-09-15）：<br>`outputs/EasyPubModern-v1.55.2-breakpoint-catalog-win-x64/`（exe 67.59 MB）<br>`outputs/EasyPubModern-v1.55.2-breakpoint-catalog-win-x64.zip`（64.92 MB）<br>`outputs/EasyPubModern-Setup-v1.55.2-x64.exe`（64.43 MB）<br>exe `FileVersion = 1.55.2.0`；发布版冒烟通过，标题 `EasyPub Modern v1.55.2` |
 
 **对齐基线（改动后不得劣化）**
 
@@ -176,13 +176,22 @@ v1.55.0 我加了一条判断：「章号与前一章接不上 → 疑似编号�
 
 ## 5. 下一步建议（按价值排序）
 
-### ① ✅ 已完成：v1.55.1 已发布（2026-09-15）
+### ① ✅ 已完成：v1.55.2 已发布（2026-09-15）
 
 产物与校验值见 §1。发布时的两个前置条件（**都踩过**，下次照做）：
 
 1. **改过 Core 就要先清 `src/EasyPub.Core/obj` 和 `bin`**，否则可能 publish 出旧逻辑（§3.2）
 2. **先停掉正在运行的应用**：它会锁住 `bin\Release\net10.0-windows\win-x64\EasyPub.Core.dll`，
    publish 会报 MSB3027「超出了重试计数 10。失败。文件被 EasyPub.Desktop (PID) 锁定」
+
+> **v1.55.2 只修了一个崩溃，值得单独记一笔**：自查"假阳性清理是否真的进了版本"时发现，
+> `ChapterBreakpoints` 对"超过 30 个连续号码"的缺口会把 `MissingNumbers` 置为空集合（降级提示），
+> 而提示条文案仍按 `MissingNumbers[0]` 拼接 → `ArgumentOutOfRangeException`，
+> 在 Dispatcher 回调里抛出 = **打开这类书的工作台直接崩**。《择天记》123 处提示里 105 处走这条路。
+>
+> 教训：**降级路径也要有文案测试**。我把提示条文案抽成 `ChapterBreakpointLabel.For` 并补了六条测试，
+> 覆盖检测器能产出的每一种形状（空号码、单章、区间、目录单章/多章、多断点合并、无断点）。
+> 这类"某个字段在合法情况下为空"的崩溃，靠读代码很难发现，靠穷举形状的测试很容易。
 
 ### ② 混用编号体系的书噪音仍偏大
 
