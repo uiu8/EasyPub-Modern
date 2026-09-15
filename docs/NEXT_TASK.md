@@ -16,22 +16,24 @@
 
 | 项 | 值 |
 |---|---|
-| 最新提交 | `26760d5` feat: 提醒条数独立成列 (v1.54.0) |
+| 最新提交 | `90d1c5c` fix: 章号解析误把「零」当系数; 章节树行间标出断点 (v1.55.0) |
 | 工作区 | 干净 |
-| 测试基线 | Core **317** + Desktop **109**，必须保持全绿 |
-| 当前版本 | v1.54.0 |
-| 交付物 | `outputs/EasyPubModern-v1.54.0-count-column-win-x64.zip` + `EasyPubModern-Setup-v1.54.0-x64.exe` |
+| 测试基线 | Core **327** + Desktop **109**，必须保持全绿 |
+| 当前版本 | v1.55.0 |
+| 交付物 | `outputs/EasyPubModern-v1.55.0-breakpoint-win-x64/` + `EasyPubModern-Setup-v1.55.0-x64.exe` |
 
 **对齐基线（改动后不得劣化）**
 
 | 书 | 基线 |
 |---|---|
 | 疯巫妖的实验日志 | 836 / 837 章 |
-| 凡人修仙传 | 30 / 1408 章（源文件仅 0.18 MB / 1077 行，**这个数字本身是对的**） |
+| 凡人修仙传 | 30 / 1004 章（源文件仅 0.18 MB / 1077 行，**这个数字本身是对的**；旧稿写的 1408 是当时另一次取到的目录章数） |
 
 **Git 历史**（都在本地，**绝不 push**——remote 是用户线上仓库）
 
 ```
+90d1c5c  fix: 章号解析误把「零」当系数; 章节树行间标出断点 (v1.55.0)   ← §3 三项做完
+549270a  docs: 重写交接文档为单文件自包含 (NEXT_TASK.md)
 26760d5  feat: 提醒条数独立成列 (v1.54.0)
 e02df43  fix: 主窗口检查页未折叠同类提醒 (v1.53.0)
 3d8947a  fix: 检查页同类提醒未折叠 (v1.52.0)     ← 改错了文件，仅对弹窗有效
@@ -73,7 +75,7 @@ b0ead5c  perf: 目录查询结果缓存 (v1.51.0)
 
 ---
 
-## 3. 当前任务：章节工作台的问题呈现要让人一眼看懂
+## 3. 当前任务：章节工作台的问题呈现要让人一眼看懂 —— **已完成（v1.55.0）**
 
 用户原话：
 
@@ -81,41 +83,51 @@ b0ead5c  perf: 目录查询结果缓存 (v1.51.0)
 > 现在的修复界面太模糊了，用更清晰的方法让用户一眼就知道这个地方到底错在哪里了。
 > 另外，如果是已经获取目录的小说，在跳章或者别的错误的地方，应该用一些方式标出这里本来该有什么章节。
 
-拆成三项：
+### ① 提示不随修复更新 —— **真因不在刷新链，在章号解析**
 
-### ① 提示不随修复更新（**先查这个，最可能是真 bug**）
+先按要求打印了分析时的章节号序列（`work/workbench-probe`），结论是：**`RefreshSuggestions`
+确实拿到了修复后的新树**，提示没消失是因为**树里章号本身被读错了**。
 
-链接：`ChapterEditorWindow.RefreshSuggestions`（`ChapterEditorWindow.xaml.cs:694`）
+根因见 §4.5：`HeadingSyntax.ParseNumber` 把「零」当系数。《疯巫妖的实验日志》印的是
+`第四百零九 / 第四百零十 / 第四百十一`，被读成 `409 → 400 → 411`，
+`ChapterDiagnostics` 于是报「章节编号从 401 跳到 412」——用户看到的就是这条，
+它对齐参考目录后依然在（`chapter_number_gap` 是 `referenceAligned` **故意不抑制**的那一类）。
 
-```csharp
-private void RefreshSuggestions(IReadOnlyList<ChapterTreeEntry> entries)
-{
-    var analysis = ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, _reviewLimit);
-    _reviewGroups = analysis.Groups.ToArray();
-    …
-    _allReviewIssues = _reviewGroups.Where(g => !_confirmedGroups.ContainsKey(ReviewKey(g))).Select(g => g.Issue).ToArray();
+实测（`workbench-probe`）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 疯巫妖 提醒组数 | 3（含 3 条错号导致的跳章） | 1（唯一真实缺章：第 689 章） |
+
+修法与语义见 §4.5；回归用例在 `tests/EasyPub.Core.Tests/ChapterBreakpointsTests.cs`。
+
+### ②③ 行间高亮断点 + 标出参考目录里本应存在的章节 —— **已实现**
+
+新增 `src/EasyPub.Core/ChapterBreakpoints.cs`（Core 层，无 UI 依赖）：
+
+- 按 `ChapterDiagnostics` 的同一作用域（父章节 + 层级 + 章/回）比较相邻章号，产出三类断点：
+  `NumberGap`（真缺章）、`ReferenceMissing`（目录里有、源文本找不到）、`HeadingTypo`（编号写法接不上）
+- 有参考目录时用 `ReferenceOutline.Align` 对齐，把目录里缺的章节挂到**它本该跟随的那一行**
+- 断点锚定 **entry id** 而不是行号：合并、拆分、拖动后行号会变，id 不变
+- 重复号不再被当成缺口（《牧神记》`第一五五章` 重复 155，曾报出 1500 章缺口）
+
+工作台（`ChapterEditorWindow.xaml` 的 `HierarchicalDataTemplate` 外套一层 `StackPanel`）在
+两行之间渲染提示条：`↕ 此处跳过：缺第 689 章 · 目录里有「第六百八十九章 奥秘」`，
+橙色=缺章，红色=目录缺章/编号有误；悬停显示完整说明。参考目录从
+`ReferenceCatalogInput.Load(sha256)` 读——一键修复就是写在那儿的，所以**修复一结束标注就出现**。
+
+实测断点（《疯巫妖》一键修复后，目录 837 章）：
+
+```
+[NumberGap]      前一章：第六百八十八章 元素狩猎 @52508  →  本章行：第六百九十章 灵魂之书
+[ReferenceMissing] 同一位置：参考目录有「第六百八十九章 奥秘」，源文件里找不到
 ```
 
-它用的是**传入的 entries**，而 `UpdateSummary()` 会带当前树调用它；一键修复收尾里也调了 `UpdateSummary()`。
-**按代码应该刷新，但用户报告没有。**
+### 已知的收敛（不是缺陷）
 
-**第一步不要读代码猜——先打印分析时的章节号序列**，确认是：
-- 分析拿到了旧树，还是
-- `_confirmedGroups` 把它跳过了，还是
-- 手动编辑标题的路径没走到 `UpdateSummary()`
-
-### ② 在树的两个章节之间高亮断点
-
-改 `ChapterEditorWindow.xaml` 的 `HierarchicalDataTemplate`（当前每行一个 `Border`）。
-要在**行与行之间**插入视觉标记，需要改模板结构。
-
-### ③ 标出「这里本应有什么章节」
-
-**数据已经有了**：`AutoRepairOutcome.MissingTitles` + 参考目录。
-现在只在一句提示里带过（截图右侧「可能缺章或漏识别：第四百十二章 生章」），
-需要把它渲染到树上对应的**断点位置**。
-
-**②③ 是同一件事，一起做**。有目录时标注缺了哪些标题；无目录时退化为高亮跳章区间本身（没有标题可标）。
+- 「第六百八十久章 奥秘」这类**含错字、连内置识别都不接受**的标题（`久` 不是数字），
+  不会进树，纠错表只对**已被识别的**标题生效。缺章会如实报，不会凭空造出章节（铁律 4）
+- 编号**倒退**（`417 → 4080 → 419` 之外的重复号）只报"接不上"，不报缺章
 
 ---
 
@@ -151,14 +163,33 @@ Codex 实测推翻：瓶颈是**目录获取的网络耗时（98%）**，对齐�
 | 坑 | 后果 |
 |---|---|
 | `--no-build` 跑诊断 | 用的是**旧 dll**，会得出"改了没生效"的错误结论。我因此误判过一次 |
+| **MSBuild 静默跳过 CoreCompile** | 改完 `EasyPub.Core` 后 `dotnet run` / `dotnet test` 可能只打印「正在跳过目标"CoreCompile"，因为所有输出文件相对于输入文件而言都是最新的」，于是**跑的是旧代码**。我因此反复怀疑自己的逻辑，查了好几轮。**改 Core 后先删 `src/EasyPub.Core/obj` 和 `bin` 再构建**，并确认输出里真的出现 `EasyPub.Core -> ...dll` |
 | `Select-Object -First N` | **会掐断上游进程**。对 ISCC 用过一次，产出 0.9 MB 的残缺安装包（正常 64 MB） |
 | `dotnet build *.slnx` | **静默失败**（0 error、2.5 秒退出、无产物）。必须用单个 `.csproj` |
-| 改版本号只改一处 | `csproj` 和 `installer/EasyPubModern.iss` 的 `AppVersion` **和 `PublishDir`** 都要改，否则 ISCC 报 "No files found" |
+| 改版本号只改一处 | 版本号有**三个**来源，全都要改：`csproj` 的 `<Version>`、`<AssemblyVersion>`、`<FileVersion>`，外加 `installer/EasyPubModern.iss` 的 `AppVersion` **和** `PublishDir`。漏掉 `AssemblyVersion` 时窗口标题仍显示旧版本（`MainWindow.AppVersion` 读的是程序集版本，不是 `<Version>`）；漏掉 `PublishDir` 时 ISCC 报 "No files found" |
 | `dotnet` 不在 PATH | 用 `D:\software\dotnet-sdk-10.0.302\dotnet.exe` |
 | `dotnet test` | 需要 danger-full-access 沙箱，否则 testhost 命名管道报"拒绝访问" |
 | KindleGen | 不在仓库里，从 `outputs/EasyPubModern-v1.48.0-heading-guard-win-x64/bin/` 复制 |
 
-### 4.5 环境事实
+### 4.5 章号解析的静默错误（v1.55.0 才修好）
+
+`HeadingSyntax.ParseNumber` 原先把**「零」当成系数**：`'零'` 把 `number` 记成 0 并置
+`hasNumber`，紧跟单位时按 `0 * unit` 相乘。实测：
+
+```
+零十=0   零二十=20   四百零十=400   一千零十=1000
+```
+
+后果：《疯巫妖》《牧神记》这类把「一十」印成「零十」的发布版被读错章号。
+`第四百零九 / 第四百零十 / 第四百十一` 读成 `409 → 400 → 411`，
+`ChapterDiagnostics` 据此报「**从 401 跳到 412**」——用户看到的就是这条，
+一键修复对齐目录后它依然在，于是看起来像"提示不随修复更新"。
+
+**教训**：诊断提示"跳章 / 缺章"时，先核对**树里章号本身**读得对不对，再怀疑树或刷新链。
+`HeadingSyntaxTests` 里有 `一千零八=1008`，却**从来没有「零+单位」的用例**，所以这个 bug 藏了很久。
+修好后的语义：`零+单位 = 一+单位`，`零+数字` 仍是占位零（`一千零八`=1008 不变）。
+
+### 4.6 环境事实
 
 - 原仓库**并非**未被修改：实际有 66 个未提交改动，最新 2026-09-14 18:23（v1.25.0 产物）。**我没有动它**，去留由用户决定
 - `outputs/` 已被 `.gitignore` 排除（2.6 GB），不会误提交
