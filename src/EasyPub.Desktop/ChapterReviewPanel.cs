@@ -291,23 +291,7 @@ public partial class ChapterEditorWindow
         nodes.Count,
         string.Join(";", nodes.Select(node => node.Id + ":" + node.Title + ":" + node.Level)));
 
-    private static string BreakLabel(IReadOnlyList<ChapterBreakpoint> items)
-    {
-        var gap = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.NumberGap);
-        var reference = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.ReferenceMissing);
-        var typo = items.FirstOrDefault(item => item.Kind == ChapterBreakpointKind.HeadingTypo);
-        var parts = new List<string>();
-        if (gap is not null)
-            parts.Add(gap.MissingNumbers.Count == 1
-                ? $"此处跳过：缺第 {gap.MissingNumbers[0]} 章"
-                : $"此处跳过：缺第 {gap.MissingNumbers[0]}–{gap.MissingNumbers[^1]} 章");
-        if (typo is not null) parts.Add("编号写法有误");
-        if (reference is not null)
-            parts.Add(reference.MissingTitles.Count == 1
-                ? $"目录里有「{reference.MissingTitles[0]}」"
-                : $"目录里有 {reference.MissingTitles.Count} 章找不到");
-        return parts.Count == 0 ? "" : "↕ " + string.Join(" · ", parts);
-    }
+    private static string BreakLabel(IReadOnlyList<ChapterBreakpoint> items) => ChapterBreakpointLabel.For(items);
 
     private ConversionPreflightIssue? CurrentReviewIssue()
     {
