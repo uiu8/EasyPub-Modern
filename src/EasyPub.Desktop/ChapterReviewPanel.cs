@@ -351,7 +351,12 @@ public partial class ChapterEditorWindow
         var group = ReviewGroup(issue);
         ConfirmNormalButton.IsEnabled = issue is not null && count <= 1;
         ConfirmNormalButton.Visibility = issue is not null && count <= 1 ? Visibility.Visible : Visibility.Collapsed;
-        ReviewActionButton.Visibility = count == 0 || _resultMessage is not null ? Visibility.Collapsed : Visibility.Visible;
+        // A reminder should offer its repair without first having to select a chapter: "待核对" mode shows no
+        // selection at all, and the gap list is exactly where the user is working. Split still needs a row,
+        // so its button waits for one — every other action carries its own subject.
+        var actionableWithoutSelection = category == ReviewCategories.Missing;
+        ReviewActionButton.Visibility = (count == 0 && !actionableWithoutSelection) || _resultMessage is not null
+            ? Visibility.Collapsed : Visibility.Visible;
         RecognizeNumericKeepButton.Visibility = Visibility.Collapsed;
         RecognizeNumericKeepButton.IsEnabled = false;
         ReviewMoreButton.IsEnabled = count > 0 && !_sourceChanged;
@@ -442,6 +447,33 @@ public partial class ChapterEditorWindow
             ActionScopeText.Text = "可撤销 · 原始 TXT 不变 · 批量入口在“更多”";
             return;
         }
+        // A gap is a missing chapter. The only two honest ways out are finding the heading the tree failed to
+        // recognise, or comparing against the official directory — so the button offers exactly those, and
+        // never the generic "edit the finished title" fallback, which cannot add the chapter back.
+        if (issue?.Code == "chapter_number_gap")
+        {
+            var entries = Flatten().Select(node => node.ToEntry()).ToArray();
+            var fixable = MissingChapterHeadings.Find(_document, entries);
+            var related = _selectedNode?.TitleLineNumber is int gapLine
+                ? fixable.Count(candidate => candidate.NextLine == gapLine) : 0;
+            ReviewHeading.Text = "跳章区间 · 章节号之间断了";
+            ReviewExplanation.Text = related > 0
+                ? "这一段里找到了可补建的标题（疑似漏识别或标题写错），补建后章节树会接上。"
+                : "这一段在原文里找不到对应标题——可能是漏识别，也可能源文本本身缺这一章。软件不会凭空造出章节。";
+            ReviewDetailsText.Text = issue.Message + "\n" + (related > 0
+                ? "「补建本组…」只补建已在原文中定位到的标题，原始 TXT 不变，可撤销。"
+                : "可先对照参考目录确认这一章是否真的存在；仍找不到就说明源文件缺这一章，需要换来源补齐。"
+                  + "全部跳章区间的批量入口在「整理工具 ▾ → 批量修复跳章区间漏识别标题…」。");
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.Content = related > 0
+                ? $"补建本组 {related} 个漏识别标题…"
+                : fixable.Count > 0 ? $"批量补建全书的 {fixable.Count} 处漏识别标题…" : "获取参考目录并对照…";
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = related > 0 || fixable.Count > 0
+                ? "只补建已确认的标题 · 原始 TXT 不变 · 可撤销"
+                : "不修改任何内容 · 只用于核对";
+            return;
+        }
         ReviewHeading.Text = count > 1 ? $"已选 {count} 个章节"
             : issue?.Code == "numeric_body_group" ? "疑似正文被识别为章节"
             : category ?? (_selectedNode is null ? "选择章节，核对原文" : "编辑当前章节");
@@ -461,12 +493,12 @@ public partial class ChapterEditorWindow
         var restore = count > 1 || issue?.Code == "numeric_body_group";
         ReviewActionButton.Content = restore ? targets.Length > 1 ? $"还原{(count > 1 ? "已选" : "本组")} {targets.Length} 处为正文" : "还原为上一章正文"
             : issue?.Code == "chapter_duplicate" ? "检查并清理本组…"
-            : category == ReviewCategories.Missing ? "从选中行建立章节"
-            : SuggestedTitle() is { } title ? "修改为：" + title
-            : issue?.Code is "volume_number_duplicate" or "chapter_level_gap" ? "核对层级处理…" : "编辑成品标题…";
+            : ChapterIssueAction.ForGeneric(category, issue?.Code, count > 0 && CanSplitSelectedLine(), SuggestedTitle());
         var plan = PlanBatchAction(targets, merge: true);
-        ReviewActionButton.IsEnabled = !_sourceChanged && count > 0 && (restore ? plan.Any(p => p.Reason is null)
-            : category != ReviewCategories.Missing || CanSplitSelectedLine());
+        // "从选中行建立章节" needs a row; everything else on this path carries its own subject or only navigates.
+        var needsSelection = category == ReviewCategories.Missing && count == 0;
+        ReviewActionButton.IsEnabled = !_sourceChanged && !needsSelection
+            && (restore ? count > 0 && plan.Any(p => p.Reason is null) : true);
         ActionScopeText.Text = restore ? DescribeBatchPlan(plan) : count == 1 ? $"当前章节：{_selectedNode?.Title}" : "请选择左侧章节。";
         if (_sourceChanged) ActionScopeText.Text = "原始 TXT 已变化，请先重新识别；当前行号不能继续编辑。";
     }
@@ -485,6 +517,22 @@ public partial class ChapterEditorWindow
         if (issue?.Code == "chapter_content_duplicate") { CompareDuplicateContents(ReviewGroup(issue)); return; }
         if (issue?.Code == "chapter_structure_suggested") { RecoverStructure_Click(sender, e); return; }
         if (issue?.Code == "chapter_heading_typo") { RepairMissingHeadings(issue.LineNumber); return; }
+        if (issue?.Code == "chapter_number_gap")
+        {
+            // The same exits the card offers: build the headings the text does contain, or go and compare
+            // against the directory. Never fall through to an edit that cannot restore a missing chapter.
+            var entries = Flatten().Select(node => node.ToEntry()).ToArray();
+            var fixable = MissingChapterHeadings.Find(_document, entries);
+            if (_selectedNode?.TitleLineNumber is int line && fixable.Any(candidate => candidate.NextLine == line))
+            {
+                RepairMissingHeadings(line);
+                return;
+            }
+            if (fixable.Count > 0) { RepairMissingHeadings(null); return; }
+            if (SavedReference() is not null) { ShowReviewFeedback("本书已有参考目录，树上已标出目录里有、源文件里找不到的章节。"); return; }
+            FetchCatalog_Click(sender, e);
+            return;
+        }
         if (issue?.Code == "numeric_chapters_suspected")
         {
             await RecognizeSuggestedNumericChaptersAsync(normalizeTitles: true);

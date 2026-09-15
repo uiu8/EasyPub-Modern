@@ -465,7 +465,12 @@ public partial class ChapterEditorWindow
         var allCandidates = MissingChapterHeadings.Find(_document, entries);
         var boundary = nextLine is null ? null : allCandidates.FirstOrDefault(c => c.Line == nextLine)?.NextLine;
         var candidates = allCandidates.Where(c => nextLine is null || c.NextLine == boundary).ToArray();
-        if (candidates.Length == 0) { ShowReviewFeedback("没有可明确修复的候选；请继续核对跳章区间原文。"); return; }
+        if (candidates.Length == 0)
+        {
+            ShowReviewFeedback("这一段没有找到可补建的标题——原文里可能本来就没有这一章。"
+                + "获取参考目录可对照官方目录确认；若目录里有而原文找不到，需要换来源补齐。");
+            return;
+        }
         var dialog = ThemedWindow("核对漏识别标题", 800, 550);
         var panel = new DockPanel { Margin = new Thickness(16) };
         var submit = new Button { Content = "修复勾选项", HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
