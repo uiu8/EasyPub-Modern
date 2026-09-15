@@ -1,11 +1,3 @@
-> 当前本地交付：**v1.46.0**（标题识别与工作台流程）。[版本说明](docs/RELEASE_v1.46.0.md) · [便携 ZIP](outputs/EasyPubModern-v1.46.0-heading-workflow-win-x64.zip) · [安装包](outputs/EasyPubModern-Setup-v1.46.0-x64.exe)。下方 v1.45.0 及远程发布链接为历史版本。
-
-> **本地支线当前版本：v1.45.0（2026-09-15）**
->
-> [本版修复、使用步骤和验收边界](docs/RELEASE_v1.45.0.md) · [便携目录](outputs/EasyPubModern-v1.45.0-repair-integrity-win-x64/) · [便携 ZIP](outputs/EasyPubModern-v1.45.0-repair-integrity-win-x64.zip) · [安装包](outputs/EasyPubModern-Setup-v1.45.0-x64.exe)
->
-> 以下 GitHub v1.22.0 链接属于旧远程发布。v1.45.0 在本地支线交付，尚未推送 GitHub。
-
 <div align="center">
 
 # EasyPub Modern
@@ -16,12 +8,12 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.22.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.56.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-Setup-v1.22.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.22.0/EasyPubModern-v1.22.0-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.56.0/EasyPubModern-Setup-v1.56.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.56.0/EasyPubModern-v1.56.0-reviewable-repair-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0)
 
 </div>
 
@@ -46,14 +38,14 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.22.0) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
 5. 在书库中使用行首复选框直接勾选或取消多本书；多选时可用右侧前后按钮切换当前操作书稿，检查与转换只处理勾选的书稿。
 6. 在“任务中心”查看每本书的进度、检查问题、成品验收和历史记录。
 
-程序完全在本机处理文件。文本清理、章节树和插图设置都不会改写原始 TXT；只有明确点击“编辑原始 TXT”并在外置编辑器中保存时，才会修改源文件。
+电子书转换在本机执行；获取参考目录需要联网。文本清理、章节树和插图设置不会改写原始 TXT；外置编辑器默认打开独立副本。
 
 ## 核心能力
 
@@ -64,10 +56,22 @@
 | 封面与图片 | 书稿列表显示逐书缩略图；封面支持点击大图与拖入替换；PNG、WebP 转为 Kindle 兼容 JPEG；封面和插图显示分辨率、格式、体积诊断 |
 | 章节与目录 | 卷／章／节层级目录、数字标题一键规范化、顺序与父子关系调整、目录包含开关、可选正文目录页、可选章顶章节导航 |
 | 排版与样式 | 字号、行高、段距、缩进、对齐、四边页边距、嵌入 TTF 字体与定制 CSS |
-| 文本清理与编辑 | 空行、硬换行、不可见字符、重复标题/页眉、OCR 空格、章节编号、网站广告、简繁和标点；支持普通/正则自定义规则、跨行、作用范围、顺序、导入导出与逐项排除；也可用可配置的外置编辑器直接修改 TXT |
+| 文本清理与编辑 | 空行、硬换行、不可见字符、重复标题/页眉、OCR 空格、章节编号、网站广告、简繁和标点；支持普通/正则自定义规则、跨行、作用范围、顺序、导入导出与逐项排除；可用外置编辑器编辑独立 TXT 副本 |
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.56.0 可核对的修复与原稿保护
+
+- 获取参考目录、定位源标题、核对后修复；来源不匹配时明确提示，不补造正文。
+- 应用前展示标题、顺序、层级、正文范围及移除行的实际变化；保护手工章节与拆分。
+- 重复正文/标题删除有原文备份和逐行清单；TXT 成品制作保留章节树与清理变更记录。
+- 已确认提醒和参考目录随项目保存；目录获取可取消、刷新和更换来源。
+- 编号差异集中查看，重复编号顺序提醒合并展示；全部原文位置仍可核对。
+- 修复中文章号解析与断点提示崩溃；外置编辑默认创建独立副本。
+- 验证：Core **331** 项、Desktop **120** 项全部通过；**44 本**语料行守恒与原稿哈希检查通过。视觉效果待用户确认，Kindle 真机待验收。
+
+[完整发布说明](docs/RELEASE_v1.56.0.md) · [维护交接](docs/HANDOFF_v1.56.0.md)
 
 ## v1.22.0 章节工作台与长文本性能
 
