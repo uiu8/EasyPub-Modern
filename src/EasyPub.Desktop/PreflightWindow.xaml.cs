@@ -62,11 +62,15 @@ public partial class PreflightWindow : Window
     /// <summary>
     /// Folds same-category reminders of one book into a single summary row so a long report stays
     /// readable. The summary keeps the group's first issue, so locating it still works.
+    ///
+    /// Grouping is on the file name alone, without extension or directory: the same book reached the
+    /// report through paths that differed only in those, and every issue then formed its own group —
+    /// which is how one book's reminders ended up listed one per line with nothing folded.
     /// </summary>
-    private static PreflightIssueRow[] Collapse(PreflightIssueRow[] rows)
+    internal static PreflightIssueRow[] Collapse(PreflightIssueRow[] rows)
     {
         var collapsed = new List<PreflightIssueRow>();
-        foreach (var group in rows.GroupBy(row => (row.Category, row.BookName)))
+        foreach (var group in rows.GroupBy(row => (row.Category, BookKey(row.BookName))))
         {
             var items = group.ToArray();
             if (items.Length == 1) { collapsed.Add(items[0]); continue; }
@@ -74,6 +78,9 @@ public partial class PreflightWindow : Window
         }
         return collapsed.ToArray();
     }
+
+    internal static string BookKey(string bookName) =>
+        string.IsNullOrWhiteSpace(bookName) ? bookName : Path.GetFileNameWithoutExtension(bookName);
 
     private void IssuesGrid_SelectionChanged(object sender, RoutedEventArgs e) =>
         LocateButton.IsEnabled = _navigate is not null &&
