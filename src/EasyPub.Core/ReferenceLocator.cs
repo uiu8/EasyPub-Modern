@@ -11,14 +11,66 @@ public sealed record LocatedChapter(ReferenceNode Reference, string? Volume, int
     public bool IsDuplicate => Lines.Count > 1;
 }
 
+/// <summary>Which test accepted a line during the last-resort pass, strongest evidence first.</summary>
+public enum LocateEvidence
+{
+    /// <summary>A chapter number that agrees with the reference title — the line is definitely this chapter.</summary>
+    NumberAgrees,
+    /// <summary>The title words appear intact but the chapter number is wrong.</summary>
+    TitleWords,
+    /// <summary>Character similarity: the heading itself is mis-typed or missing a character.</summary>
+    Similarity
+}
+
+/// <summary>
+/// What the last-resort pass actually did. It exists so the cost of that pass can be measured instead
+/// of assumed: it is the only quadratic part of location, and when a directory does not match the text
+/// at all it is the one place where the work is certain to be wasted.
+/// <paramref name="ScannedLines"/> counts line visits (chapters considered × lines examined), and
+/// <paramref name="SecondPassLocated"/> is how many chapters the cheap passes had already placed
+/// before that search began.
+/// </summary>
+public sealed record ReferenceLocationStats(
+    int CatalogChapters,
+    int CandidateLines,
+    int SecondPassLocated,
+    int SecondPassMissing,
+    int ScannedChapters,
+    long ScannedLines,
+    int NumberHits,
+    int WordsHits,
+    int SimilarityHits,
+    int Unrescuable = 0)
+{
+    public int ThirdHits => NumberHits + WordsHits + SimilarityHits;
+    public override string ToString() =>
+        $"目录 {CatalogChapters} 章，标题候选行 {CandidateLines}；前两遍定位 {SecondPassLocated} 章、未定位 {SecondPassMissing} 章；" +
+        $"兜底扫描 {ScannedChapters} 章 / {ScannedLines} 行，命中 {ThirdHits} 章（章号 {NumberHits} / 标题词 {WordsHits} / 相似度 {SimilarityHits}）" +
+        (Unrescuable > 0 ? $"；另 {Unrescuable} 章标题无词可搜，未扫描" : "");
+}
+
+/// <summary>Per-stage cost of reference location, split so a slow book can be attributed to one stage.</summary>
+public record ReferenceLocateTiming(long CandidatesMs = 0, long ForwardMs = 0, long ThirdPassMs = 0, long TotalMs = 0)
+{
+    /// <summary>Sub-millisecond stages still matter here: the cheap passes are expected to be the fast ones.</summary>
+    public override string ToString() =>
+        $"候选行 {CandidatesMs} ms / 前两遍 {ForwardMs} ms / 兜底 {ThirdPassMs} ms / 合计 {TotalMs} ms";
+}
+
 /// <summary>
 /// Reference-driven location of every chapter in the local text, independent of the normal
 /// recognition pipeline. This matters because the recogniser requires a line to start with
 /// "第X章", so lines like "第六篇 第十章" (volume prefix, no title words) are invisible to it.
 /// The reference directory already knows those chapters exist, so it can be used to find them.
 /// </summary>
-public sealed record ReferenceLocation(IReadOnlyList<LocatedChapter> Chapters)
+public sealed record ReferenceLocation(IReadOnlyList<LocatedChapter> Chapters, ReferenceLocationStats? Stats = null)
 {
+    /// <summary>Chapters the last-resort pass never even searched, because their title carries no words.</summary>
+    public int Unrescuable { get; init; }
+
+    /// <summary>Per-stage cost of this location, when it was measured.</summary>
+    public ReferenceLocateTiming? Timing { get; init; }
+
     public int Found => Chapters.Count(c => c.Line is not null);
     public int Missing => Chapters.Count(c => c.Line is null);
     public IEnumerable<LocatedChapter> Ambiguous => Chapters.Where(c => c.IsDuplicate && c.Line is not null);
@@ -69,6 +121,9 @@ public static class ReferenceLocator
     /// </summary>
     public static ReferenceLocation Locate(IReadOnlyList<string> lines, ReferenceCatalog catalog, IReadOnlyDictionary<int, string>? knownHeadings = null, CancellationToken cancellationToken = default)
     {
+        // Three stages, timed separately. Which one dominates decides what to fix, and guessing it
+        // from the source alone is how the wrong thing gets optimised.
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var volumePrefixes = catalog.VolumeTitles
             .Select(title => ReferenceOutline.ParseKey(title).Words)
             .Where(words => words.Length >= 2)
@@ -90,6 +145,7 @@ public static class ReferenceLocator
             if (!known && !HeadingLike(text, key)) continue;
             candidates.Add(new(index + 1, key, text));
         }
+        var candidatesDone = System.Diagnostics.Stopwatch.GetTimestamp();
         var located = new List<LocatedChapter>();
         var used = new HashSet<int>();
         var cursor = 0;
@@ -156,14 +212,25 @@ public static class ReferenceLocator
         // Sites pad titles with marketing suffixes ("（六千大章补更）"), which pushes the resemblance
         // score below every threshold while the title itself is intact; and releases also carry
         // mis-typed headings, which only a character-level comparison can find.
+        var forwardDone = System.Diagnostics.Stopwatch.GetTimestamp();
+        var alreadyLocated = located.Count(chapter => chapter.Line is not null);
         TitleKey[]? lineKeys = null;
+        var scanned = 0;
+        var scannedLines = 0L;
+        var byNumber = 0;
+        var byWords = 0;
+        var bySimilarity = 0;
+        var unrescuable = 0;
         for (var index = 0; index < located.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (located[index].Line is not null) continue;
             var key = ReferenceOutline.ParseKey(located[index].Reference.Title, volumePrefixes);
             var words = key.Words;
-            if (words.Length < 2) continue;
+            // A title with fewer than two words carries no evidence this pass can use, so there is
+            // nothing to search for. Counted rather than silently skipped, because "no title words at
+            // all" and "searched and genuinely absent" are different answers for the user.
+            if (words.Length < 2) { unrescuable++; continue; }
             // Two-character titles ("赌徒", "神陨") are common and used to be skipped outright, which
             // is why chapters whose heading lost its blank neighbours were reported missing even
             // though the text was right there. Such a word is far too generic for a bare substring
@@ -172,42 +239,80 @@ public static class ReferenceLocator
             // Every line's key, parsed once and reused for every still-unplaced chapter. Parsing
             // inside this loop would re-run the number regex once per chapter per line.
             lineKeys ??= ParseLineKeys(lines, volumePrefixes);
+            scanned++;
             // Search every line, not just the candidate set: a heading buried inside a long chapter
             // may have no blank neighbour at all, and that is exactly how "skipped chapters" appear.
-            // Three kinds of evidence, strongest first: an agreeing chapter number (the heading is
-            // definitely this chapter), an exact substring of the title words (the heading is intact
-            // but its number is wrong), then character similarity (the heading itself has a wrong or
-            // missing character, which no substring test can ever match).
-            var found = -1;
-            var fallback = -1;
-            var fuzzy = -1;
-            var fuzzyScore = 0.0;
-            for (var line = 1; line <= lines.Count; line++)
-            {
-                if (used.Contains(line)) continue;
-                var text = lines[line - 1].Trim();
-                if (text.Length is 0 or > MaximumScannedLineLength) continue;
-                var candidate = lineKeys[line];
-                if (candidate.Words.Length == 0) continue;
-                if (NumberAgrees(key, candidate)) { found = line; break; }
-                if (shortTitle) continue;
-                if (text.Contains(words, StringComparison.Ordinal))
-                {
-                    if (fallback < 0) fallback = line;
-                    continue;
-                }
-                // A title that merely grew or lost one character is still the same title. Anything
-                // further apart is a different chapter and must stay missing rather than be guessed.
-                if (Math.Abs(candidate.Words.Length - words.Length) > 1) continue;
-                var score = ReferenceOutline.Similarity(words, candidate.Words);
-                if (score >= FuzzyThreshold && score > fuzzyScore) { fuzzyScore = score; fuzzy = line; }
-            }
-            found = found >= 0 ? found : fallback >= 0 ? fallback : fuzzy;
+            var (evidence, found) = SearchEveryLine(lines, lineKeys, used, key, words, shortTitle);
+            scannedLines += lines.Count;
             if (found < 0) continue;
+            switch (evidence)
+            {
+                case LocateEvidence.NumberAgrees: byNumber++; break;
+                case LocateEvidence.TitleWords: byWords++; break;
+                default: bySimilarity++; break;
+            }
             used.Add(found);
             located[index] = located[index] with { Line = found, LocalTitle = lines[found - 1].Trim() };
         }
-        return new(located);
+        var thirdDone = System.Diagnostics.Stopwatch.GetTimestamp();
+        var stats = new ReferenceLocationStats(
+            catalog.Titles.Count,
+            candidates.Count,
+            alreadyLocated,
+            located.Count(chapter => chapter.Line is null),
+            scanned,
+            scannedLines,
+            byNumber,
+            byWords,
+            bySimilarity)
+        { Unrescuable = unrescuable };
+        return new(located, stats)
+        {
+            Timing = new(
+                Ms(started, candidatesDone),
+                Ms(candidatesDone, forwardDone),
+                Ms(forwardDone, thirdDone),
+                Ms(started, thirdDone))
+        };
+    }
+
+    /// <summary>Elapsed milliseconds between two <see cref="System.Diagnostics.Stopwatch"/> timestamps.</summary>
+    private static long Ms(long from, long to) =>
+        (long)System.Diagnostics.Stopwatch.GetElapsedTime(from, to).TotalMilliseconds;
+
+    /// <summary>
+    /// Searches every remaining line for one still-unplaced chapter, strongest evidence first, and
+    /// reports which test accepted the line. Split out of <see cref="Locate"/> so the same search can
+    /// be measured and, if ever needed, reused — the loop itself is unchanged from the original.
+    /// </summary>
+    private static (LocateEvidence Evidence, int Line) SearchEveryLine(
+        IReadOnlyList<string> lines, TitleKey[] lineKeys, HashSet<int> used, TitleKey key, string words, bool shortTitle)
+    {
+        var fallback = -1;
+        var fuzzy = -1;
+        var fuzzyScore = 0.0;
+        for (var line = 1; line <= lines.Count; line++)
+        {
+            if (used.Contains(line)) continue;
+            var text = lines[line - 1].Trim();
+            if (text.Length is 0 or > MaximumScannedLineLength) continue;
+            var candidate = lineKeys[line];
+            if (candidate.Words.Length == 0) continue;
+            if (NumberAgrees(key, candidate)) return (LocateEvidence.NumberAgrees, line);
+            if (shortTitle) continue;
+            if (text.Contains(words, StringComparison.Ordinal))
+            {
+                if (fallback < 0) fallback = line;
+                continue;
+            }
+            // A title that merely grew or lost one character is still the same title. Anything
+            // further apart is a different chapter and must stay missing rather than be guessed.
+            if (Math.Abs(candidate.Words.Length - words.Length) > 1) continue;
+            var score = ReferenceOutline.Similarity(words, candidate.Words);
+            if (score >= FuzzyThreshold && score > fuzzyScore) { fuzzyScore = score; fuzzy = line; }
+        }
+        if (fallback >= 0) return (LocateEvidence.TitleWords, fallback);
+        return (LocateEvidence.Similarity, fuzzy);
     }
 
     private sealed record Candidate(int Line, TitleKey Key, string Text);

@@ -63,6 +63,37 @@ public sealed class ReferenceCatalogClient
     private const int MaxConcurrentSources = 4;
 
     /// <summary>
+    /// How long a book-name search may take before that source is left out of this lookup. Every
+    /// healthy source answers a search in well under a second; measured over the built-in set, the
+    /// slowest one took 6.2 s and never contributed a directory that was actually chosen. With
+    /// <see cref="MaxConcurrentSources"/> slots, one source like that holds a quarter of the pool for
+    /// the whole lookup, which is what makes directory discovery feel slow. A source that misses this
+    /// budget is skipped silently, exactly like a source that fails outright.
+    /// </summary>
+    private const int SearchTimeoutSeconds = 6;
+
+    /// <summary>Budget for reading a directory page, which is a larger response than a search page.</summary>
+    private const int FetchTimeoutSeconds = 15;
+
+    /// <summary>
+    /// Wall-clock budget for one source's whole contribution to a lookup, search and every directory
+    /// read combined. Measured on a real book, a single site spent 27.8 s trying to answer and returned
+    /// nothing at all, while every source that did contribute finished inside 8 s. The budget bounds
+    /// that tail without cutting off a site that is merely slow but working.
+    /// </summary>
+    private const int SourceBudgetMs = 15000;
+
+    /// <summary>
+    /// How many chapters a directory needs before that source counts as answered. Three sources each
+    /// return one link per page, so the first is normally the best and the remaining rounds exist for
+    /// the cases where it is not. Measured on a real book, one site returned a 431-chapter teaser
+    /// beside the real 1408-chapter directory, so "answered" has to mean a directory large enough to
+    /// be the book rather than merely non-empty. Chapters keep accumulating until the budget runs out,
+    /// so which source wins the comparison is unaffected.
+    /// </summary>
+    private const int AnsweredChapters = 50;
+
+    /// <summary>
     /// The arranged source list. Defaults to the built-in order (Qidian and Fanqie lead, because their
     /// directories carry the publisher's own volume split). The source dialog replaces this and
     /// <see cref="BookSourceStore"/> persists it, so an ordering the user chose survives a restart.
@@ -325,7 +356,8 @@ private static readonly Regex QidianVolume = new(
         return host.Equals("qidian.com",StringComparison.OrdinalIgnoreCase) || host.EndsWith(".qidian.com",StringComparison.OrdinalIgnoreCase) ? SessionCookie : null;
     }
 
-    private static async Task<string> Get(Uri uri, CancellationToken token, string? cookie = null, string? originHost = null)
+    private static async Task<string> Get(Uri uri, CancellationToken token, string? cookie = null, string? originHost = null,
+        int timeoutSeconds = FetchTimeoutSeconds)
     {
         if (!Supported(uri)) throw new InvalidOperationException("目录网址不是允许的公开地址。");
         using var handler = new SocketsHttpHandler
@@ -352,7 +384,7 @@ private static readonly Regex QidianVolume = new(
                 throw new HttpRequestException("无法连接目录站点。", last);
             }
         };
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 6 * 1024 * 1024 };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutSeconds), MaxResponseContentBufferSize = 6 * 1024 * 1024 };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36");
         // A per-source cookie wins over the shared one, so two sources that both need a login cannot
         // overwrite each other's session.
@@ -437,6 +469,22 @@ private static readonly Regex QidianVolume = new(
         }
     }
 
+    /// <summary>One source's contribution to a lookup, so a slow total can be attributed to a site.</summary>
+    public sealed record SourceTiming(string Name, long Milliseconds, int Catalogs, int SkippedCandidates = 0)
+    {
+        public string State => Catalogs > 0 ? $"{Catalogs} 个目录"
+            : Catalogs == 0 ? "无可用目录"
+            : Catalogs == -2 ? "超时未完成"
+            : "查询失败";
+    }
+
+    /// <summary>
+    /// Per-source cost of the most recent <see cref="DiscoverAsync"/>. Directory discovery is the one
+    /// part of a repair that waits on the network, and "it is slow" is not actionable without knowing
+    /// which site is responsible.
+    /// </summary>
+    public IReadOnlyList<SourceTiming> LastTimings { get; private set; } = [];
+
     /// <summary>
     /// Book-name lookup across the user's enabled sources, in the arranged order. Each source is asked
     /// independently, so one site being down or rate-limited never stops the others.
@@ -464,16 +512,26 @@ private static readonly Regex QidianVolume = new(
         // own slot so the results still come back in the user's configured order.
         using var gate = new SemaphoreSlim(MaxConcurrentSources);
         var slots = new List<ReferenceCatalog>?[ordered.Length];
+        var timings = new SourceTiming[ordered.Length];
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
         await Task.WhenAll(ordered.Select(async (source, index) =>
         {
             await gate.WaitAsync(token).ConfigureAwait(false);
+            var watch = Stopwatch.StartNew();
             try
             {
                 var found = new List<ReferenceCatalog>();
-                foreach (var url in await LocateAsync(source, name, token).ConfigureAwait(false))
+                var urls = await LocateAsync(source, name, token).ConfigureAwait(false);
+                var attempted = 0;
+                var budgetSpent = false;
+                foreach (var url in urls)
                 {
                     token.ThrowIfCancellationRequested();
+                    // Stop spending on this source once its budget is gone: the call already in flight
+                    // is allowed to finish, later candidates are not started. What was found so far is
+                    // still reported, so a source is never silently reduced to nothing.
+                    if (watch.ElapsedMilliseconds > SourceBudgetMs) { budgetSpent = true; break; }
+                    attempted++;
                     try
                     {
                         var parsed = await FetchAsync(url, token, source.Cookie).ConfigureAwait(false);
@@ -483,15 +541,24 @@ private static readonly Regex QidianVolume = new(
                         if (parsed.Titles.Count >= MinimumChapters) found.Add(parsed);
                     }
                     catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException && !requestCancelled(token)) { }
+                    // Enough to stop looking: a later search hit on the same site is a smaller or
+                    // repeated view of the same book.
+                    if (found.Count > 0 && found.Max(catalog => catalog.Titles.Count) >= AnsweredChapters)
+                        break;
                 }
                 slots[index] = found;
+                timings[index] = new(source.Name, watch.ElapsedMilliseconds, found.Count,
+                    budgetSpent ? urls.Count - attempted : 0);
             }
             catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException && !requestCancelled(token))
             {
                 failures.Add($"{source.Name}: {ex.Message}");
+                timings[index] = new(source.Name, watch.ElapsedMilliseconds, -1);
             }
-            finally { gate.Release(); }
+            finally { gate.Release(); watch.Stop(); }
         })).ConfigureAwait(false);
+        LastTimings = timings.Where(timing => timing is not null)
+            .OrderByDescending(timing => timing.Milliseconds).ToArray();
 
         var result = slots.Where(slot => slot is not null).SelectMany(slot => slot!).ToList();
         // Only a total failure is reported as an error; otherwise return whatever was found.
@@ -509,7 +576,9 @@ private static readonly Regex QidianVolume = new(
         if (source.Searchable)
         {
             var origin = BuildSearchUri(source, name);
-            var html = await Get(origin, token, source.Cookie);
+            // Search pages are small and quick; a source that cannot answer one within the budget is
+            // skipped rather than allowed to hold a concurrency slot for the whole lookup.
+            var html = await Get(origin, token, source.Cookie, timeoutSeconds: SearchTimeoutSeconds);
             return Anchor.Matches(html).Cast<Match>()
                 .Select(match => (Title: Text(match.Groups["title"].Value), Link: SearchResult(origin, match)))
                 .Where(pair => pair.Link is not null && pair.Title.Length >= 2
@@ -569,7 +638,9 @@ private static readonly Regex QidianVolume = new(
             if (source.Searchable)
             {
                 var origin = BuildSearchUri(source, name);
-                var html = await Get(origin, token, source.Cookie);
+                // Same budget the real lookup uses, so "available" in the dialog cannot mean a source
+                // that would actually be skipped the moment a repair ran.
+                var html = await Get(origin, token, source.Cookie, timeoutSeconds: SearchTimeoutSeconds);
                 watch.Stop();
                 var hit = Anchor.Matches(html).Cast<Match>()
                     .Select(match => (Title: Text(match.Groups["title"].Value), Link: SearchResult(origin, match)))

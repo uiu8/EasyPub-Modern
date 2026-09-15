@@ -158,4 +158,70 @@ public class ReferenceAlignmentRegressionTests
         Assert.Equal(6, location.Chapters[1].Line);
         Assert.Equal(0, location.Missing);
     }
+
+    /// <summary>
+    /// The last-resort pass must say which evidence rescued a chapter. Without that, the only way to
+    /// tell an expensive search that works from one that is merely expensive is to guess.
+    /// </summary>
+    [Fact]
+    public void The_last_resort_pass_records_which_evidence_accepted_a_line()
+    {
+        var lines = new List<string>
+        {
+            "第一章 开始", "", "正文一", "",
+            "正文二", "番外 永无止境的大冒除", "正文三", "",
+        };
+        var catalog = new ReferenceCatalog("test", "测试", [
+            new ReferenceNode("第一章 开始", ReferenceNodeKind.Chapter, "https://example.com/1", null),
+            new ReferenceNode("番外 永无止境的大冒险", ReferenceNodeKind.Chapter, "https://example.com/x", null),
+        ]);
+
+        var stats = ReferenceLocator.Locate(lines, catalog).Stats;
+
+        Assert.NotNull(stats);
+        Assert.Equal(1, stats!.SimilarityHits);
+        Assert.Equal(1, stats.ThirdHits);
+        Assert.Equal(1, stats.ScannedChapters);
+        Assert.Equal(lines.Count, stats.ScannedLines);
+        Assert.Equal(0, stats.Unrescuable);
+    }
+
+    /// <summary>
+    /// The shape behind the slow-book report: a directory far larger than the local text sends every
+    /// remaining chapter through a full-file scan, and virtually none of them can succeed. The numbers
+    /// recorded here are what makes that visible instead of looking like a healthy alignment with a
+    /// long "missing" list.
+    /// </summary>
+    [Fact]
+    public void A_directory_far_larger_than_the_text_reports_a_fruitless_last_resort_pass()
+    {
+        var lines = new List<string> { "第一章 起点", "", "正文一", "", "第二章 前行", "", "正文二", "", "第三章 终点", "", "正文三", "" };
+        var nodes = new List<ReferenceNode>
+        {
+            new("第一章 起点", ReferenceNodeKind.Chapter, "https://example.com/1", null),
+            new("第二章 前行", ReferenceNodeKind.Chapter, "https://example.com/2", null),
+            new("第三章 终点", ReferenceNodeKind.Chapter, "https://example.com/3", null),
+        };
+        // Titles with at least two words are the ones the last-resort pass can even search for;
+        // the rest are counted separately, which is the honest answer rather than "not found".
+        for (var number = 4; number <= 20; number++)
+            nodes.Add(new($"第{number}章 名字", ReferenceNodeKind.Chapter, $"https://example.com/{number}", null));
+        nodes.Add(new("第一百章 一", ReferenceNodeKind.Chapter, "https://example.com/x", null));
+        var catalog = new ReferenceCatalog("test", "测试", nodes);
+
+        var location = ReferenceLocator.Locate(lines, catalog);
+        var stats = location.Stats;
+
+        Assert.NotNull(stats);
+        // 18 chapters the cheap passes could not place, 1 of them with no usable title words at all
+        // ("第一百章 一"), so 17 full-file scans — 204 line visits — and not one of them succeeds.
+        Assert.Equal(21, stats!.CatalogChapters);
+        Assert.Equal(17, stats.ScannedChapters);
+        Assert.Equal(204, stats.ScannedLines);
+        Assert.Equal(0, stats.ThirdHits);
+        Assert.Equal(1, stats.Unrescuable);
+        Assert.Equal(3, stats.SecondPassLocated);
+        Assert.Equal(18, stats.SecondPassMissing);
+        Assert.Equal(18, location.Missing);
+    }
 }

@@ -12,13 +12,18 @@
 | **原仓库（不要动）** | `C:\Users\13168\Documents\Codex\2026-08-22\easypub` |
 
 - 支线是原仓库的**完整拷贝**，`.git` 保留，remote 仍指向 `https://github.com/uiu8/EasyPub-Modern.git`
-- **原仓库自 2026-08-29 起未被修改**，这是硬要求：改造必须在支线里做
-- 支线里 `.git` 的 HEAD 停在 `579fabe docs: publish v1.22.0 installer links`
-- **v1.24 → v1.44 的全部工作都是未提交的工作区改动（约 83 个文件）**
+- **原仓库 HEAD 没有前进**：仍停在 `579fabe`（提交时间 2026-09-12），**但工作区有 66 个未提交改动**，
+  最近修改时间是 **2026-09-14 18:23**（产物是 v1.25.0）。也就是说原仓库**不是完全没被动过**
+  ——这与本文档早先「自 2026-08-29 起未被修改」的说法不符，接手时请以 `git status` 实际输出为准。
+  **改造仍然只在支线做**；原仓库那批未提交改动的去留，由用户决定，不要动。
+- 支线里 `.git` 的 HEAD 已经前进到 `3a5d08f feat: 章节对齐、书源系统与一键修复报告 (v1.24.0 - v1.48.0)`
+  （早期文档写的 `579fabe` 已过时）
+- **v1.24 → v1.49 的工作**：`3a5d08f` 之前的部分仍是未提交的工作区改动，v1.49.0 也在工作区里
 
 ### 这意味着什么
 
-Git 历史**看不懂这 20 个版本**。`git log` 里没有它们，`git status` 会显示一大片红。
+Git 历史**看不到 v1.24 之后的这些版本**：`git log` 里只有 `3a5d08f` 那一条汇总提交，
+之后的改动在工作区里。
 想知道"某个东西为什么是这样"，**只能靠这份文档 + `docs/` 里的实施记录 + 直接读代码**。
 
 > 提交与否是用户的决定，未经允许**不要 push**（remote 是用户线上的仓库）。
@@ -50,6 +55,11 @@ EasyPubModern-v<版本>-<代号>-win-x64/        publish 中间目录
 | v1.43.1 | alignment-fix | 修三处对齐根因（见 §4.2、§4.3、§4.4） |
 | v1.43.2 | chapter-number | 修章号正则（见 §4.5） |
 | v1.44.0 | fuzzy-locate | 模糊匹配找漏章 + 修首页两个 UI 问题 |
+| v1.45.0 | repair-integrity | 修复完整性校验（`RepairIntegrity.Verify`）|
+| v1.46.0 | heading-workflow | 标题工作流 |
+| v1.47.0 | repair-report | 一键修复的分类报告（`RepairReportGroup`）|
+| v1.48.0 | heading-guard | 标题守卫 |
+| **v1.49.0** | **locate-timing** | **定位分段计时 + 网络时间预算**（见 §4.9）|
 
 v1.22 及之前是 Codex 在原仓库做的工作，记忆在 Memorix 的 `kindle` 项目里（v1.21.10 截止）。
 
@@ -202,6 +212,44 @@ chapter_content_duplicate / chapter_duplicate / chapter_repeated_sequence
 ⑧ 逐章核对，算出 missing，如实报出
 ```
 
+### 4.9 耗时：慢的是网络，不是对齐（v1.49.0 实测）
+
+**曾经有一条错误判断在这里流传**：「《凡人修仙传》14.3 秒是因为 `ReferenceLocator.Locate`
+第三遍兜底搜索，1405 章未定位 × 61752 行 ≈ 8700 万次迭代」。**它是错的**，两个数字都不对：
+
+- **61752 行是疯巫妖的**；凡人只有 **1078 行**，真实迭代 **150 万次、实测 92 ms**
+- 差 58 倍
+
+真实分布（凡人 `auto`）：
+
+```
+目录获取（网络）    7 754 – 27 922 ms   ← 98%，瓶口在这里
+对齐 Build                  0 ms        ← 内部 <1 ms
+  └ 候选行 / 前两遍 / 兜底   9 / 34 / 89–145 ms
+重建 + 核对              ~170 ms
+```
+
+由此得到四条可复用的结论：
+
+1. **先量再设计**。「网络只占 1–2 秒」这句话当时从未被验证，却让两个优化方向被反复
+   尝试又回滚。分段计时（`ChapterAutoRepair.Timing`）现在常驻，`chapter-audit auto` 直接打印。
+2. **跳过兜底搜索是负收益**。它只占 1%，却会丢掉**靠「章号一致」定位到的真实章节**
+   （凡人 30 章 → 3 章）。最强的证据往往来自这最不起眼的一遍。
+3. **调并发没用**。`MaxConcurrentSources` 4→6 实测无改善（10.0 / 8.8 s vs 8.4 s，已回滚）。
+   慢的是单个站的**目录抓取**，不是排队。
+4. **网络耗时波动极大**（同一命令 7.8 s → 27.9 s）。**单次测量不足以下结论**，至少跑 3 次。
+
+**v1.49.0 的应对**：`SearchTimeoutSeconds=6`、`SourceBudgetMs=15 000`（单源总额）、
+`AnsweredChapters=50`（拿到够大的目录就不再试该源后续候选）。设计上守住三条：
+预算只决定「还开不开始下一个候选」（不取消在途请求）；预算内拿到的目录照常参与比较
+（**选源结果不受影响**）；被截断的源显示「预算用尽，跳过 N 个候选」，不静默变少。
+
+**还有一件事没做**：目录与文本版本不一致时（凡人 1408 章目录其实来自仙界篇），
+报告只会说「未定位 1378 章」，不会说「这个来源和你的文件对不上，建议换源」。
+详见 `docs/NEXT_TASK.md`。
+
+> 详细取证与全部原始数据：`docs/2026-09-15_目录获取耗时取证与预算-v1.49.0.md`
+
 ---
 
 ## 5. 必须遵守的不变量
@@ -228,6 +276,9 @@ chapter_content_duplicate / chapter_duplicate / chapter_repeated_sequence
 | `C:\Users\13168\Desktop\novel\tomato` 那 7 本 | 显示"无参考目录"（番茄没有关键词搜索）。用户若提供书籍 URL 即可读出分卷 |
 | Kindle 实机验证分卷目录 | **从未做过**，只在预览里验证 |
 | `.removed.txt` | 单元测试覆盖，真实批次里也生成过，但**没有大规模验证** |
+| 首次目录获取从 8 s 再往下压 | **未做**——要动并发抓取或换策略，有被限流风险（§4.9）|
+| 「来源与你的文件对不上，建议换源」的提示 | **未做**——目录版本不一致时报告只会说「未定位 N 章」（§4.9）|
+| `SourceBudgetMs = 15 s` 在真实慢网络下的表现 | **未充分验证**——三次实测都没触发，价值在兜住尾部 |
 | README / GitHub Release | 停在 v1.22.0；`docs/RELEASE_v1.22.1.md`、`v1.22.2.md` 提到的产物**不存在** |
 
 ---
@@ -240,7 +291,8 @@ chapter_content_duplicate / chapter_duplicate / chapter_repeated_sequence
 - **`dotnet build EasyPub.Modern.slnx` 会静默失败**（输出 6 行、0 error、2.5 秒退出）——**改用单个 `.csproj`**
 - **`dotnet test` 需要 danger-full-access**，否则 testhost 命名管道报 `Win32Exception (5): 拒绝访问`
 - **`Select-Object -First N` 会掐断上游进程**——对 ISCC 用过一次，产出一个 0.9 MB 的残缺安装包。**用 `-Last`**
-- **KindleGen 要从旧版产物复制**：`outputs/EasyPubModern-v1.42.0-qidian-cookie-win-x64/bin/kindlegen_v2.9.exe`
+- **KindleGen 要从旧版产物复制**：`outputs/EasyPubModern-v1.48.0-heading-guard-win-x64/bin/kindlegen_v2.9.exe`
+  （v1.45 起的产物里都有；旧文档写的 `v1.42.0` 目录**已经不存在了**）
 - `LongTextPerformanceTests` 对负载敏感（预算 400 ms）。被计时的那条路径**已经预热**，但如果和 publish 并行跑仍可能超时——单独重跑即可
 - 安装包编译：`D:\software\Inno Setup 7\ISCC.exe installer\EasyPubModern.iss`
 
@@ -250,7 +302,7 @@ chapter_content_duplicate / chapter_duplicate / chapter_repeated_sequence
 $dotnet='D:\software\dotnet-sdk-10.0.302\dotnet.exe'
 $r='D:\software\DeepSeek-Harness\workspace\easypub-branch'
 
-# 测试（Core 256 / Desktop 99）
+# 测试（Core 317 / Desktop 101）
 & $dotnet test "$r\tests\EasyPub.Core.Tests\EasyPub.Core.Tests.csproj" -c Release
 & $dotnet test "$r\tests\EasyPub.Desktop.Tests\EasyPub.Desktop.Tests.csproj" -c Release
 
@@ -308,6 +360,7 @@ $env:EASYPUB_LIVE_TESTS='1'
 | `docs/2026-09-14_实施验证-目录辅助修复-v1.24.0.md` | 目录辅助修复的实现与验证 |
 | `docs/2026-09-14_书源系统-v1.43.0.md` | 书源模型、优先书源、检测、番茄实测数据 |
 | `docs/2026-09-14_对齐修复-v1.43.1.md` | §4.3 / §4.4 / §4.1 三处根因的取证 |
+| **`docs/2026-09-15_目录获取耗时取证与预算-v1.49.0.md`** | **耗时分段取证：慢的是网络不是对齐；两个「失败方向」为何不该做（§4.9）** |
 | **本文档** | 接手入口：演进、决策、不变量、缺口、工具 |
 
 `docs/` 里其余 19 篇属于原仓库 v1.22 及之前的工作。
