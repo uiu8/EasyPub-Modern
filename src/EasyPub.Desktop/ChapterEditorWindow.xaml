@@ -141,7 +141,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="46*" MinWidth="310"/><ColumnDefinition Width="14"/><ColumnDefinition Width="54*" MinWidth="360"/></Grid.ColumnDefinitions>
             <Border Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <Border Background="{DynamicResource SubtleSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
@@ -160,17 +160,20 @@
                             <ComboBoxItem Content="全部问题"/><ComboBoxItem Content="漏识别"/><ComboBoxItem Content="误识别"/><ComboBoxItem Content="重复"/><ComboBoxItem Content="编号与层级"/><ComboBoxItem Content="其他提醒"/>
                         </ComboBox>
                     </Grid>
-                    <Grid Grid.Row="1" Margin="0,10,0,6">
+                    <Button x:Name="FetchCatalogButton" Grid.Row="1" HorizontalAlignment="Left" Margin="0,10,0,0"
+                            Content="获取参考目录（联网）" Click="FetchCatalog_Click"
+                            ToolTip="按书源顺序搜索本书的公开目录并保存。只有拿到目录，才能标出「这里本该有哪一章」；失败时可改用手动核对并粘贴网址。"/>
+                    <Grid Grid.Row="2" Margin="0,10,0,6">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBox x:Name="ChapterSearchText" ToolTip="搜索成品/原始标题；输入 行:51397 定位源行" AutomationProperties.Name="搜索章节标题或原文行号" TextChanged="ChapterSearch_Changed" KeyDown="ChapterSearch_KeyDown"/>
                         <Button Grid.Column="1" Content="清除" Click="ClearSearch_Click" Margin="6,0,0,0"/>
                     </Grid>
-                    <TextBlock x:Name="FilterSummaryText" Grid.Row="2" Text="搜索章节标题，或输入 行:51397" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
-                    <DockPanel Grid.Row="3" Margin="0,8,0,6">
+                    <TextBlock x:Name="FilterSummaryText" Grid.Row="3" Text="搜索章节标题，或输入 行:51397" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                    <DockPanel Grid.Row="4" Margin="0,8,0,6">
                         <Button DockPanel.Dock="Right" Content="取消选择" Click="ClearSelection_Click" FontSize="11" Padding="7,3" MinHeight="26" Margin="4,0,0,0"/>
                         <TextBlock x:Name="BatchSelectionText" Text="Ctrl 多选 · Shift 连选" ToolTip="行高亮是操作选择，复选框仅控制目录" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <TreeView x:Name="ChapterTree" Grid.Row="4" ItemsSource="{Binding VisibleRoots}" BorderThickness="0" Background="Transparent"
+                    <TreeView x:Name="ChapterTree" Grid.Row="5" ItemsSource="{Binding VisibleRoots}" BorderThickness="0" Background="Transparent"
                               VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="0"
                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                               SelectedItemChanged="ChapterTree_SelectedItemChanged" AllowDrop="True"

@@ -37,6 +37,7 @@ public partial class ChapterEditorWindow
             _initialRulesFingerprint ??= SettingsFingerprint();
             EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + " 编辑；先备份，源文件变化后须重新识别";
             UpdateSaveState();
+            RefreshCatalogState();
             if (_allReviewIssues.FirstOrDefault(i => i.Code == "numeric_chapters_suspected") is { } numericSuggestion)
                 NavigateToSuggestion(numericSuggestion);
         };

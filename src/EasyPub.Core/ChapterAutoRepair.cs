@@ -92,9 +92,10 @@ public static class ChapterAutoRepair
 
     /// <summary>
     /// The saved source list plus the folder rule's source preference. Both are optional: any failure
-    /// falls back to the built-in order instead of blocking the repair.
+    /// falls back to the built-in order instead of blocking the repair. Shared with the workbench's own
+    /// "fetch the directory" action so a directory found there is the same one a repair would find.
     /// </summary>
-    private static async Task<IReadOnlyList<string>> PreferredSourcesAsync(string path)
+    public static async Task<IReadOnlyList<string>> LoadPreferredSourcesAsync(string path)
     {
         try
         {
@@ -122,7 +123,7 @@ public static class ChapterAutoRepair
         if (reference is null)
         {
             progress?.Report("正在查找本书已保存的目录与来源…");
-            var preferred = await PreferredSourcesAsync(path).ConfigureAwait(false);
+            var preferred = await LoadPreferredSourcesAsync(path).ConfigureAwait(false);
             var saved = ReferenceCatalogInput.Load(document.SourceSha256);
             reference = string.IsNullOrWhiteSpace(saved?.Text) ? null : ReferenceCatalogInput.ParseText(saved.Text);
             if (reference is not null && !string.IsNullOrWhiteSpace(saved?.Url)) reference = reference with { Source = saved.Url + "（本书已保存目录）" };
@@ -137,8 +138,7 @@ public static class ChapterAutoRepair
                     var client = new ReferenceCatalogClient();
                     var catalogs = await client.DiscoverAsync(query,token,preferred).ConfigureAwait(false);
                     timings = client.LastTimings;
-                    var most = catalogs.Count == 0 ? 0 : catalogs.Max(c=>c.Titles.Count);
-                    reference = catalogs.FirstOrDefault(c=>c.Titles.Count > 0 && c.Titles.Count >= most*0.9);
+                    reference = ReferenceCatalogInput.Pick(catalogs);
                 }
                 catch (Exception e) when (!token.IsCancellationRequested && e is HttpRequestException or OperationCanceledException or InvalidOperationException)
                 { error=e.Message; }

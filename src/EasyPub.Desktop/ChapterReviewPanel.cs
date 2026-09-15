@@ -21,6 +21,7 @@ public partial class ChapterEditorWindow
     private string _searchQuery = "";
     private ReferenceCatalog? _referenceCatalog;
     private bool _referenceCatalogLoaded;
+    private bool _fetchingCatalog;
     private string? _breakpointSignature;
 
     private ChapterReviewGroup? ReviewGroup(ConversionPreflightIssue? issue) => issue is null ? null
@@ -177,8 +178,74 @@ public partial class ChapterEditorWindow
     /// <summary>Same source hash, so the directory that was found for the old tree still belongs to this one.</summary>
     private void InvalidateBreakpoints()
     {
+        _referenceCatalog = null;
         _referenceCatalogLoaded = false;
         _breakpointSignature = null;
+        RefreshCatalogState();
+    }
+
+    /// <summary>
+    /// The button that fetches the official directory is only useful while there is none, and the row it
+    /// sits in must say which of the two states the book is in.
+    /// </summary>
+    private void RefreshCatalogState()
+    {
+        if (FetchCatalogButton is null) return;
+        var catalog = SavedReference();
+        FetchCatalogButton.Content = catalog is null
+            ? "获取参考目录（联网）"
+            : $"已获取目录（{catalog.Titles.Count} 章）";
+        FetchCatalogButton.IsEnabled = catalog is null && !_fetchingCatalog;
+        FetchCatalogButton.ToolTip = catalog is null
+            ? "按书源顺序搜索本书的公开目录并保存。只有拿到目录，才能标出「这里本该有哪一章」；失败时可改用手动核对并粘贴网址。"
+            : $"来源：{catalog.PageTitle}。目录只用于核对结构，不会修改原始 TXT。";
+    }
+
+    /// <summary>
+    /// Fetches the directory on the user's explicit request — never on its own: discovery is a network call
+    /// that takes anywhere from a moment to several seconds, and the app does not send one behind the user's
+    /// back. Whatever comes back is saved for this source hash, so later sessions can name the chapters the
+    /// release has and this file lacks without asking again.
+    /// </summary>
+    private async void FetchCatalog_Click(object sender, RoutedEventArgs e)
+    {
+        if (_fetchingCatalog || SavedReference() is not null) return;
+        _fetchingCatalog = true;
+        RefreshCatalogState();
+        ShowReviewFeedback("正在按书源顺序搜索公开目录…");
+        try
+        {
+            var url = await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(_document.SourcePath));
+            var query = string.IsNullOrWhiteSpace(url) ? ChapterAutoRepair.ExtractBookName(_document.SourcePath) : url;
+            var preferred = await ChapterAutoRepair.LoadPreferredSourcesAsync(_document.SourcePath);
+            var catalogs = await new ReferenceCatalogClient().DiscoverAsync(query, CancellationToken.None, preferred);
+            if (ReferenceCatalogInput.Pick(catalogs) is not { } catalog)
+            {
+                ShowReviewFeedback("未获取到可用目录。可粘贴书籍网址／编号，或导入目录文字。");
+                CatalogAssist_Click(this, new RoutedEventArgs());
+                return;
+            }
+            ReferenceCatalogInput.Save(_document.SourceSha256, new CatalogPreferences(
+                query,
+                catalog.Source,
+                string.Join(Environment.NewLine, catalog.Nodes.Select(node => node.Title)),
+                _document.RecognitionOptions.NumericHeadingMinimumBodyLines));
+            _referenceCatalog = catalog;
+            _referenceCatalogLoaded = true;
+            _breakpointSignature = null;
+            ApplyBreakpoints();
+            ShowReviewFeedback($"已获取目录：{catalog.PageTitle}（{catalog.Titles.Count} 章）。"
+                + "章节树上已标出目录里有、源文件里找不到的章节。");
+        }
+        catch (Exception error)
+        {
+            ShowReviewFeedback("获取目录失败：" + error.Message + "。可点「手动核对目录…」粘贴网址或导入目录文字。");
+        }
+        finally
+        {
+            _fetchingCatalog = false;
+            RefreshCatalogState();
+        }
     }
 
     /// <summary>

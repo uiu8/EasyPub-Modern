@@ -16,6 +16,31 @@ public static class ReferenceCatalogInput
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
+    /// <summary>
+    /// Remembers the directory for one book, keyed by the source hash, so a later session — or the same
+    /// session after the tree is rebuilt — can still name the chapters the release has and the file lacks.
+    /// Written through a temporary file: a half-written JSON would lose the directory without saying so.
+    /// </summary>
+    public static void Save(string hash, CatalogPreferences preferences)
+    {
+        var path = SettingsPath(hash);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(preferences));
+        File.Move(temp, path, true);
+    }
+
+    /// <summary>
+    /// Picks the directory to trust out of several candidates. The largest wins, and only a candidate within
+    /// 10% of it qualifies: sources disagree about how much of a book they list, and silently taking a much
+    /// shorter directory would report hundreds of chapters as missing.
+    /// </summary>
+    public static ReferenceCatalog? Pick(IReadOnlyList<ReferenceCatalog> catalogs)
+    {
+        var most = catalogs.Count == 0 ? 0 : catalogs.Max(catalog => catalog.Titles.Count);
+        return catalogs.FirstOrDefault(catalog => catalog.Titles.Count > 0 && catalog.Titles.Count >= most * 0.9);
+    }
+
     public static ReferenceCatalog? ParseText(string text)
     {
         var nodes = new List<ReferenceNode>();
