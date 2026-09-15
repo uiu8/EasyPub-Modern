@@ -101,6 +101,7 @@ public sealed class MetadataMappingStore
             {
                 FolderPath = MetadataMappingResolver.NormalizeFolder(rule.FolderPath),
                 Metadata = NormalizeMetadata(rule.Metadata),
+                PreferredSources = NormalizeSources(rule.PreferredSources),
             })
             .GroupBy(rule => rule.FolderPath, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.Last())
@@ -120,4 +121,16 @@ public sealed class MetadataMappingStore
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>Trims, de-duplicates and drops blanks; an empty selection is stored as "no preference".</summary>
+    private static IReadOnlyList<string>? NormalizeSources(IReadOnlyList<string>? sources)
+    {
+        if (sources is null) return null;
+        var cleaned = sources
+            .Where(source => !string.IsNullOrWhiteSpace(source))
+            .Select(source => source.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return cleaned.Length == 0 ? null : cleaned;
+    }
 }

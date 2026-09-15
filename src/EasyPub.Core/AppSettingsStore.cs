@@ -10,7 +10,7 @@ public sealed record ConversionProfile(
     ConversionOptions Options)
 {
     public static ConversionProfile Default { get; } = new(
-        "epub", null, 1, null, ConversionOptions.LegacyDefault);
+        "epub", null, 1, null, new ConversionOptions());
 
     public int FontSizePercent => Options.FontSizePercent;
     public MobiCompression MobiCompression => Options.Mobi.Compression;

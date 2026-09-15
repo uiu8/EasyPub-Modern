@@ -24,8 +24,7 @@ public sealed record TextSourceLine(
 
 public sealed class ChapterEditingDocument
 {
-    public const string DefaultChapterPattern =
-        @"^\s*[\u7b2c\u5377][0123456789\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u96f6\u3007\u767e\u5343\u4e24]*[\u7ae0\u56de\u90e8\u8282\u96c6\u5377].*";
+    public const string DefaultChapterPattern = HeadingSyntax.DefaultPattern;
 
     private readonly string[] _lines;
     private readonly string _newLine;

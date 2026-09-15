@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private enum WorkspacePage
     {
         Library,
+        Review,
         Chapters,
         Cover,
         Layout,
@@ -64,6 +65,7 @@ public partial class MainWindow : Window
         RecognizeNumericHeadings = _numericDefaults.RecognizeNumericHeadings,
         NumericHeadingMinimumBodyLines = _numericDefaults.NumericHeadingMinimumBodyLines,
         NumericHeadingPattern = _numericDefaults.NumericHeadingPattern,
+        HeadingNumberCorrections = _numericDefaults.HeadingNumberCorrections,
     }).ForBook(plan);
     private TextCleanupOptions _textCleanupOptions = new();
     private ConversionMode _conversionMode = ConversionMode.OriginalCompatible;
@@ -71,7 +73,6 @@ public partial class MainWindow : Window
     private TaskCenterWindow? _taskCenterWindow;
     private bool _closeSaveInProgress;
     private bool _allowClose;
-    private bool _recoverySaveInProgress;
     private string? _lastRecoveryFingerprint;
     private string? _lastExplicitSaveFingerprint;
     private string? _currentProjectPath;
@@ -123,6 +124,7 @@ public partial class MainWindow : Window
     {
         _analysisCoordinator = new BookAnalysisCoordinator(documentCache: _chapterDocumentCache);
         InitializeComponent();
+        InitializePreviewSplitter();
         DataContext = this;
         ConversionSettingsPane.Applied += ConversionSettingsPane_Applied;
         ConversionSettingsPane.CloseRequested += CloseConversionSettingsPane;
@@ -143,6 +145,11 @@ public partial class MainWindow : Window
         {
             _automaticAnalysisTimer.Stop();
             await RunAutomaticAnalysisAsync();
+        };
+        _layoutPreviewTimer.Tick += (_, _) =>
+        {
+            _layoutPreviewTimer.Stop();
+            RefreshLayoutPreview();
         };
         FormatCombo.SelectionChanged += (_, _) => MarkProjectDirty();
         ParallelismCombo.SelectionChanged += (_, _) => MarkProjectDirty();
@@ -229,15 +236,19 @@ public partial class MainWindow : Window
     {
         if (PageTitleText is null) return;
         if (page == WorkspacePage.Chapters) page = WorkspacePage.Library;
+        var pageChanged = _workspacePage != page;
         _workspacePage = page;
         LibraryNavigationButton.IsChecked = page == WorkspacePage.Library;
+        ReviewNavigationButton.IsChecked = page == WorkspacePage.Review;
         ChaptersNavigationButton.IsChecked = page == WorkspacePage.Chapters;
         CoverNavigationButton.IsChecked = page == WorkspacePage.Cover;
-        LayoutNavigationButton.IsChecked = page == WorkspacePage.Layout;
+        LayoutNavigationButton.IsChecked = page is WorkspacePage.Layout or WorkspacePage.Cover;
         ConvertNavigationButton.IsChecked = page == WorkspacePage.Convert;
         TasksNavigationButton.IsChecked = page == WorkspacePage.Tasks;
 
         InkLibraryPage.Visibility = page == WorkspacePage.Library ? Visibility.Visible : Visibility.Collapsed;
+        WorkflowReviewPage.Visibility = page == WorkspacePage.Review ? Visibility.Visible : Visibility.Collapsed;
+        ProductionToolbarPanel.Visibility = page is WorkspacePage.Cover or WorkspacePage.Layout ? Visibility.Visible : Visibility.Collapsed;
         InkChaptersPage.Visibility = page == WorkspacePage.Chapters ? Visibility.Visible : Visibility.Collapsed;
         InkCoverPage.Visibility = page == WorkspacePage.Cover ? Visibility.Visible : Visibility.Collapsed;
         InkLayoutPage.Visibility = page == WorkspacePage.Layout ? Visibility.Visible : Visibility.Collapsed;
@@ -251,16 +262,21 @@ public partial class MainWindow : Window
         switch (page)
         {
             case WorkspacePage.Library:
-                PageTitleText.Text = "书库";
+                PageTitleText.Text = "导入书稿";
                 PageSubtitleText.Text = "导入、筛选并批量管理待转换书稿";
                 UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+                break;
+            case WorkspacePage.Review:
+                PageTitleText.Text = "检查与修复";
+                PageSubtitleText.Text = "按问题类型定位处理；原文、章节结构和制作设置分别保存";
+                RefreshWorkflowRows();
                 break;
             case WorkspacePage.Chapters:
                 PageTitleText.Text = "章节正文";
                 PageSubtitleText.Text = "按章节检查与查找正文；章节结构统一在章节树工作台中编辑";
                 break;
             case WorkspacePage.Cover:
-                PageTitleText.Text = "封面信息";
+                PageTitleText.Text = "制作设置 · 封面";
                 PageSubtitleText.Text = "为每本书分别设置封面与书籍元数据";
                 if (CoverBookCombo.SelectedItem is null)
                     CoverBookCombo.SelectedItem = FilesList.SelectedItems.Count == 1
@@ -269,7 +285,7 @@ public partial class MainWindow : Window
                 _ = RefreshCoverPreviewAsync();
                 break;
             case WorkspacePage.Layout:
-                PageTitleText.Text = "排版插图";
+                PageTitleText.Text = "制作设置 · 排版";
                 PageSubtitleText.Text = "设置版式、页边距、字体、CSS 与正文插图";
                 SyncVisibleLayoutControls();
                 RefreshLayoutPreview();
@@ -285,6 +301,7 @@ public partial class MainWindow : Window
         }
 
         UpdateContextualControls();
+        if (pageChanged) AnimateWorkspacePage(page);
     }
 
     private void UseLightTheme_Click(object sender, RoutedEventArgs e)
@@ -564,6 +581,7 @@ public partial class MainWindow : Window
     private void ApplyAppearanceSettings()
     {
         ThemeManager.Apply(_theme, this);
+        ApplyMotionSettings();
         var compact = string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase);
         SidebarColumn.Width = new GridLength(ActualWidth < 1280 ? 132 : compact ? 166 : 184);
         foreach (var button in new[] { LibraryNavigationButton, ChaptersNavigationButton, CoverNavigationButton, LayoutNavigationButton, ConvertNavigationButton, TasksNavigationButton })
@@ -623,6 +641,9 @@ public partial class MainWindow : Window
         _recoveryTimer.Stop();
         _statusRefreshTimer.Stop();
         _automaticAnalysisTimer.Stop();
+        _layoutPreviewTimer.Stop();
+        _analysisUiRefresh?.Abort();
+        Interlocked.Increment(ref _automaticAnalysisGeneration);
         _selectionPreviewCancellation?.Cancel();
         _automaticAnalysisCancellation?.Cancel();
         _operationCancellation?.Cancel();
@@ -636,21 +657,36 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_closeSaveInProgress) return;
         _closeSaveInProgress = true;
-
+        var closeApproved = true;
         try
         {
+            // A settings failure must never skip saving the user's book work.
+            await SaveRecoveryIfChangedAsync();
             var settings = CaptureAppSettings();
             await _appSettingsStore.SaveAsync(settings);
-            await SaveRecoveryIfChangedAsync();
+            if (_projectSaveError is not null)
+                closeApproved = InkDialog.Show(this, _projectSaveError + "\n是否仍然退出？选择“否”可返回后另存项目。",
+                    "保存未完全成功", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
         }
-        catch
+        catch (Exception exception)
         {
-            // Closing must remain reliable even if the local settings file is temporarily unavailable.
+            closeApproved = InkDialog.Show(this, "部分设置未保存：" + exception.Message + "\n是否仍然退出？",
+                "保存未完全成功", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
         }
         finally
         {
-            _allowClose = true;
-            _ = Dispatcher.BeginInvoke(new Action(Close));
+            _closeSaveInProgress = false;
+            if (closeApproved)
+            {
+                _allowClose = true;
+                _ = Dispatcher.BeginInvoke(new Action(Close));
+            }
+            else
+            {
+                _recoveryTimer.Start();
+                _statusRefreshTimer.Start();
+                ScheduleAutomaticAnalysis();
+            }
         }
     }
 
@@ -1073,6 +1109,9 @@ public partial class MainWindow : Window
     private async void NewProject_Click(object sender, RoutedEventArgs e)
     {
         if (!await EnsureCanReplaceProjectAsync()) return;
+        await _projectPersistenceGate.WaitAsync();
+        try
+        {
         InputBooks.Clear();
         _currentProjectPath = null;
         _lastExplicitSaveFingerprint = null;
@@ -1086,6 +1125,9 @@ public partial class MainWindow : Window
         UpdateProjectTitle();
         UpdateStatus();
         StatusText.Text = "已新建空白项目";
+        _projectSaveError = null;
+        }
+        finally { _projectPersistenceGate.Release(); }
     }
 
     private async void OpenProject_Click(object sender, RoutedEventArgs e)
@@ -1098,6 +1140,7 @@ public partial class MainWindow : Window
             CheckFileExists = true,
         };
         if (dialog.ShowDialog(this) != true) return;
+        await _projectPersistenceGate.WaitAsync();
         try
         {
             var document = await new EasyPubProjectStore(dialog.FileName).LoadAsync();
@@ -1109,11 +1152,13 @@ public partial class MainWindow : Window
             MarkRecoveryClean();
             UpdateProjectTitle();
             StatusText.Text = $"已打开项目：{Path.GetFileName(dialog.FileName)}";
+            _projectSaveError = null;
         }
         catch (Exception exception)
         {
             InkDialog.Show(this, exception.Message, "无法打开项目", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { _projectPersistenceGate.Release(); }
     }
 
     private async void SaveProject_Click(object sender, RoutedEventArgs e) =>
@@ -1139,19 +1184,23 @@ public partial class MainWindow : Window
             target = dialog.FileName;
         }
 
+        await _projectPersistenceGate.WaitAsync();
         try
         {
-            _currentProjectPath = Path.GetFullPath(target);
+            var generation = Interlocked.Read(ref _projectChangeGeneration);
+            var savedPath = Path.GetFullPath(target);
             var document = CaptureProjectDocument() with
             {
-                ProjectPathHint = _currentProjectPath,
+                ProjectPathHint = savedPath,
                 UpdatedAt = DateTimeOffset.Now,
             };
-            await new EasyPubProjectStore(_currentProjectPath).SaveAsync(document);
+            await new EasyPubProjectStore(savedPath).SaveAsync(document);
+            _currentProjectPath = savedPath;
             _lastExplicitSaveFingerprint = EasyPubProjectStore.Fingerprint(document);
             _lastRecoveryFingerprint = _lastExplicitSaveFingerprint;
             _recoveryStore.Delete();
-            MarkRecoveryClean();
+            _savedRecoveryGeneration = generation;
+            _projectSaveError = null;
             UpdateProjectTitle();
             StatusText.Text = $"项目已保存：{Path.GetFileName(_currentProjectPath)}";
             return true;
@@ -1161,6 +1210,7 @@ public partial class MainWindow : Window
             InkDialog.Show(this, exception.Message, "无法保存项目", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
+        finally { _projectPersistenceGate.Release(); }
     }
 
     private async Task<bool> EnsureCanReplaceProjectAsync()
@@ -1268,7 +1318,12 @@ public partial class MainWindow : Window
         }
 
         UpdateConversionPreviewBooks(e);
-        MarkProjectDirty();
+        if (_optionTrackingReady)
+        {
+            Interlocked.Increment(ref _projectChangeGeneration);
+            ScheduleAutomaticAnalysis(e.Action == NotifyCollectionChangedAction.Reset
+                ? null : e.NewItems?.OfType<InputBookItem>().ToArray() ?? []);
+        }
     }
 
     private void UpdateConversionPreviewBooks(NotifyCollectionChangedEventArgs change)
@@ -1293,40 +1348,62 @@ public partial class MainWindow : Window
             or nameof(InputBookItem.MetadataRuleFolder)
             or nameof(InputBookItem.ChapterTree)
             or nameof(InputBookItem.CleanupOverride))
-            MarkProjectDirty();
-        if (e.PropertyName is nameof(InputBookItem.AnalysisStatus) or nameof(InputBookItem.ReadinessLabel) or nameof(InputBookItem.ReadinessDetail)
+        {
+            if (_optionTrackingReady && sender is InputBookItem changedBook)
+            {
+                Interlocked.Increment(ref _projectChangeGeneration);
+                ScheduleAutomaticAnalysis([changedBook]);
+            }
+        }
+        if (e.PropertyName == nameof(InputBookItem.AnalysisStatus)
             && sender is InputBookItem book
             && Dispatcher.CheckAccess()
             && ReferenceEquals(book, CurrentLibraryInspectorBook()))
-            UpdateSelectedBookInspector(book);
+            UpdateSelectedBookAnalysis(book);
     }
 
     private void MarkProjectDirty()
     {
         if (!_optionTrackingReady) return;
         Interlocked.Increment(ref _projectChangeGeneration);
+        UpdateWorkspaceScope();
         ScheduleAutomaticAnalysis();
     }
 
-    private void ScheduleAutomaticAnalysis()
+    private void ScheduleAutomaticAnalysis(IReadOnlyCollection<InputBookItem>? affectedBooks = null)
     {
+        UpdateWorkspaceScope();
+        // Invalidate results as soon as inputs change, including during the debounce interval.
+        Interlocked.Increment(ref _automaticAnalysisGeneration);
+        _automaticAnalysisCancellation?.Cancel();
+        _automaticAnalysisTimer.Stop();
         UpdateAutomaticCheckSummary();
         if (!_automaticChecks.Enabled)
         {
             foreach (var book in InputBooks) book.SetAnalysisDisabled();
+            RefreshWorkflowRows();
+            if (_workspacePage == WorkspacePage.Review && IsLoaded && _optionTrackingReady)
+                _automaticAnalysisTimer.Start();
             return;
         }
         if (!_optionTrackingReady || !IsLoaded || InputBooks.Count == 0) return;
-        foreach (var book in InputBooks) book.SetAnalysisPending();
-        _automaticAnalysisCancellation?.Cancel();
-        _automaticAnalysisTimer.Stop();
+        foreach (var book in affectedBooks ?? (IReadOnlyCollection<InputBookItem>)InputBooks)
+            book.SetAnalysisPending();
+        // Interrupted jobs must be retried; completed unrelated books keep their results.
+        foreach (var book in InputBooks.Where(book => book.AnalysisStatus == BookAnalysisStatus.Running))
+            book.SetAnalysisPending();
+        RefreshWorkflowRows();
         _automaticAnalysisTimer.Start();
-        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
-        UpdateConversionSummary();
+        RequestAnalysisUiRefresh();
     }
 
     private async Task RunAutomaticAnalysisAsync()
     {
+        if (!_automaticChecks.Enabled && _workspacePage == WorkspacePage.Review)
+        {
+            await CheckWorkflowAsync();
+            return;
+        }
         if (!_automaticChecks.Enabled || InputBooks.Count == 0) return;
         var generation = Interlocked.Increment(ref _automaticAnalysisGeneration);
         _automaticAnalysisCancellation?.Cancel();
@@ -1334,14 +1411,19 @@ public partial class MainWindow : Window
         _automaticAnalysisCancellation = new CancellationTokenSource();
         var cancellationToken = _automaticAnalysisCancellation.Token;
         var books = InputBooks.ToArray();
-        foreach (var book in books) book.SetAnalysisRunning();
-        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
+        var pendingBooks = books.Where(book => book.AnalysisStatus == BookAnalysisStatus.Pending).ToArray();
+        foreach (var book in pendingBooks) book.SetAnalysisRunning();
+        RequestAnalysisUiRefresh();
 
         try
         {
             var requests = await BuildConversionRequestsForBooksAsync(books, resolveCollisions: false, enforceCompatibility: false);
-            var result = await _analysisCoordinator.AnalyzeAsync(requests.Select(request => request with { AutomaticChecks = _automaticChecks }), cancellationToken);
-            if (generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
+            cancellationToken.ThrowIfCancellationRequested();
+            var jobs = requests.Select(request => request with { AutomaticChecks = _automaticChecks }).ToArray();
+            // Keep the full batch for output-conflict checks; unchanged books hit the per-book cache.
+            // Key serialization and cache lookup also belong off the UI thread.
+            var result = await Task.Run(() => _analysisCoordinator.AnalyzeAsync(jobs, cancellationToken), cancellationToken);
+            if (cancellationToken.IsCancellationRequested || generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
             ApplyAnalysisToWorklist(result);
             _lastPreflightReport = result.Report;
             _taskCenterWindow?.UpdatePreflight(result.Report);
@@ -1359,14 +1441,12 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             if (generation != Interlocked.Read(ref _automaticAnalysisGeneration)) return;
-            foreach (var book in books) book.SetAnalysisUnavailable(exception.Message);
+            foreach (var book in pendingBooks) book.SetAnalysisUnavailable(exception.Message);
             StatusText.Text = $"自动分析暂不可用：{exception.Message}";
         }
         finally
         {
-            UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
-            UpdateConversionSummary();
-            _bookWorklistView?.Refresh();
+            if (generation == Interlocked.Read(ref _automaticAnalysisGeneration)) RequestAnalysisUiRefresh();
         }
     }
 
@@ -1396,36 +1476,62 @@ public partial class MainWindow : Window
 
     private void MarkRecoveryClean()
     {
+        _projectSaveError = null;
         _savedRecoveryGeneration = Interlocked.Read(ref _projectChangeGeneration);
     }
 
     private async void RecoveryTimer_Tick(object? sender, EventArgs e) =>
         await SaveRecoveryIfChangedAsync();
 
+    private readonly SemaphoreSlim _projectPersistenceGate = new(1, 1);
+    private string? _projectSaveError;
+
     private async Task SaveRecoveryIfChangedAsync()
     {
-        var generation = Interlocked.Read(ref _projectChangeGeneration);
-        if (_recoverySaveInProgress || InputBooks.Count == 0 || generation == _savedRecoveryGeneration) return;
-        EasyPubProjectDocument snapshot;
-        try { snapshot = CaptureProjectDocument(); }
-        catch { return; }
-        var fingerprint = await Task.Run(() => EasyPubProjectStore.Fingerprint(snapshot));
-        if (fingerprint == _lastRecoveryFingerprint)
-        {
-            _savedRecoveryGeneration = generation;
-            return;
-        }
-        _recoverySaveInProgress = true;
+        await _projectPersistenceGate.WaitAsync();
         try
         {
-            await _recoveryStore.SaveAsync(snapshot);
-            _lastRecoveryFingerprint = fingerprint;
+            var generation = Interlocked.Read(ref _projectChangeGeneration);
+            if (!_optionTrackingReady || generation == _savedRecoveryGeneration) return;
+            var snapshot = CaptureProjectDocument();
+            var projectPath = _currentProjectPath;
+            var fingerprint = await Task.Run(() => EasyPubProjectStore.Fingerprint(snapshot));
+            if (fingerprint != _lastRecoveryFingerprint)
+            {
+                if (projectPath is not null)
+                {
+                    try
+                    {
+                        await new EasyPubProjectStore(projectPath).SaveAsync(snapshot);
+                        _lastExplicitSaveFingerprint = fingerprint;
+                        _recoveryStore.Delete();
+                        _projectSaveError = null;
+                    }
+                    catch (Exception exception)
+                    {
+                        // Keep recoverable changes even when a named project is read-only/offline.
+                        await _recoveryStore.SaveAsync(snapshot);
+                        _projectSaveError = "项目未写入，但恢复快照已保留：" + exception.Message;
+                        UpdateWorkspaceScope();
+                        return; // retry the named file on a later tick
+                    }
+                }
+                else
+                {
+                    await _recoveryStore.SaveAsync(snapshot);
+                    _projectSaveError = null;
+                }
+                _lastRecoveryFingerprint = fingerprint;
+            }
             _savedRecoveryGeneration = generation;
+            UpdateWorkspaceScope();
         }
-        finally
+        catch (Exception exception)
         {
-            _recoverySaveInProgress = false;
+            _projectSaveError = exception.Message;
+            UpdateWorkspaceScope();
         }
+        finally { _projectPersistenceGate.Release(); }
     }
 
     private async Task OfferRecoveryAsync()
@@ -1445,17 +1551,23 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RestoreRecovery_Click(object sender, RoutedEventArgs e)
+    private async void RestoreRecovery_Click(object sender, RoutedEventArgs e)
     {
         if (_pendingRecovery is not { } recovery) return;
+        await _projectPersistenceGate.WaitAsync();
+        try
+        {
         ApplyProjectDocument(recovery);
         _currentProjectPath = recovery.ProjectPathHint;
-        _lastRecoveryFingerprint = EasyPubProjectStore.Fingerprint(recovery);
-        MarkRecoveryClean();
+        _lastRecoveryFingerprint = null;
+        _savedRecoveryGeneration = Interlocked.Read(ref _projectChangeGeneration) - 1;
         UpdateProjectTitle();
         RecoveryBanner.Visibility = Visibility.Collapsed;
         _pendingRecovery = null;
         StatusText.Text = $"已恢复上次工作：{recovery.Books.Count} 本小说";
+        }
+        finally { _projectPersistenceGate.Release(); }
+        await SaveRecoveryIfChangedAsync();
     }
 
     private void IgnoreRecovery_Click(object sender, RoutedEventArgs e)
@@ -1472,23 +1584,37 @@ public partial class MainWindow : Window
         StatusText.Text = "已删除自动恢复快照";
     }
 
+    /// <summary>
+    /// Short version string taken from the assembly, which the csproj sets. The window title and the
+    /// sidebar label used to be two separate hard-coded literals and had already drifted apart, so the
+    /// app showed v1.42.0 in the corner while the titlebar said v1.43.2.
+    /// </summary>
+    private static string AppVersion =>
+        typeof(MainWindow).Assembly.GetName().Version is { } version
+            ? $"{version.Major}.{version.Minor}.{version.Build}"
+            : "0.0.0";
+
     private void UpdateProjectTitle()
     {
         var projectName = _currentProjectPath is null ? "未保存项目" : Path.GetFileNameWithoutExtension(_currentProjectPath);
         if (ProjectMenuButton is not null) ProjectMenuButton.Content = $"当前项目：{projectName}  ⌄";
+        if (VersionText is not null) VersionText.Text = "v" + AppVersion;
         Title = _currentProjectPath is null
-            ? "EasyPub Modern v1.22.0"
-            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v1.22.0";
+            ? $"EasyPub Modern v{AppVersion}"
+            : $"{Path.GetFileNameWithoutExtension(_currentProjectPath)} · EasyPub Modern v{AppVersion}";
         UpdateWorkspaceScope();
     }
 
     private void UpdateWorkspaceScope()
     {
         if (WorkspaceScopeText is null) return;
-        WorkspaceScopeText.Text = _currentProjectPath is null ? "▣  未保存" : "▣  已保存";
-        WorkspaceScopeText.ToolTip = _currentProjectPath is null
-            ? "当前工作尚未保存为项目"
-            : $"已保存到：{_currentProjectPath}";
+        var pending = Interlocked.Read(ref _projectChangeGeneration) != _savedRecoveryGeneration;
+        WorkspaceScopeText.Text = _projectSaveError is not null ? "▣  保存异常 · 请重试"
+            : pending ? "▣  等待自动保存…"
+            : _currentProjectPath is null ? "▣  恢复快照 · 可保存项目" : "▣  项目已自动保存";
+        WorkspaceScopeText.ToolTip = _projectSaveError ?? (_currentProjectPath is null
+            ? "章节树和清理规则保存在恢复快照中；点击项目菜单保存为可复用项目。"
+            : $"章节树、清理规则和制作设置自动保存到：{_currentProjectPath}");
     }
 
     private void AddFiles_Click(object sender, RoutedEventArgs e)
@@ -1758,8 +1884,9 @@ public partial class MainWindow : Window
                 UpdateTocHierarchySummary();
                 MarkDirtyTab(ChaptersTab);
                 UpdateSelectedBookInspector(book);
-                StatusText.Text = $"已保存《{book.DisplayName}》的章节树，共 {editor.ResultPlan.Entries.Count} 章";
+                StatusText.Text = $"已应用《{book.DisplayName}》的章节树，共 {editor.ResultPlan.Entries.Count} 项；正在保存项目状态";
                 _ = RefreshInlineChapterPreviewAsync(book);
+                await SaveRecoveryIfChangedAsync();
                 await _appSettingsStore.SaveAsync(CaptureAppSettings());
             }
             else
@@ -1804,6 +1931,7 @@ public partial class MainWindow : Window
         try
         {
             _pendingSourceEdits[selected.InputPath] = SourceFileStamp.Capture(selected.InputPath);
+            SourceBackupStore.CreateDefault().EnsureBackup(selected.InputPath);
             var startInfo = new ProcessStartInfo(editor) { UseShellExecute = true };
             startInfo.ArgumentList.Add(selected.InputPath);
             var process = Process.Start(startInfo);
@@ -1892,10 +2020,11 @@ public partial class MainWindow : Window
                 selected.SetCleanupOverride(window.Result.ExcludedChangeKeys.Count > 0 ? window.Result : null);
             }
             else selected.SetCleanupOverride(window.Result);
-            UpdateTextCleanupSummary();
+            UpdateTextCleanupSummary(selected);
             MarkProjectDirty();
             _conversionMode = ConversionMode.Custom;
             CustomModeRadio.IsChecked = true;
+            await SaveRecoveryIfChangedAsync();
             if (window.ApplyToShared) await _appSettingsStore.SaveAsync(CaptureAppSettings());
             StatusText.Text = window.InheritShared ? "本书已恢复继承通用清理规则" : window.ApplyToShared ? "通用规则已保存；已有逐书覆盖保持不变" : "本书独立清理规则已保存，不影响其他书稿";
             ScheduleAutomaticAnalysis();
@@ -1906,13 +2035,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateTextCleanupSummary()
+    private void UpdateTextCleanupSummary(InputBookItem? inspectedBook = null)
     {
         if (TextCleanupStatusText is null) return;
-        var count = new AutomaticCheckOptions { Targets = [], Cleanup = _textCleanupOptions }.ActiveLabels().Count();
+        var hasBookOverride = inspectedBook?.CleanupOverride is not null;
+        var cleanup = inspectedBook?.CleanupOverride ?? _textCleanupOptions;
+        var count = new AutomaticCheckOptions { Targets = [], Cleanup = cleanup }.ActiveLabels().Count();
         TextCleanupStatusText.Text = count == 0
-            ? "使用原文，不做额外清理"
-            : $"已启用 {count} 项规则 · 可预览、可撤销 · 不修改源文件";
+            ? hasBookOverride ? "本书独立规则：使用原文" : "使用原文，不做额外清理"
+            : $"{(hasBookOverride ? "本书独立" : "项目通用")}已启用 {count} 项规则 · 可预览、可撤销 · 不修改源文件";
     }
 
     private void ConversionMode_Checked(object sender, RoutedEventArgs e)
@@ -2032,7 +2163,7 @@ public partial class MainWindow : Window
         PageMarginBottomText.Text = VisibleMarginBottomText.Text;
         PageMarginLeftText.Text = VisibleMarginLeftText.Text;
         PageMarginRightText.Text = VisibleMarginRightText.Text;
-        MarkVisibleLayoutChanged(LayoutTab);
+        MarkVisibleLayoutChanged(LayoutTab, deferPreview: true);
     }
 
     private void VisibleAlignmentCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2056,8 +2187,7 @@ public partial class MainWindow : Window
     {
         if (_syncingVisibleLayout || FontFamilyText is null) return;
         FontFamilyText.Text = VisibleFontFamilyText.Text;
-        MarkVisibleLayoutChanged(FontTab);
-        RefreshLayoutPreview();
+        MarkVisibleLayoutChanged(FontTab, deferPreview: true);
     }
 
     private void BrowseVisibleFont_Click(object sender, RoutedEventArgs e)
@@ -2116,7 +2246,7 @@ public partial class MainWindow : Window
     {
         if (!IsLoaded || _applyingProfile) return;
         SwitchToCustomModeAfterManualLayoutChange();
-        MarkVisibleLayoutChanged(LayoutTab);
+        MarkVisibleLayoutChanged(LayoutTab, deferPreview: true);
     }
 
     private void LayoutPreviewSetting_Click(object sender, RoutedEventArgs e)
@@ -2133,10 +2263,11 @@ public partial class MainWindow : Window
         MarkVisibleLayoutChanged(LayoutTab);
     }
 
-    private void MarkVisibleLayoutChanged(TabItem tab)
+    private void MarkVisibleLayoutChanged(TabItem tab, bool deferPreview = false)
     {
         if (!_applyingProfile) MarkDirtyTab(tab);
-        RefreshLayoutPreview();
+        if (deferPreview) RequestLayoutPreviewRefresh();
+        else RefreshLayoutPreview();
     }
 
     private void KindleModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2144,6 +2275,41 @@ public partial class MainWindow : Window
         if (PreviewDeviceFrame is null) return;
         ApplySelectedKindleModel();
         RefreshLayoutPreview();
+    }
+
+    private void ExpandKindlePreview_Click(object sender, RoutedEventArgs e)
+    {
+        var index = InkLayoutPage.Children.IndexOf(KindlePreviewPanel);
+        if (index < 0) return;
+        var preview = new Window
+        {
+            Title = "Kindle 书页预览 · 按 Esc 返回",
+            Owner = this,
+            Width = Math.Min(960, SystemParameters.WorkArea.Width),
+            Height = Math.Min(1000, SystemParameters.WorkArea.Height),
+            MinWidth = 520,
+            MinHeight = 500,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Resources = Resources,
+        };
+        preview.SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+        preview.PreviewKeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape) { args.Handled = true; preview.Close(); }
+        };
+        InkLayoutPage.Children.Remove(KindlePreviewPanel);
+        ExpandKindlePreviewButton.Visibility = Visibility.Collapsed;
+        try
+        {
+            preview.Content = KindlePreviewPanel;
+            preview.ShowDialog();
+        }
+        finally
+        {
+            preview.Content = null;
+            InkLayoutPage.Children.Insert(index, KindlePreviewPanel);
+            ExpandKindlePreviewButton.Visibility = Visibility.Visible;
+        }
     }
 
     private void ApplySelectedKindleModel()
@@ -2171,6 +2337,14 @@ public partial class MainWindow : Window
     private void RefreshLayoutPreview()
     {
         if (LayoutPreviewBody is null || PreviewDeviceFrame is null) return;
+        _layoutPreviewTimer.Stop();
+        if (_layoutPreviewPages.Count > 0 && !HasValidLayoutPreviewInput())
+        {
+            // New source content must still appear while a numeric edit is incomplete.
+            // Retain the last valid visual settings instead of showing the previous book.
+            RebuildLayoutPreviewPages(_layoutPreviewPaginationKey?.Indent);
+            return;
+        }
         var fontPercent = ParsePreviewNumber(FontSizeText?.Text, 110);
         var linePercent = ParsePreviewNumber(LineHeightText?.Text, 120);
         var fontSize = Math.Clamp(16 * fontPercent / 100, 12, 28);
@@ -2199,14 +2373,17 @@ public partial class MainWindow : Window
         RebuildLayoutPreviewPages();
     }
 
-    private void RebuildLayoutPreviewPages()
+    private void RebuildLayoutPreviewPages(int? retainedIndent = null)
     {
         if (PreviewDeviceFrame is null || LayoutPreviewBody is null) return;
         var availableWidth = PreviewDeviceFrame.Width - PreviewDeviceFrame.Padding.Left - PreviewDeviceFrame.Padding.Right;
         var availableHeight = PreviewDeviceFrame.Height - PreviewDeviceFrame.Padding.Top - PreviewDeviceFrame.Padding.Bottom;
         var fullWidthIndent = FullWidthIndentCheck?.IsChecked == true ? SelectedFullWidthIndentCount() : 0;
         var cssIndent = Math.Clamp((int)Math.Round(ParsePreviewNumber(IndentText?.Text, 0), MidpointRounding.AwayFromZero), 0, 20);
-        var indent = new string('　', Math.Clamp(fullWidthIndent + cssIndent, 0, 40));
+        var indent = new string('　', retainedIndent ?? Math.Clamp(fullWidthIndent + cssIndent, 0, 40));
+        var key = new LayoutPreviewPaginationKey(_layoutPreviewDocumentTitle, _layoutPreviewParagraphs,
+            availableWidth, availableHeight, LayoutPreviewBody.FontSize, LayoutPreviewBody.LineHeight, indent.Length);
+        if (key == _layoutPreviewPaginationKey) return;
         var displayParagraphs = _layoutPreviewParagraphs.Select(paragraph => indent + paragraph).ToArray();
         _layoutPreviewPages = LayoutPreviewPaginator.Paginate(
             _layoutPreviewDocumentTitle,
@@ -2215,6 +2392,7 @@ public partial class MainWindow : Window
             availableHeight,
             LayoutPreviewBody.FontSize,
             LayoutPreviewBody.LineHeight);
+        _layoutPreviewPaginationKey = key;
         _layoutPreviewPageIndex = Math.Clamp(_layoutPreviewPageIndex, 0, Math.Max(0, _layoutPreviewPages.Count - 1));
         ShowLayoutPreviewPage();
     }
@@ -2246,7 +2424,8 @@ public partial class MainWindow : Window
     }
 
     private static double ParsePreviewNumber(string? text, double fallback) =>
-        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : fallback;
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value)
+            ? value : fallback;
 
     private void RemoveSelected_Click(object sender, RoutedEventArgs e)
     {
@@ -2467,6 +2646,7 @@ public partial class MainWindow : Window
         OpenCoverPreviewButton.IsEnabled = inspectedBook is not null;
         ClearCoverButton.IsEnabled = coverBook?.CoverImagePath is not null;
         if (_workspacePage != WorkspacePage.Cover) UpdateSelectedBookInspector(inspectedBook);
+        UpdateTextCleanupSummary(inspectedBook);
         if (SelectedBookOptionsText is not null)
             SelectedBookOptionsText.Text = inspectedBook is null
                 ? "请先在上方选择一本小说"
@@ -2499,6 +2679,7 @@ public partial class MainWindow : Window
         UpdateContextualControls();
         UpdateMetadataMappingSummary();
         UpdateSelectedBookInspector(_inspectedLibraryBook);
+        UpdateTextCleanupSummary(_inspectedLibraryBook);
         _selectionPreviewCancellation?.Cancel();
         _selectionPreviewCancellation?.Dispose();
         _selectionPreviewCancellation = new CancellationTokenSource();
@@ -3837,9 +4018,8 @@ public partial class MainWindow : Window
         foreach (var book in InputBooks)
             if (snapshots.TryGetValue(book.InputPath, out var snapshot))
                 book.SetAnalysisSnapshot(snapshot);
-        _bookWorklistView?.Refresh();
-        UpdateSelectedBookInspector(CurrentLibraryInspectorBook());
-        UpdateStatus();
+        RequestAnalysisUiRefresh();
+        RefreshWorkflowRows();
     }
 
     private void UpdateContextualControls()
@@ -3857,8 +4037,11 @@ public partial class MainWindow : Window
         ClearFilesButton.IsEnabled = count > 0;
         RunPreflightButton.IsEnabled = selectedCount > 0;
         ConvertButton.IsEnabled = selectedCount > 0 && !CancelButton.IsEnabled;
+        // The caption always names the action. Showing "请先选择书稿" inside the filled primary button
+        // turned it into a disabled button that read like an instruction, which is what the button
+        // looked like in the corner of an empty library.
         ConvertButton.Content = selectedCount == 0
-            ? (_compactLayout ? "开始转换" : "请先选择书稿")
+            ? (_compactLayout ? "开始转换" : "开始批量转换")
             : (_compactLayout ? $"转换 {selectedCount} 本" : $"开始转换所选 {selectedCount} 本");
         ConvertButton.ToolTip = selectedCount == 0 ? "请先在书库选择至少一本书稿" : $"仅转换当前选中的 {selectedCount} 本书稿";
         AutomationProperties.SetName(ConvertButton, selectedCount == 0 ? "开始转换，当前没有选择书稿" : $"开始转换所选 {selectedCount} 本书稿");
@@ -4109,18 +4292,19 @@ public partial class MainWindow : Window
         SettingsButton.Content = compact ? string.Empty : "设置";
         SidebarColumn.Width = new GridLength(compact ? 132 : string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase) ? 166 : 184);
         SidebarPanel.Padding = compact ? new Thickness(7) : new Thickness(10);
-        LibraryNavigationButton.Content = "书库";
+        LibraryNavigationButton.Content = compact ? "1 导入" : "1  导入书稿";
+        ReviewNavigationButton.Content = compact ? "2 检查" : "2  检查与修复";
         ChaptersNavigationButton.Content = compact ? "章节" : "章节正文";
         CoverNavigationButton.Content = compact ? "封面" : "封面信息";
-        LayoutNavigationButton.Content = compact ? "排版" : "排版插图";
-        ConvertNavigationButton.Content = compact ? "转换" : "转换输出";
-        TasksNavigationButton.Content = compact ? "任务" : "任务中心";
+        LayoutNavigationButton.Content = compact ? "3 制作" : "3  制作设置";
+        ConvertNavigationButton.Content = compact ? "4 转换" : "4  转换与验收";
+        TasksNavigationButton.Content = compact ? "转换记录" : "转换记录与验收";
         ModeLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PresetLabelText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         LayoutModeCombo.Width = compact ? 128 : 178;
-        LayoutNavigationColumn.Width = new GridLength(compact ? 178 : 210);
-        LayoutSettingsColumn.Width = new GridLength(compact ? 340 : 390);
-        KindleModelCombo.Width = compact ? 210 : 250;
+        LayoutNavigationColumn.Width = new GridLength(compact ? 156 : 184);
+        LayoutSettingsColumn.Width = new GridLength(_preferredLayoutSettingsWidth ?? (compact ? 310 : 350));
+        KindleModelCombo.Width = double.NaN;
         ManagePresetButton.Content = string.Empty;
         RunPreflightButton.Content = compact ? string.Empty : "检查问题";
         ConvertButton.Content = compact ? "开始转换" : "开始批量转换";
@@ -4415,6 +4599,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
         BookAnalysisStatus.Running => "正在分析…",
         BookAnalysisStatus.Unavailable => "分析失败",
         _ when (_preflightErrorCount ?? 0) > 0 => $"必须处理 {_preflightErrorCount}",
+        _ when PreflightIssues.Any(i => i.Code == "chapter_structure_suggested") => "建议整理结构",
         _ when _preflightWarningCount > 0 => $"建议处理 {_preflightWarningCount}",
         _ when _analysisSnapshot is not null => _analysisSnapshot.Readiness.Label,
         _ when HasBeenChecked => "可直接转换",
@@ -4427,6 +4612,7 @@ public sealed class InputBookItem : INotifyPropertyChanged
         BookAnalysisStatus.Running => "正在后台识别章节并检查转换条件",
         BookAnalysisStatus.Unavailable => _analysisFailure ?? "暂时无法完成分析",
         _ when (_preflightErrorCount ?? 0) > 0 => $"发现 {_preflightErrorCount} 个必须处理的问题",
+        _ when PreflightIssues.FirstOrDefault(i => i.Code == "chapter_structure_suggested") is { } structure => structure.Message.Split('\n')[0],
         _ when _preflightWarningCount > 0 => $"发现 {_preflightWarningCount} 条建议；仍可继续转换",
         _ when _analysisSnapshot is not null => _analysisSnapshot.Readiness.Summary,
         _ when HasBeenChecked => $"已识别 {ChapterCandidateCount} 个章节候选；未发现阻止转换的问题",
@@ -4469,6 +4655,8 @@ public sealed class InputBookItem : INotifyPropertyChanged
 
     public void SetAnalysisPending()
     {
+        if (_analysisStatus == BookAnalysisStatus.Pending && _analysisSnapshot is null
+            && _preflightErrorCount is null && _analysisFailure is null) return;
         _analysisSnapshot = null;
         _preflightErrorCount = null;
         _preflightWarningCount = 0;
@@ -4479,13 +4667,18 @@ public sealed class InputBookItem : INotifyPropertyChanged
 
     public void SetAnalysisDisabled()
     {
-        SetAnalysisPending();
+        if (_analysisStatus == BookAnalysisStatus.Disabled) return;
+        _analysisSnapshot = null;
+        _preflightErrorCount = null;
+        _preflightWarningCount = 0;
+        _analysisFailure = null;
         _analysisStatus = BookAnalysisStatus.Disabled;
         RaiseAnalysisPropertiesChanged();
     }
 
     public void SetAnalysisRunning()
     {
+        if (_analysisStatus == BookAnalysisStatus.Running) return;
         _analysisStatus = BookAnalysisStatus.Running;
         RaiseAnalysisPropertiesChanged();
     }
@@ -4503,6 +4696,10 @@ public sealed class InputBookItem : INotifyPropertyChanged
     public void SetAnalysisSnapshot(BookAnalysisSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (_analysisStatus == BookAnalysisStatus.Completed && _analysisSnapshot is { } previous
+            && snapshot.Issues.SequenceEqual(previous.Issues)
+            && (snapshot with { AnalyzedAtUtc = previous.AnalyzedAtUtc, Issues = previous.Issues }) == previous)
+            return;
         _analysisSnapshot = snapshot;
         _analysisFailure = null;
         _preflightErrorCount = snapshot.Readiness.ErrorCount;

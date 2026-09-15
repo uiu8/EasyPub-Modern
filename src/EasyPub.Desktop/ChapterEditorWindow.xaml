@@ -12,6 +12,19 @@
         <Style TargetType="Expander" BasedOn="{StaticResource {x:Type Expander}}">
             <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
         </Style>
+        <!-- One-click repair is the action most users actually want, so it carries the primary colour
+             and sits first instead of blending into a row of identical grey buttons. Colours are
+             DynamicResource so a window built without App.xaml (tests) still loads. -->
+        <Style x:Key="HeroRepairButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource PrimaryActionBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryActionBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryActionTextBrush}"/>
+            <Setter Property="MinHeight" Value="42"/>
+            <Setter Property="Padding" Value="18,9"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+        </Style>
         <Style x:Key="ChapterFilterRadio" TargetType="{x:Type RadioButton}">
             <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -38,7 +51,10 @@
                                 <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="FilterSurface" Property="Background" Value="{DynamicResource SubtleSurfaceBrush}"/>
+                                <Setter TargetName="FilterSurface" Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FilterSurface" Property="BorderBrush" Value="{DynamicResource PrimaryTextBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="FilterSurface" Property="Opacity" Value="0.45"/>
@@ -48,7 +64,7 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <HierarchicalDataTemplate DataType="{x:Type local:ChapterTreeNode}" ItemsSource="{Binding Children}">
+        <HierarchicalDataTemplate DataType="{x:Type local:ChapterTreeNode}" ItemsSource="{Binding VisibleChildren}">
             <Border Padding="5,6" CornerRadius="5">
                 <Border.Style><Style TargetType="Border"><Style.Triggers>
                     <DataTrigger Binding="{Binding IsOperationSelected}" Value="True"><Setter Property="Background" Value="{DynamicResource SelectedSurfaceBrush}"/></DataTrigger>
@@ -71,18 +87,38 @@
     <Grid Margin="20">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="16"/><RowDefinition Height="*"/><RowDefinition Height="12"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Margin="0,0,12,0">
                 <TextBlock Text="章节工作台" FontSize="25" FontWeight="SemiBold"/>
                 <TextBlock x:Name="SourceText" Margin="0,4,0,0" Foreground="{DynamicResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis"/>
                 <TextBlock x:Name="SummaryText" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
             </StackPanel>
-            <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,10,0,0">
+                <Button x:Name="AutoRepairButton" Style="{StaticResource HeroRepairButton}" Click="AutoRepair_Click" ToolTip="查找参考目录并生成方案；核对预览后才应用。仅默认移除正文一致的重复章节，可撤销">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE90F;" FontFamily="Segoe Fluent Icons" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="预览目录修复" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="CatalogAssistButton" Content="手动核对目录…" Click="CatalogAssist_Click" ToolTip="选择来源、粘贴目录，逐项查看匹配和原文后应用"/>
                 <Button x:Name="RecognitionSettingsButton" Content="识别设置…" Click="RecognitionSettings_Click"/>
+                <Button x:Name="RecoverStructureButton" Visibility="Collapsed" Content="结构整理…" Click="RecoverStructure_Click" ToolTip="预览编号分组、排除假卷与额外章头，按原文顺序重建"/>
                 <Button x:Name="UndoButton" Content="撤销" Click="Undo_Click" IsEnabled="False" ToolTip="撤销本次章节修改（Ctrl+Z）"/>
                 <Button x:Name="RedoButton" Content="重做" Click="Redo_Click" IsEnabled="False" ToolTip="重做（Ctrl+Y）"/>
-                <Button x:Name="WorkbenchMoreButton" Content="更多 ▾" Click="WorkbenchMore_Click" Margin="0"/>
+                <Button x:Name="WorkbenchMoreButton" Content="整理工具 ▾" Click="WorkbenchMore_Click" Margin="0"/>
             </WrapPanel>
+            <TextBlock x:Name="WorkflowHintText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"/>
+            <Border x:Name="StructureSuggestionBanner" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed" Margin="0,10,0,0" Padding="10" Background="{DynamicResource RaisedSurfaceBrush}" CornerRadius="8">
+                <StackPanel>
+                    <TextBlock x:Name="StructureSuggestionText" TextWrapping="Wrap"/>
+                    <WrapPanel Margin="0,6,0,0">
+                        <Button Content="预览结构整理…" Click="RecoverStructure_Click"/>
+                        <Button Content="查看依据 / 涉及位置" Click="StructureEvidence_Click"/>
+                        <Button Content="本次暂不提醒" Click="DismissStructure_Click"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
         </Grid>
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions><ColumnDefinition Width="46*" MinWidth="310"/><ColumnDefinition Width="14"/><ColumnDefinition Width="54*" MinWidth="360"/></Grid.ColumnDefinitions>
@@ -104,7 +140,7 @@
                             </StackPanel>
                         </Border>
                         <ComboBox x:Name="IssueCategoryCombo" Grid.Column="1" Width="145" SelectedIndex="0" SelectionChanged="IssueCategory_Changed">
-                            <ComboBoxItem Content="全部问题"/><ComboBoxItem Content="疑似正文误识别"/><ComboBoxItem Content="重复标题"/><ComboBoxItem Content="编号异常"/><ComboBoxItem Content="卷与层级"/><ComboBoxItem Content="疑似漏识别"/><ComboBoxItem Content="其他提醒"/>
+                            <ComboBoxItem Content="全部问题"/><ComboBoxItem Content="漏识别"/><ComboBoxItem Content="误识别"/><ComboBoxItem Content="重复"/><ComboBoxItem Content="编号与层级"/><ComboBoxItem Content="其他提醒"/>
                         </ComboBox>
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,10,0,6">
@@ -117,20 +153,20 @@
                         <Button DockPanel.Dock="Right" Content="取消选择" Click="ClearSelection_Click" FontSize="11" Padding="7,3" MinHeight="26" Margin="4,0,0,0"/>
                         <TextBlock x:Name="BatchSelectionText" Text="Ctrl 多选 · Shift 连选" ToolTip="行高亮是操作选择，复选框仅控制目录" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <TreeView x:Name="ChapterTree" Grid.Row="4" ItemsSource="{Binding Roots}" BorderThickness="0" Background="Transparent"
+                    <TreeView x:Name="ChapterTree" Grid.Row="4" ItemsSource="{Binding VisibleRoots}" BorderThickness="0" Background="Transparent"
+                              VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="0"
                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                               SelectedItemChanged="ChapterTree_SelectedItemChanged" AllowDrop="True"
-                              PreviewMouseLeftButtonDown="ChapterTree_PreviewMouseLeftButtonDown" PreviewMouseRightButtonDown="ChapterTree_RightClick"
+                              PreviewMouseLeftButtonDown="ChapterTree_PreviewMouseLeftButtonDown" PreviewMouseRightButtonUp="ChapterTree_RightClick"
                               PreviewKeyDown="ChapterTree_KeyDown" PreviewMouseMove="ChapterTree_PreviewMouseMove" Drop="ChapterTree_Drop">
                         <TreeView.ItemContainerStyle><Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                             <EventSetter Event="Collapsed" Handler="ChapterNode_Collapsed"/>
-                            <Style.Triggers><DataTrigger Binding="{Binding IsReviewVisible}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
                         </Style></TreeView.ItemContainerStyle>
                     </TreeView>
                 </Grid>
             </Border>
-            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" Background="Transparent" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"/>
+            <GridSplitter Grid.Column="1" Width="10" HorizontalAlignment="Center" Style="{DynamicResource WorkspaceSplitter}" ShowsPreview="True" ToolTip="拖动调整章节树与原文宽度；方向键微调" AutomationProperties.Name="调整章节树与原文宽度" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"/>
             <Border Grid.Column="2" Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                 <Grid>
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -138,10 +174,10 @@
                         <StackPanel>
                             <TextBlock x:Name="ReviewHeading" Text="选择章节，核对原文" FontSize="17" FontWeight="SemiBold"/>
                             <TextBlock x:Name="ReviewExplanation" Text="点击左侧章节或选择待核对组。" TextWrapping="Wrap" MaxHeight="46" Margin="0,7,0,4" Foreground="{DynamicResource SecondaryTextBrush}"/>
-                            <Expander Header="为什么这样判断 / 涉及位置" FontSize="11" Margin="0,0,0,6">
+                            <Expander x:Name="ReviewEvidenceExpander" Header="判断依据与原文位置" FontSize="11" Margin="0,0,0,6">
                                 <StackPanel><TextBlock x:Name="ReviewDetailsText" TextWrapping="Wrap" Margin="0,4,0,4"/>
                                     <ComboBox x:Name="GroupLocationsCombo" DisplayMemberPath="Label" SelectionChanged="GroupLocation_Changed" Margin="0,4,0,4"/>
-                                    <WrapPanel><Button Content="选择本组全部" Click="SelectReviewGroup_Click"/><CheckBox x:Name="OnlyCurrentIssueCheck" Content="仅处理当前处" Click="OnlyCurrentIssue_Click" VerticalAlignment="Center"/></WrapPanel>
+                                    <WrapPanel x:Name="ReviewGroupControls"><Button x:Name="SelectReviewGroupButton" Content="选择本组全部章节" Click="SelectReviewGroup_Click"/><CheckBox x:Name="OnlyCurrentIssueCheck" Content="仅处理当前处" Click="OnlyCurrentIssue_Click" VerticalAlignment="Center"/></WrapPanel>
                                 </StackPanel>
                             </Expander>
                             <TextBlock x:Name="ActionScopeText" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" Margin="0,0,0,6"/>
@@ -159,7 +195,10 @@
                         <Separator Margin="0,10,0,8"/>
                         <TextBlock x:Name="FinalTitleText" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" Visibility="Collapsed" Margin="0,0,0,5"/>
                         <DockPanel Margin="0,0,0,6">
-                            <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Content="编辑原文…" Click="EditSource_Click" Margin="0" Padding="8,4" MinHeight="28"/>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <Button x:Name="RefreshSourceButton" Content="刷新原文" Click="RebuildFromRules_Click" Margin="0,0,8,0" Padding="8,4" MinHeight="28" ToolTip="读取已保存的 TXT，并按当前规则重新识别章节；会替换手工调整的章节树"/>
+                                <Button x:Name="EditSourceButton" Content="编辑原文…" Click="EditSource_Click" Margin="0" Padding="8,4" MinHeight="28"/>
+                            </StackPanel>
                             <TextBlock Text="原始文本" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             <TextBlock x:Name="SelectionHint" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="8,0,4,0" TextTrimming="CharacterEllipsis"/>
                         </DockPanel>
@@ -200,7 +239,7 @@
             </Border>
         </Grid>
         <DockPanel Grid.Row="4">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="14,0,0,0"><Button Content="取消" Click="Close_Click"/><Button x:Name="SaveChapterTreeButton" Content="保存章节树" Click="Save_Click" Margin="0" Padding="20,9" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}"/></StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="14,0,0,0"><Button Content="取消" Click="Close_Click"/><Button x:Name="SaveChapterTreeButton" Content="应用并返回" Click="Save_Click" Margin="0" Padding="20,9" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}"/></StackPanel>
             <TextBlock x:Name="SaveStateText" Text="原始 TXT 不变 · 按章节树顺序输出" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="11"/>
         </DockPanel>
         <Popup x:Name="ChapterActionsPopup" PlacementTarget="{Binding ElementName=ReviewMoreButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
@@ -224,25 +263,34 @@
         </Popup>
         <Border x:Name="RulesStorage" Visibility="Collapsed">
             <StackPanel x:Name="RecognitionRulesPanel" Margin="16">
+                <TextBlock x:Name="EffectiveRulesText" TextWrapping="Wrap" Margin="0,0,0,12"/>
                 <TextBlock Text="普通章节 · 项目通用" FontWeight="SemiBold" FontSize="16"/>
-                <TextBlock Text="留空使用原版默认。保存后回写项目通用设置，不自动重建其他已保存章节树。" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                <TextBlock Text="留空使用内置规则：中文编号、卷章回节及独立的序章、番外等标题。项目通用设置不自动重建已保存章节树。" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                <Expander Header="自定义普通章节表达式" Margin="0,0,0,10"><StackPanel>
                 <TextBox x:Name="ChapterPatternText" FontFamily="Consolas"/>
                 <Button Content="恢复普通默认" Click="ResetChapterPattern_Click" HorizontalAlignment="Left" Margin="0,5,0,12"/>
+                </StackPanel></Expander>
                 <TextBlock Text="数字章节 · 本书 / 全局 / 方案" FontWeight="SemiBold" FontSize="16"/>
                 <TextBlock x:Name="NumericScopeText" TextWrapping="Wrap" Margin="0,4,0,6"/>
                 <CheckBox x:Name="NumericHeadingsCheck" Content="识别数字章号（直接切换仅影响本书）" Margin="0,0,0,6"/>
                 <WrapPanel Margin="0,0,0,6"><TextBlock Text="最少有效正文行数" VerticalAlignment="Center"/><TextBox x:Name="NumericMinimumLinesText" IsEnabled="{Binding IsChecked, ElementName=NumericHeadingsCheck}" Text="5" Width="55" Margin="8,0"/><TextBlock Text="0 不限；不含标题、空行及已移除行" VerticalAlignment="Center"/></WrapPanel>
-                <Button Content="数字表达式与命名方案…" Click="NumericRules_Click" HorizontalAlignment="Left" Margin="0,0,0,12"/>
+                <Button Content="数字表达式与方案…" Click="NumericRules_Click" HorizontalAlignment="Left" Margin="0,0,0,12"/>
+                <TextBlock Text="标题纠错 · 跳章区间检测" FontWeight="SemiBold" FontSize="16"/>
+                <Button Content="标题纠错规则与方案…" Click="HeadingCorrections_Click" HorizontalAlignment="Left" Margin="0,6,0,12"/>
                 <TextBlock Text="层级识别 · 项目通用" FontWeight="SemiBold" FontSize="16"/>
                 <CheckBox x:Name="HierarchyEnabledCheck" Content="启用卷 / 章 / 节层级识别" Margin="0,6,0,8"/>
+                <Expander Header="自定义卷 / 章 / 节表达式" IsEnabled="{Binding IsChecked, ElementName=HierarchyEnabledCheck}" Margin="0,0,0,10"><StackPanel>
                 <TextBlock Text="一级（卷、部、篇）"/><TextBox x:Name="Level1PatternText" FontFamily="Consolas" Margin="0,4,0,6"/>
                 <TextBlock Text="二级（章、回）"/><TextBox x:Name="Level2PatternText" FontFamily="Consolas" Margin="0,4,0,6"/>
                 <TextBlock Text="三级（节）"/><TextBox x:Name="Level3PatternText" FontFamily="Consolas" Margin="0,4,0,6"/>
                 <Button Content="恢复层级默认" Click="ResetRules_Click" HorizontalAlignment="Left" Margin="0,0,0,12"/>
+                </StackPanel></Expander>
+                <Expander Header="目录输出 · 项目通用" Margin="0,0,0,12"><StackPanel>
                 <TextBlock Text="目录输出 · 项目通用" FontWeight="SemiBold" FontSize="16"/>
                 <CheckBox x:Name="IncludeHtmlTocPageCheck" Content="在正文开头生成目录页" Margin="0,6,0,6" ToolTip="默认关闭；不影响阅读器导航目录"/>
                 <CheckBox x:Name="IncludeChapterTopNavigationCheck" Content="每章标题上方显示章节导航" Margin="0,0,0,12" ToolTip="默认关闭"/>
-                <TextBlock Text="调整设置不会立即替换手动章节树；请明确选择重新识别。" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,0,8"/>
+                </StackPanel></Expander>
+                <TextBlock Text="保留设置：保存供下次识别使用，当前章节树不变。重新识别：替换当前树，可撤销。最后点击工作台的“应用并返回”提交。" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,0,8"/>
                 <Button x:Name="RebuildRulesButton" Content="按当前规则重新识别…" Click="RebuildFromRules_Click" HorizontalAlignment="Left"/>
             </StackPanel>
         </Border>

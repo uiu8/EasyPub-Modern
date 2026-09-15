@@ -25,7 +25,23 @@ public sealed record BookMetadataOverrides
         string.IsNullOrWhiteSpace(Description);
 }
 
-public sealed record FolderMetadataRule(string FolderPath, BookMetadataOverrides Metadata);
+/// <summary>
+/// What one folder's books should look like, and which directory sources to consult first for them.
+/// The source preference lives here because the reason to prefer a site is nearly always the folder:
+/// a drop folder fed by one site's downloader holds nothing but that site's books.
+/// </summary>
+public sealed record FolderMetadataRule(
+    string FolderPath,
+    BookMetadataOverrides Metadata,
+    IReadOnlyList<string>? PreferredSources = null)
+{
+    /// <summary>Source ids to consult first, in order. Empty means "use the global source order".</summary>
+    public IReadOnlyList<string> Sources => PreferredSources is { Count: > 0 } ? PreferredSources : [];
+
+    /// <summary>Source names for display; an id with no matching source is shown as-is.</summary>
+    public string SourceLabel => string.Join(" / ", Sources.Select(
+        id => BookSourceCatalog.BuiltIn.FirstOrDefault(source => string.Equals(source.Id, id, StringComparison.OrdinalIgnoreCase))?.Name ?? id));
+}
 
 public sealed record MetadataMappingPreview(
     string InputPath,
@@ -98,7 +114,7 @@ public static class MetadataMappingResolver
                 Path.GetFileName(fullPath),
                 winner,
                 candidates.Length,
-                winner is null ? "—" : Describe(winner.Metadata),
+                winner is null ? "—" : Describe(winner),
                 winner is null
                     ? "未命中规则"
                     : candidates.Length == 1
@@ -125,8 +141,9 @@ public static class MetadataMappingResolver
     private static string? Prefer(string? preferred, string? fallback) =>
         string.IsNullOrWhiteSpace(preferred) ? fallback : preferred.Trim();
 
-    private static string Describe(BookMetadataOverrides metadata)
+    private static string Describe(FolderMetadataRule rule)
     {
+        var metadata = rule.Metadata;
         var values = new List<string>();
         if (!string.IsNullOrWhiteSpace(metadata.Author)) values.Add($"作者={metadata.Author}");
         if (!string.IsNullOrWhiteSpace(metadata.Publisher)) values.Add($"出版社={metadata.Publisher}");
@@ -134,6 +151,7 @@ public static class MetadataMappingResolver
         if (!string.IsNullOrWhiteSpace(metadata.Language)) values.Add($"语言={metadata.Language}");
         if (!string.IsNullOrWhiteSpace(metadata.Isbn)) values.Add($"ISBN={metadata.Isbn}");
         if (metadata.PublicationDate is not null) values.Add($"日期={metadata.PublicationDate:yyyy-MM-dd}");
+        if (rule.Sources.Count > 0) values.Add($"优先书源={rule.SourceLabel}");
         return values.Count == 0 ? "其他标准书籍信息" : string.Join(" · ", values);
     }
 }

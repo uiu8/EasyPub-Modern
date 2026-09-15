@@ -11,11 +11,432 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using EasyPub.Core;
 using EasyPub.Desktop;
+using Xunit.Abstractions;
 
 namespace EasyPub.Desktop.Tests;
 
 public sealed class MainWindowLayoutTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public MainWindowLayoutTests(ITestOutputHelper output) => _output = output;
+
+    [Fact]
+    public void Workflow_failed_named_save_keeps_recovery_and_retry_clears_stale_snapshot()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "easypub-save-failure-" + Guid.NewGuid().ToString("N"));
+        var project = Path.Combine(dir, "blocked.easypubproj");
+        Directory.CreateDirectory(project);
+        try
+        {
+            RunInWindow(window =>
+            {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                PumpDispatcherUntil(() => (bool)typeof(MainWindow).GetField("_optionTrackingReady", flags)!.GetValue(window)!, TimeSpan.FromSeconds(3));
+                typeof(MainWindow).GetField("_currentProjectPath", flags)!.SetValue(window, project);
+                window.InputBooks.Add(new InputBookItem(Path.Combine(dir, "missing-book.txt")) { Title = "必须保留" });
+                var save = typeof(MainWindow).GetMethod("SaveRecoveryIfChangedAsync", flags)!;
+                var first = (Task)save.Invoke(window, null)!;
+                PumpDispatcherUntil(() => first.IsCompleted, TimeSpan.FromSeconds(3));
+                first.GetAwaiter().GetResult();
+                var recovery = Environment.GetEnvironmentVariable("EASYPUB_RECOVERY_PATH")!;
+                Assert.True(File.Exists(recovery));
+                Assert.NotNull(typeof(MainWindow).GetField("_projectSaveError", flags)!.GetValue(window));
+                Directory.Delete(project);
+                var retry = (Task)save.Invoke(window, null)!;
+                PumpDispatcherUntil(() => retry.IsCompleted, TimeSpan.FromSeconds(3));
+                retry.GetAwaiter().GetResult();
+                Assert.True(File.Exists(project));
+                Assert.False(File.Exists(recovery));
+                Assert.Null(typeof(MainWindow).GetField("_projectSaveError", flags)!.GetValue(window));
+            });
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Workflow_preserves_jump_gap_action_and_separates_planned_cleanup()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            ready.SetValue(window, false); // This presentation fixture supplies its own completed analysis.
+            var book = new InputBookItem(Path.Combine(Path.GetTempPath(), "workflow-book.txt"));
+            window.InputBooks.Add(book);
+            var issues = new[]
+            {
+                new ConversionPreflightIssue(book.InputPath, PreflightSeverity.Warning, "chapter_number_gap", "86 到 89；检查区间原文", PreflightTargetKind.Chapters, 42),
+                new ConversionPreflightIssue(book.InputPath, PreflightSeverity.Warning, "chapter_heading_typo", "疑似漏标题", PreflightTargetKind.Chapters, 40),
+                new ConversionPreflightIssue(book.InputPath, PreflightSeverity.Information, "cleanup", "已计划清理 4 处", PreflightTargetKind.TextCleanup),
+            };
+            book.SetAnalysisSnapshot(new BookAnalysisSnapshot(book.InputPath, "TXT", 1, DateTime.UtcNow, 5,
+                ReadinessEvaluator.Evaluate(issues), issues, DateTimeOffset.UtcNow));
+            typeof(MainWindow).GetMethod("RefreshWorkflowRows", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+            var grid = Assert.IsType<DataGrid>(window.FindName("WorkflowIssuesGrid"));
+            Assert.Equal(2, grid.Items.Count);
+            var combo = Assert.IsType<ComboBox>(window.FindName("WorkflowCategoryCombo"));
+            combo.SelectedItem = ReviewCategories.Missing;
+            // 漏识别 now groups jump gaps together with missing headings, so pick the jump-gap row
+            // instead of assuming the filter yields exactly one entry.
+            var row = grid.Items.Cast<PreflightIssueRow>().Single(item => item.Issue!.Code == "chapter_number_gap");
+            Assert.Equal("核对跳章区间", row.ActionLabel);
+            Assert.Equal(42, row.Issue!.LineNumber);
+            combo.SelectedItem = "全部问题";
+            var information = Assert.IsType<CheckBox>(window.FindName("WorkflowIncludeInformation"));
+            information.IsChecked = true;
+            information.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, information));
+            Assert.Equal(3, grid.Items.Count);
+            Assert.Equal("查看清理计划", grid.Items.Cast<PreflightIssueRow>().Last().ActionLabel);
+            var capture = Environment.GetEnvironmentVariable("EASYPUB_WORKFLOW_CAPTURE_PATH");
+            if (!string.IsNullOrWhiteSpace(capture))
+            {
+                var navigate = typeof(MainWindow).GetMethod("ShowWorkspacePage", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                navigate.Invoke(window, [Enum.Parse(navigate.GetParameters()[0].ParameterType, "Review")]);
+                window.UpdateLayout();
+                PumpDispatcherUntil(() => grid.Columns[3].ActualWidth > 200, TimeSpan.FromSeconds(2));
+                CaptureWindowVisual(window, capture);
+                window.Width = 1040; window.Height = 700; window.UpdateLayout();
+                PumpDispatcherUntil(() => grid.Columns.Sum(c => c.ActualWidth) <= grid.ActualWidth, TimeSpan.FromSeconds(2));
+                CaptureWindowVisual(window, Path.Combine(Path.GetDirectoryName(capture)!, "workflow-small.png"));
+            }
+            book.SetAnalysisSnapshot(book.AnalysisSnapshot! with { Issues = [], Readiness = ReadinessEvaluator.Evaluate([]) });
+            typeof(MainWindow).GetMethod("RefreshWorkflowRows", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+            Assert.Empty(grid.Items);
+        });
+    }
+
+    [Fact]
+    public void Workflow_named_project_autosaves_tree_and_rules_to_one_current_file()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "easypub-workflow-save-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var source = Path.Combine(dir, "book.txt");
+            File.WriteAllText(source, "第一章 开始\n正文\n第二章 后续\n正文");
+            var document = ChapterTreeDocument.LoadAsync(source).GetAwaiter().GetResult();
+            var project = Path.Combine(dir, "work.easypubproj");
+            RunInWindow(window =>
+            {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(window.Dispatcher));
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                PumpDispatcherUntil(() => (bool)typeof(MainWindow).GetField("_optionTrackingReady", flags)!.GetValue(window)!, TimeSpan.FromSeconds(3));
+                typeof(MainWindow).GetField("_currentProjectPath", flags)!.SetValue(window, project);
+                var book = new InputBookItem(source);
+                window.InputBooks.Add(book);
+                book.SetChapterTree(document.CreatePlan(document.Entries));
+                book.SetCleanupOverride(new TextCleanupOptions { RemoveSiteNotices = true });
+                var save = typeof(MainWindow).GetMethod("SaveRecoveryIfChangedAsync", flags)!;
+                var task = (Task)save.Invoke(window, null)!;
+                PumpDispatcherUntil(() => task.IsCompleted, TimeSpan.FromSeconds(3)); task.GetAwaiter().GetResult();
+                book.Title = "修改后的书名";
+                var first = (Task)save.Invoke(window, null)!;
+                var second = (Task)save.Invoke(window, null)!;
+                PumpDispatcherUntil(() => first.IsCompleted && second.IsCompleted, TimeSpan.FromSeconds(3));
+                first.GetAwaiter().GetResult(); second.GetAwaiter().GetResult();
+                var loaded = new EasyPubProjectStore(project).LoadAsync().GetAwaiter().GetResult();
+                Assert.Equal("修改后的书名", loaded.Books[0].Title);
+                Assert.Equal(document.Entries.Count, loaded.Books[0].ChapterTree!.Entries.Count);
+                Assert.True(loaded.Books[0].CleanupOverride!.RemoveSiteNotices);
+                Assert.Single(Directory.GetFiles(dir, "*.easypubproj"));
+                Assert.Empty(Directory.GetFiles(dir, "*.bak"));
+                Assert.Equal("第一章 开始\n正文\n第二章 后续\n正文", File.ReadAllText(source));
+            });
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Motion_navigation_keeps_only_current_page_animated_and_reduced_motion_clears_it()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            var reduced = typeof(MainWindow).GetField("_reduceMotion", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var apply = typeof(MainWindow).GetMethod("ApplyMotionSettings", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            reduced.SetValue(window, false);
+            apply.Invoke(window, null);
+            foreach (var name in new[] { "LayoutNavigationButton", "LibraryNavigationButton", "LayoutNavigationButton" })
+            {
+                var button = Assert.IsType<RadioButton>(window.FindName(name));
+                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button));
+            }
+            var library = Assert.IsAssignableFrom<FrameworkElement>(window.FindName("InkLibraryPage"));
+            var layout = Assert.IsAssignableFrom<FrameworkElement>(window.FindName("InkLayoutPage"));
+            Assert.Equal(Visibility.Visible, layout.Visibility);
+            Assert.False(library.HasAnimatedProperties);
+            Assert.Equal(MotionEffects.CanAnimate(true), layout.HasAnimatedProperties);
+            reduced.SetValue(window, true);
+            apply.Invoke(window, null);
+            Assert.False(layout.HasAnimatedProperties);
+            Assert.Equal(1, layout.Opacity);
+            Assert.Equal(false, window.Resources["MotionEnabled"]);
+        });
+    }
+
+    [Fact]
+    public void Motion_hover_cancels_immediately_on_disable_and_never_changes_size()
+    {
+        RunInWindow(window =>
+        {
+            var border = new Border { Width = 100, Height = 36, Opacity = 1 };
+            MotionEffects.SetHoverEnabled(border, true);
+            border.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0)
+                { RoutedEvent = UIElement.MouseEnterEvent });
+            Assert.Equal(MotionEffects.CanAnimate(true), border.HasAnimatedProperties);
+            MotionEffects.SetHoverEnabled(border, false);
+            Assert.False(border.HasAnimatedProperties);
+            Assert.Equal(1, border.Opacity);
+            Assert.Equal(100, border.Width);
+            Assert.Equal(36, border.Height);
+            Assert.False(MotionEffects.CanAnimate(false));
+        });
+    }
+
+    [Fact]
+    public void Preview_splitter_preserves_width_and_model_picker_stays_flexible()
+    {
+        RunInWindow(window =>
+        {
+            var navigation = Assert.IsType<RadioButton>(window.FindName("LayoutNavigationButton"));
+            navigation.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, navigation));
+            window.UpdateLayout();
+            var splitter = Assert.IsType<GridSplitter>(window.FindName("LayoutPreviewSplitter"));
+            Assert.True(splitter.ShowsPreview);
+            Assert.Equal(GridResizeBehavior.PreviousAndNext, splitter.ResizeBehavior);
+            Assert.True(double.IsNaN(Assert.IsType<ComboBox>(window.FindName("KindleModelCombo")).Width));
+            var column = Assert.IsType<ColumnDefinition>(window.FindName("LayoutSettingsColumn"));
+            column.Width = new GridLength(320);
+            window.UpdateLayout();
+            splitter.RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
+            window.Width = 1300;
+            window.UpdateLayout();
+            Assert.Equal(320, column.ActualWidth, 1);
+            Assert.True(Assert.IsType<Border>(window.FindName("KindlePreviewPanel")).ActualWidth > 220);
+        });
+    }
+
+    [Fact]
+    public void Performance_large_preview_reports_input_latency_without_synchronous_pagination()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            var body = string.Join("\n", Enumerable.Repeat(new string('文', 150), 20_000));
+            typeof(MainWindow).GetMethod("SetLayoutPreviewSample", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, ["长正文预览基线", body]);
+            var pagesField = typeof(MainWindow).GetField("_layoutPreviewPages", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var font = Assert.IsType<TextBox>(window.FindName("FontSizeText"));
+            var before = pagesField.GetValue(window);
+            var samples = new List<double>();
+            for (var i = 0; i < 20; i++)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                font.Text = (120 + i).ToString();
+                samples.Add(watch.Elapsed.TotalMilliseconds);
+                Assert.Same(before, pagesField.GetValue(window));
+            }
+            PumpDispatcherUntil(() => !ReferenceEquals(before, pagesField.GetValue(window)), TimeSpan.FromSeconds(3));
+            Assert.Equal(22.24, Assert.IsType<TextBlock>(window.FindName("LayoutPreviewBody")).FontSize, 5);
+            samples.Sort();
+            _output.WriteLine($"PREVIEW_SOURCE_CHARS={body.Length}; INPUTS=20; SYNCHRONOUS_PAGINATIONS=0");
+            _output.WriteLine($"INPUT_P50_MS={samples[9]:F3}; INPUT_P95_MS={samples[18]:F3}; INPUT_MAX_MS={samples[19]:F3}");
+            _output.WriteLine("仅衡量输入处理耗时，不代表渲染帧率或文件首次打开速度。");
+        });
+    }
+
+    [Fact]
+    public void Performance_editing_one_book_keeps_other_books_checked()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            var first = new InputBookItem(Path.Combine(Path.GetTempPath(), "performance-first.txt"));
+            var second = new InputBookItem(Path.Combine(Path.GetTempPath(), "performance-second.txt"));
+            window.InputBooks.Add(first);
+            window.InputBooks.Add(second);
+            var snapshot = new BookAnalysisSnapshot(second.InputPath, "TXT", 10, DateTime.UtcNow, 2,
+                ReadinessEvaluator.Evaluate([]), [], DateTimeOffset.UtcNow);
+            first.SetAnalysisSnapshot(snapshot with { InputPath = first.InputPath });
+            second.SetAnalysisSnapshot(snapshot);
+            first.Author = "作者修改";
+            Assert.Equal(BookAnalysisStatus.Pending, first.AnalysisStatus);
+            Assert.Equal(BookAnalysisStatus.Completed, second.AnalysisStatus);
+            Assert.Same(snapshot, second.AnalysisSnapshot);
+        });
+    }
+
+    [Fact]
+    public void Performance_preview_input_burst_is_deferred_and_unchanged_refresh_reuses_pages()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            var pagesField = typeof(MainWindow).GetField("_layoutPreviewPages", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var before = pagesField.GetValue(window);
+            var font = Assert.IsType<TextBox>(window.FindName("FontSizeText"));
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var text in new[] { "1", "12", "125", "130" }) font.Text = text;
+            Assert.True(ReferenceEquals(before, pagesField.GetValue(window)),
+                $"输入期间不应同步重新分页；4 次输入耗时 {stopwatch.Elapsed.TotalMilliseconds:F1} ms");
+            PumpDispatcherUntil(() => !ReferenceEquals(before, pagesField.GetValue(window)), TimeSpan.FromSeconds(3));
+            Assert.Equal(20.8, Assert.IsType<TextBlock>(window.FindName("LayoutPreviewBody")).FontSize, 5);
+            var refreshed = pagesField.GetValue(window);
+            typeof(MainWindow).GetMethod("RefreshLayoutPreview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+            Assert.Same(refreshed, pagesField.GetValue(window));
+        });
+    }
+
+    [Fact]
+    public void Performance_repeated_pending_state_emits_no_redundant_notifications()
+    {
+        var book = new InputBookItem(Path.Combine(Path.GetTempPath(), "performance-pending.txt"));
+        book.SetAnalysisPending();
+        var notifications = 0;
+        book.PropertyChanged += (_, _) => notifications++;
+        for (var i = 0; i < 10; i++) book.SetAnalysisPending();
+        Assert.Equal(0, notifications);
+    }
+
+    [Fact]
+    public void Performance_cached_snapshot_does_not_refresh_but_changed_issues_do()
+    {
+        var book = new InputBookItem(Path.Combine(Path.GetTempPath(), "performance-snapshot.txt"));
+        var snapshot = new BookAnalysisSnapshot(book.InputPath, "TXT", 10, DateTime.UtcNow, 1,
+            ReadinessEvaluator.Evaluate([]), [], DateTimeOffset.UtcNow);
+        book.SetAnalysisSnapshot(snapshot);
+        var notifications = 0;
+        book.PropertyChanged += (_, _) => notifications++;
+        book.SetAnalysisSnapshot(snapshot with { AnalyzedAtUtc = snapshot.AnalyzedAtUtc.AddSeconds(1), Issues = [] });
+        Assert.Equal(0, notifications);
+        Assert.Same(snapshot, book.AnalysisSnapshot);
+        var issues = new[] { new ConversionPreflightIssue(book.InputPath, PreflightSeverity.Warning,
+            "chapter", "检查章节", PreflightTargetKind.Chapters) };
+        book.SetAnalysisSnapshot(snapshot with { Issues = issues, Readiness = ReadinessEvaluator.Evaluate(issues) });
+        Assert.True(notifications > 0);
+        Assert.Single(book.PreflightIssues);
+    }
+
+    [Fact]
+    public void Performance_invalid_preview_input_keeps_last_page_and_valid_input_recovers()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            var font = Assert.IsType<TextBox>(window.FindName("FontSizeText"));
+            var preview = Assert.IsType<TextBlock>(window.FindName("LayoutPreviewBody"));
+            var before = preview.FontSize;
+            var refresh = typeof(MainWindow).GetMethod("RefreshLayoutPreview", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            foreach (var invalid in new[] { "", "-", "NaN", "Infinity", "0" })
+            {
+                font.Text = invalid;
+                refresh.Invoke(window, null);
+                Assert.Equal(before, preview.FontSize);
+            }
+            typeof(MainWindow).GetMethod("SetLayoutPreviewSample", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, ["另一部书", "新的正文不能被旧书覆盖。"]);
+            Assert.Contains("新的正文", preview.Text);
+            Assert.Equal("另一部书", Assert.IsType<TextBlock>(window.FindName("LayoutPreviewTitle")).Text);
+            font.Text = "140";
+            PumpDispatcherUntil(() => preview.FontSize == 22.4, TimeSpan.FromSeconds(3));
+        });
+    }
+
+    [Fact]
+    public void Performance_global_change_still_invalidates_every_book()
+    {
+        RunInWindow(window =>
+        {
+            var ready = typeof(MainWindow).GetField("_optionTrackingReady", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            PumpDispatcherUntil(() => (bool)ready.GetValue(window)!, TimeSpan.FromSeconds(3));
+            foreach (var name in new[] { "global-one.txt", "global-two.txt" })
+            {
+                var book = new InputBookItem(Path.Combine(Path.GetTempPath(), name));
+                window.InputBooks.Add(book);
+                book.SetAnalysisSnapshot(new BookAnalysisSnapshot(book.InputPath, "TXT", 10, DateTime.UtcNow, 1,
+                    ReadinessEvaluator.Evaluate([]), [], DateTimeOffset.UtcNow));
+            }
+            Assert.All(window.InputBooks, book => Assert.Equal(BookAnalysisStatus.Completed, book.AnalysisStatus));
+            typeof(MainWindow).GetMethod("MarkProjectDirty", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+            Assert.All(window.InputBooks, book => Assert.Equal(BookAnalysisStatus.Pending, book.AnalysisStatus));
+        });
+    }
+
+    [Fact]
+    public void Performance_automatic_recheck_preserves_unrelated_snapshot_and_drops_superseded_result()
+    {
+        var firstPath = Path.Combine(Path.GetTempPath(), $"easypub-perf-first-{Guid.NewGuid():N}.txt");
+        var secondPath = Path.Combine(Path.GetTempPath(), $"easypub-perf-second-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(firstPath, "第一章 雨夜\n正文");
+            File.WriteAllText(secondPath, "第一章 山路\n正文");
+            RunInWindow(window =>
+            {
+                Assert.IsType<ComboBox>(window.FindName("FormatCombo")).SelectedIndex = 0;
+                var first = new InputBookItem(firstPath);
+                var second = new InputBookItem(secondPath);
+                window.InputBooks.Add(first);
+                window.InputBooks.Add(second);
+                PumpDispatcherUntil(() => window.InputBooks.All(book => book.AnalysisStatus == BookAnalysisStatus.Completed),
+                    TimeSpan.FromSeconds(5));
+                var previous = second.AnalysisSnapshot;
+                first.Author = "新作者";
+                Assert.Equal(BookAnalysisStatus.Completed, second.AnalysisStatus);
+                PumpDispatcherUntil(() => first.AnalysisStatus == BookAnalysisStatus.Completed, TimeSpan.FromSeconds(5));
+                Assert.Same(previous, second.AnalysisSnapshot);
+
+                var timer = (DispatcherTimer)typeof(MainWindow).GetField("_automaticAnalysisTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+                first.Author = "中间作者";
+                timer.Stop();
+                var running = (Task)typeof(MainWindow).GetMethod("RunAutomaticAnalysisAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+                first.Author = "最终作者";
+                timer.Stop();
+                PumpDispatcherUntil(() => running.IsCompleted, TimeSpan.FromSeconds(3));
+                running.GetAwaiter().GetResult();
+                Assert.Equal(BookAnalysisStatus.Pending, first.AnalysisStatus);
+                Assert.Same(previous, second.AnalysisSnapshot);
+            });
+        }
+        finally
+        {
+            File.Delete(firstPath);
+            File.Delete(secondPath);
+        }
+    }
+
+    [Fact]
+    public void Enlarged_kindle_preview_restores_panel_and_preserves_page()
+    {
+        RunInWindow(window =>
+        {
+            var panel = Assert.IsType<Border>(window.FindName("KindlePreviewPanel"));
+            var parent = Assert.IsType<Grid>(panel.Parent);
+            var page = Assert.IsType<TextBlock>(window.FindName("LayoutPreviewPageText"));
+            var before = page.Text;
+            var opened = false;
+            window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                var dialog = window.OwnedWindows.Cast<Window>().Single();
+                opened = ReferenceEquals(dialog.Content, panel);
+                dialog.Close();
+            }));
+            Assert.IsType<Button>(window.FindName("ExpandKindlePreviewButton"))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.True(opened);
+            Assert.Same(parent, panel.Parent);
+            Assert.Equal(before, page.Text);
+            Assert.Equal(Visibility.Visible, Assert.IsType<Button>(window.FindName("ExpandKindlePreviewButton")).Visibility);
+        });
+    }
+
     [Fact]
     public async Task Suggested_title_is_undoable_and_preserves_original_text()
     {
@@ -409,6 +830,7 @@ public sealed class MainWindowLayoutTests
                 Click("BackToGroupsButton"); Assert.Single(grid.Items.Cast<object>());
                 grouping.IsChecked = false; grouping.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, grouping));
                 var preview = (TextBox)window.FindName("PreviewText");
+                ((RadioButton)window.FindName("OriginalPreviewRadio")).IsChecked = true;
                 Assert.Equal("请记住本站", preview.SelectedText);
                 ((RadioButton)window.FindName("ProcessedPreviewRadio")).IsChecked = true;
                 Assert.DoesNotContain("请记住本站", preview.Text);
@@ -440,6 +862,118 @@ public sealed class MainWindowLayoutTests
                 search.Text = "";
                 var capturePath = Environment.GetEnvironmentVariable("EASYPUB_RULES_CAPTURE_PATH");
                 if (!string.IsNullOrWhiteSpace(capturePath)) { window.UpdateLayout(); CaptureWindowVisual(window, capturePath + "-main.png"); }
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Cleanup_can_select_multiple_rules_and_apply_the_final_selection()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var source = "第一章 标题\n正文\u200b\n请记住本站\n第一章 标题";
+            var window = (TextCleanupWindow)constructor.Invoke(["多规则应用", source, new TextCleanupOptions()]);
+            window.Owner = owner;
+            var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(20) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                var apply = (Button)window.FindName("ApplyRulesButton");
+                var invisible = (CheckBox)window.FindName("InvisibleCheck");
+                var notice = (CheckBox)window.FindName("NoticeCheck");
+                var duplicate = (CheckBox)window.FindName("DuplicateChapterCheck");
+                invisible.IsChecked = true; invisible.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, invisible));
+                notice.IsChecked = true; notice.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, notice));
+                duplicate.IsChecked = true; duplicate.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, duplicate));
+                // 模拟用户在连续勾选后立即点击；预览仍在分析时也应排队提交，不能静默无效。
+                apply.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, apply));
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+                var wait = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(20) };
+                wait.Tick += (_, _) =>
+                {
+                    if (window.DialogResult == true)
+                    {
+                        wait.Stop();
+                        return;
+                    }
+                    if (DateTime.UtcNow >= deadline)
+                    {
+                        wait.Stop();
+                        window.Close();
+                    }
+                };
+                wait.Start();
+            };
+            timer.Start();
+            Assert.True(window.ShowDialog() == true);
+            Assert.True(window.Result.RemoveInvisibleCharacters);
+            Assert.True(window.Result.RemoveSiteNotices);
+            Assert.True(window.Result.RemoveDuplicateChapterTitles);
+            var acceptedPreview = (TextCleanupPreview)typeof(TextCleanupWindow)
+                .GetField("_preview", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            Assert.DoesNotContain("请记住本站", acceptedPreview.Text);
+            Assert.DoesNotContain("\u200b", acceptedPreview.Text, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void Heading_correction_editor_does_not_show_numeric_controls()
+    {
+        RunInWindow(owner =>
+        {
+            var editor = new NumericHeadingRulesWindow(new(), new(), [], false, correctionsOnly: true) { Owner = owner };
+            editor.Show(); editor.UpdateLayout();
+            try
+            {
+                Assert.DoesNotContain(FindVisualDescendants<CheckBox>(editor), box => Equals(box.Content, "开启数字章号识别"));
+                Assert.Contains(FindVisualDescendants<TextBox>(editor), box => box.Text == "久=九");
+                Assert.DoesNotContain(FindVisualDescendants<TextBox>(editor), box => box.Text == NumericHeadingRule.DefaultPattern);
+            }
+            finally { editor.Close(); }
+            var numeric = new NumericHeadingRulesWindow(new(), new(), [], false) { Owner = owner };
+            numeric.Show(); numeric.UpdateLayout();
+            try { Assert.DoesNotContain(FindVisualDescendants<TextBox>(numeric), box => box.Text == "久=九"); }
+            finally { numeric.Close(); }
+        });
+    }
+
+    [Fact]
+    public void Cleanup_records_support_batch_keep_and_adopt_with_processed_preview()
+    {
+        RunInWindow(owner =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(owner.Dispatcher));
+            const string source = "第一章 标题\n正文甲\n测试广告甲\n正文乙\n测试广告乙\n正文丙";
+            var options = new TextCleanupOptions { RemoveSiteNotices = true, Advertisement = new() { Pattern = "测试广告" } };
+            var constructor = typeof(TextCleanupWindow).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var window = (TextCleanupWindow)constructor.Invoke(["批量广告", source, options]);
+            window.Owner = owner;
+            window.Show();
+            try
+            {
+                var grid = (DataGrid)window.FindName("ChangesGrid");
+                var apply = (Button)window.FindName("ApplyRulesButton");
+                PumpDispatcherUntil(() => apply.IsEnabled && grid.Items.Count == 2, TimeSpan.FromSeconds(4));
+                Assert.Equal(DataGridSelectionMode.Extended, grid.SelectionMode);
+                grid.SelectedItems.Add(grid.Items[0]);
+                grid.SelectedItems.Add(grid.Items[1]);
+                Assert.Equal(2, grid.SelectedItems.Count);
+                var keep = (Button)window.FindName("KeepSelectedButton");
+                keep.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, keep));
+                PumpDispatcherUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(4));
+                Assert.Contains("测试广告甲", TextCleanupPipeline.Apply(source, window.Result).Text);
+                Assert.Equal(2, grid.SelectedItems.Count);
+                var adopt = (Button)window.FindName("AdoptSelectedButton");
+                adopt.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, adopt));
+                PumpDispatcherUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(4));
+                var result = TextCleanupPipeline.Apply(source, window.Result).Text;
+                Assert.DoesNotContain("测试广告", result);
+                Assert.Contains("正文乙", result);
+                Assert.True(((RadioButton)window.FindName("ProcessedPreviewRadio")).IsChecked);
+                Assert.DoesNotContain("测试广告", ((TextBox)window.FindName("PreviewText")).Text);
             }
             finally { window.Close(); }
         });
@@ -541,7 +1075,7 @@ public sealed class MainWindowLayoutTests
     }
 
     [Fact]
-    public void Ink_workspace_uses_five_task_pages_without_a_duplicate_chapter_page()
+    public void Ink_workspace_uses_four_workflow_steps_and_preserves_production_and_history_pages()
     {
         RunInWindow(window =>
         {
@@ -618,9 +1152,10 @@ public sealed class MainWindowLayoutTests
 
             (string Navigation, string Title, string Page)[] cases =
             {
-                ("LibraryNavigationButton", "书库", "InkLibraryPage"),
-                ("CoverNavigationButton", "封面信息", "InkCoverPage"),
-                ("LayoutNavigationButton", "排版插图", "InkLayoutPage"),
+                ("LibraryNavigationButton", "导入书稿", "InkLibraryPage"),
+                ("ReviewNavigationButton", "检查与修复", "WorkflowReviewPage"),
+                ("CoverNavigationButton", "制作设置 · 封面", "InkCoverPage"),
+                ("LayoutNavigationButton", "制作设置 · 排版", "InkLayoutPage"),
                 ("ConvertNavigationButton", "转换输出", "InkConvertPage"),
                 ("TasksNavigationButton", "任务中心", "TaskCenterLanding"),
             };
@@ -652,7 +1187,8 @@ public sealed class MainWindowLayoutTests
             var visibleTopMargin = Assert.IsType<TextBox>(window.FindName("VisibleMarginTopText"));
             visibleTopMargin.Text = "24";
             Assert.Equal("24", Assert.IsType<TextBox>(window.FindName("PageMarginTopText")).Text);
-            Assert.True(Assert.IsType<Border>(window.FindName("PreviewDeviceFrame")).Padding.Top >= 48);
+            PumpDispatcherUntil(() => Assert.IsType<Border>(window.FindName("PreviewDeviceFrame")).Padding.Top >= 48,
+                TimeSpan.FromSeconds(3));
 
             var deviceCombo = Assert.IsType<ComboBox>(window.FindName("KindleModelCombo"));
             deviceCombo.SelectedItem = deviceCombo.Items.OfType<KindleDeviceProfile>().Single(item => item.Id == "custom");
@@ -1606,7 +2142,8 @@ public sealed class MainWindowLayoutTests
                 App? captureApp = null;
                 try
                 {
-                    var captureRequested = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH"))
+                    var captureRequested = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_WORKFLOW_CAPTURE_PATH"))
+                        || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_AUTOCHECK_CAPTURE"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_CHAPTER_CAPTURE_PATH"))
                         || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EASYPUB_LIBRARY_CAPTURE_PATH"))

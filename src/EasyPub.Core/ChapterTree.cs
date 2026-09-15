@@ -25,6 +25,7 @@ public sealed record ChapterTreePlan(
     public bool? NumericHeadingRecognition { get; init; }
     public int? NumericHeadingMinimumBodyLines { get; init; }
     public string? NumericHeadingPattern { get; init; }
+    public string? HeadingNumberCorrections { get; init; }
 }
 
 public sealed record ChapterTreeSourceLine(int LineNumber, string Text);

@@ -52,9 +52,11 @@ public sealed class LongTextPerformanceTests
                 existingPlan: null);
             loadWatch.Stop();
 
-            // Warm the test process so the budget reflects the long-text work rather
-            // than one-time JIT/setup noise from the first regex invocation.
+            // Warm the test process so the budget reflects the long-text work rather than one-time
+            // JIT/setup noise. The timed path is warmed as well: preflight and analysis are separate
+            // pipelines, so timing the very first analysis call measured JIT as much as the work.
             await new ConversionPreflightInspector(documentCache).InspectAsync([request]);
+            await new BookAnalysisCoordinator(documentCache: documentCache).AnalyzeAsync([request]);
             var analysisWatch = Stopwatch.StartNew();
             var report = (await new BookAnalysisCoordinator(documentCache: documentCache).AnalyzeAsync([request])).Report;
             analysisWatch.Stop();

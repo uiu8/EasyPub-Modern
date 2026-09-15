@@ -8,6 +8,7 @@ public sealed class NumericHeadingRulesWindow : Window
 {
     private readonly TextBox _pattern = new() { AcceptsReturn = true, MinHeight = 75, TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _minimum = new() { Width = 70 };
+    private readonly TextBox _corrections = new() { AcceptsReturn = true, MinHeight = 65, TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _sample = new() { Text = "001：规则", MinHeight = 38 };
     private readonly TextBlock _feedback = new() { TextWrapping = TextWrapping.Wrap };
     private readonly CheckBox _enabled = new() { Content = "开启数字章号识别" };
@@ -16,14 +17,17 @@ public sealed class NumericHeadingRulesWindow : Window
     private readonly TextBox _presetName = new() { ToolTip = "输入新名称另存方案；相同名称会询问是否覆盖。" };
     private readonly List<NamedNumericHeadingPreset> _saved;
     private readonly TocHierarchyOptions _global;
+    private readonly TocHierarchyOptions _current;
+    private readonly bool _correctionsOnly;
     public TocHierarchyOptions Result { get; private set; }
     public int Scope => _scope.SelectedIndex;
     public IReadOnlyList<NamedNumericHeadingPreset> Presets => _saved.ToArray();
 
     public NumericHeadingRulesWindow(TocHierarchyOptions current, TocHierarchyOptions global,
-        IReadOnlyList<NamedNumericHeadingPreset> presets, bool inherits)
+        IReadOnlyList<NamedNumericHeadingPreset> presets, bool inherits, bool correctionsOnly = false)
     {
-        Title = "数字章号识别 · 规则与方案";
+        _current = current; _correctionsOnly = correctionsOnly;
+        Title = correctionsOnly ? "标题纠错 · 规则与方案" : "数字章号识别 · 规则与方案";
         Width = 760; Height = 650; MinWidth = 580; MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
@@ -41,9 +45,9 @@ public sealed class NumericHeadingRulesWindow : Window
         _scope.SelectionChanged += (_, _) =>
         {
             if (Scope == 2) Load(_global);
-            _pattern.IsEnabled = _minimum.IsEnabled = _enabled.IsEnabled = Scope != 2;
+            _corrections.IsEnabled = _pattern.IsEnabled = _minimum.IsEnabled = _enabled.IsEnabled = Scope != 2;
         };
-        Label("已保存方案（输入名称可另存；方案包含开关、表达式和最低正文行数）");
+        Label(correctionsOnly ? "标题纠错方案（载入时仅使用编号错字表）" : "数字识别方案（开关、表达式和最低正文行数）");
         content.Children.Add(_presets);
         _presets.SelectionChanged += (_, _) => { if (_presets.SelectedItem is string name) _presetName.Text = name; };
         Label("方案名称"); content.Children.Add(_presetName);
@@ -53,6 +57,13 @@ public sealed class NumericHeadingRulesWindow : Window
         actions.Children.Add(Button("删除方案", DeletePreset));
         actions.Children.Add(Button("恢复内置默认", () => { _scope.SelectedIndex = 0; Load(new()); }));
         content.Children.Add(actions);
+        if (correctionsOnly)
+        {
+        Label("编号错字表（包含在方案中）：每行 原字=正确数字，例如 久=九；留空关闭。仅检测跳章区间内标题编号，最多纠正一个字，需核对后修复。修改后重新识别以刷新检测。");
+        content.Children.Add(_corrections);
+        }
+        else
+        {
         content.Children.Add(_enabled);
         Label("识别表达式：保留 (?<number>...) 章号组、(?<title>...) 标题组。章号仍限 1–9999。");
         content.Children.Add(_pattern);
@@ -65,9 +76,10 @@ public sealed class NumericHeadingRulesWindow : Window
         content.Children.Add(line);
         Label("测试一行文字（只测试格式，不判断正文行数）");
         content.Children.Add(_sample); content.Children.Add(Button("测试匹配", Test)); content.Children.Add(_feedback);
-        Label("所有改动先留在工作台；保存章节树时提交。取消工作台则不保存方案和全局修改。修改识别条件后请重新识别。");
+        }
+        Label("所有改动先留在工作台；应用并返回时提交。取消工作台则不保存方案和全局修改。修改识别条件后请重新识别。");
         Content = root; RefreshPresets(); Load(current);
-        _pattern.IsEnabled = _minimum.IsEnabled = _enabled.IsEnabled = Scope != 2;
+        _corrections.IsEnabled = _pattern.IsEnabled = _minimum.IsEnabled = _enabled.IsEnabled = Scope != 2;
     }
 
     private static Button Button(string text, Action action)
@@ -77,12 +89,14 @@ public sealed class NumericHeadingRulesWindow : Window
         return button;
     }
     private void Load(TocHierarchyOptions value)
-    { _pattern.Text = value.NumericHeadingPattern; _minimum.Text = value.NumericHeadingMinimumBodyLines.ToString(); _enabled.IsChecked = value.RecognizeNumericHeadings; }
+    { _corrections.Text = value.HeadingNumberCorrections; _pattern.Text = value.NumericHeadingPattern; _minimum.Text = value.NumericHeadingMinimumBodyLines.ToString(); _enabled.IsChecked = value.RecognizeNumericHeadings; }
     private TocHierarchyOptions Read()
     {
         NumericHeadingRule.Compile(_pattern.Text);
+        HeadingTypoRules.Parse(_corrections.Text);
         if (!int.TryParse(_minimum.Text, out var minimum) || minimum < 0) throw new ArgumentException("正文行数请输入非负整数。");
-        return new() { RecognizeNumericHeadings = _enabled.IsChecked == true, NumericHeadingMinimumBodyLines = minimum, NumericHeadingPattern = _pattern.Text };
+        return _correctionsOnly ? _current with { HeadingNumberCorrections = _corrections.Text }
+            : _current with { RecognizeNumericHeadings = _enabled.IsChecked == true, NumericHeadingMinimumBodyLines = minimum, NumericHeadingPattern = _pattern.Text };
     }
     private void RefreshPresets() => _presets.ItemsSource = _saved.Select(p => p.Name).ToArray();
     private void SavePreset()
@@ -92,15 +106,15 @@ public sealed class NumericHeadingRulesWindow : Window
         var value = Read();
         var index = _saved.FindIndex(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
         if (index >= 0 && MessageBox.Show(this, "替换同名方案？", "保存方案", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        var preset = new NamedNumericHeadingPreset(name, value.NumericHeadingPattern, value.NumericHeadingMinimumBodyLines, value.RecognizeNumericHeadings);
+        var preset = new NamedNumericHeadingPreset(name, value.NumericHeadingPattern, value.NumericHeadingMinimumBodyLines, value.RecognizeNumericHeadings) { HeadingNumberCorrections = value.HeadingNumberCorrections };
         if (index >= 0) _saved[index] = preset; else _saved.Add(preset);
-        RefreshPresets(); _presets.SelectedItem = name; _feedback.Text = "方案已暂存，保存章节树后写入设置。";
+        RefreshPresets(); _presets.SelectedItem = name; _feedback.Text = "方案已暂存，应用并返回后写入设置。";
     }
     private void LoadPreset()
     {
         var preset = _saved.FirstOrDefault(p => p.Name == _presets.SelectedItem as string) ?? throw new ArgumentException("请选择已保存方案。");
         _scope.SelectedIndex = 0;
-        Load(new() { RecognizeNumericHeadings = preset.Enabled, NumericHeadingMinimumBodyLines = preset.MinimumBodyLines, NumericHeadingPattern = preset.Pattern });
+        Load(new() { HeadingNumberCorrections = preset.HeadingNumberCorrections, RecognizeNumericHeadings = preset.Enabled, NumericHeadingMinimumBodyLines = preset.MinimumBodyLines, NumericHeadingPattern = preset.Pattern });
     }
     private void DeletePreset()
     {

@@ -5,7 +5,25 @@ namespace EasyPub.Core.Tests;
 public sealed class ChapterDiagnosticsTests
 {
     [Theory]
+    [InlineData("第30章玉姬")]
+    [InlineData("第三十章玉姬")]
+    [InlineData("第３０章玉姬")]
+    public async Task Known_heading_without_space_counts_in_sequence(string middle)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        try
+        {
+            await File.WriteAllTextAsync(path, $"第29章 前文\n正文\n{middle}\n正文\n第31章 后文\n正文");
+            var document = await ChapterTreeDocument.LoadAsync(path, @"^第[0-9０-９一二三四五六七八九十]+章");
+            Assert.Contains(document.Entries, e => e.Title == middle);
+            Assert.DoesNotContain(ChapterDiagnostics.Inspect(document), i => i.Code == "chapter_number_gap");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
     [InlineData("第66章 甲", "第66章 乙", "第68章 丙", "第67章 乙")]
+    [InlineData("第66章甲", "第66章乙", "第68章丙", "第67章乙")]
     [InlineData("第66章 甲", "第66章 甲", "第68章 丙", null)]
     [InlineData("第66章 甲（1）", "第66章 甲（2）", "第68章 丙", null)]
     [InlineData("第66章 甲", "第66章 乙", "第69章 丙", null)]
@@ -13,8 +31,15 @@ public sealed class ChapterDiagnosticsTests
         => Assert.Equal(expected, ChapterDiagnostics.SuggestCorrectedTitle(previous, current, next));
 
     [Theory]
+    [InlineData("第42章 回合（中）", "第42章 回合（下）", false)]
+    [InlineData("第42章 回合（上）", "第42章 回合（下）", false)]
+    [InlineData("第42章 回合（续，上）", "第42章 回合（续，下）", false)]
+    [InlineData("第42章 回合（下）", "第42章 回合（中）", true)]
+    [InlineData("第42章 回合（中）", "第42章 别的标题（下）", true)]
+    [InlineData("第42章 回合（中）", "第42章 回合（中）", true)]
     [InlineData("第25章 逃避可耻但有用（2）", "第25章 逃避可耻但有用（3）", false)]
     [InlineData("第25章 标题 (4)", "第25章 标题 (5，加更！)", false)]
+    [InlineData("第25章标题（2）", "第25章标题（3）", false)]
     [InlineData("第25章 标题（2）", "第25章 标题（2）", true)]
     [InlineData("第25章 标题（2）", "第25章 别的标题（3）", true)]
     [InlineData("第25章 标题（2）", "第24章 标题（3）", true)]

@@ -5,8 +5,11 @@ namespace EasyPub.Core;
 /// <summary>Read-only, conservative diagnostics; never rewrites the chapter plan.</summary>
 public static class ChapterDiagnostics
 {
-    private static readonly Regex Heading = new(@"^第\s*([0-9０-９零〇一二两三四五六七八九十百千万]+)\s*([章回卷部篇])(?:\s|[：:、.．]|$)", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+    // Known tree titles already passed recognition: 章/回 delimit the number themselves.
+    private static readonly Regex Heading = new(HeadingSyntax.Start + @"(?:第\s*)?([" + HeadingSyntax.Numerals + @"]+)\s*([章回]|[卷部篇](?=\s|[：:、.．]|$))(?:\s|[：:、.．])*", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+    private static readonly Regex SourceHeading = new(HeadingSyntax.Start + @"(?:第\s*)?([" + HeadingSyntax.Numerals + @"]+)\s*([章回])(?:\s|[：:、.．]|$)", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
     private static readonly Regex Part = new(@"^(.*?)\s*[（(]\s*([0-9]+)\s*(?:[,，][^()（）]*)?[）)]\s*$", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+    private static readonly Regex ChinesePart = new(@"^(.*?)\s*[（(]\s*(续\s*[,，、]?\s*)?([上中下])\s*[）)]\s*$", RegexOptions.Compiled, TimeSpan.FromMilliseconds(200));
 
     public static IReadOnlyList<ConversionPreflightIssue> Inspect(ChapterTreeDocument document, CancellationToken cancellationToken = default, bool detectUnrecognized = true,
         IReadOnlyList<ChapterTreeEntry>? currentEntries = null, int maximumIssues = 200)
@@ -69,14 +72,28 @@ public static class ChapterDiagnostics
             parents.Add(entry);
         }
         // A persisted manual plan is deliberate: do not flag merged/omitted headings here.
+        // Titles already present in the tree. A heading line whose title is already recognised is a
+        // repeated block (covered by the duplicate report), not a missed chapter.
+        var recognizedWords = entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber.HasValue)
+            .Select(e => ReferenceOutline.ParseKey(e.Title).Words)
+            .Where(words => words.Length >= 2)
+            .ToArray();
         foreach (var line in detectUnrecognized ? document.SourceLines : [])
         {
             cancellationToken.ThrowIfCancellationRequested();
             var text = line.Text.Trim();
             if (text.Length > 80 || recognized.Contains(line.LineNumber)) continue;
-            var match = Heading.Match(text);
+            var match = SourceHeading.Match(text);
             if (match.Success && match.Groups[2].Value is "章" or "回")
+            {
+                var words = ReferenceOutline.ParseKey(text).Words;
+                if (words.Length >= 2 && recognizedWords.Any(existing =>
+                        existing == words
+                        || existing.EndsWith(words, StringComparison.Ordinal)
+                        || words.EndsWith(existing, StringComparison.Ordinal)))
+                    continue;
                 Add("chapter_unrecognized", $"疑似章标题未进入章节树：{text}", line.LineNumber);
+            }
         }
         if (omitted > 0) issues.Add(new(document.SourcePath, PreflightSeverity.Warning, "chapter_diagnostics_limit",
             $"另有 {omitted} 条章节提示未展开；请先核对章节识别规则，再重新检查。", PreflightTargetKind.Chapters));
@@ -85,6 +102,15 @@ public static class ChapterDiagnostics
 
     private static bool IsNextPart(string before, string after)
     {
+        // Chinese split chapters are ordered parts, not duplicate chapter numbers.
+        // Keep the base title AND continuation qualifier identical; never accept a reversal.
+        var a = ChinesePart.Match(before);
+        var b = ChinesePart.Match(after);
+        if (a.Success && b.Success)
+            return a.Groups[1].Value.Trim().Length > 0
+                && a.Groups[1].Value.Trim() == b.Groups[1].Value.Trim()
+                && a.Groups[2].Success == b.Groups[2].Success
+                && "上中下".IndexOf(a.Groups[3].Value, StringComparison.Ordinal) < "上中下".IndexOf(b.Groups[3].Value, StringComparison.Ordinal);
         var left = Part.Match(before);
         var right = Part.Match(after);
         return left.Success && right.Success && left.Groups[1].Value.Trim().Length > 0
@@ -111,24 +137,5 @@ public static class ChapterDiagnostics
         return title[..number.Index] + (a.Value + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + title[(number.Index + number.Length)..];
     }
 
-    private static int? ParseNumber(string text)
-    {
-        text = string.Concat(text.Where(c => !char.IsWhiteSpace(c)).Select(c => c is >= '０' and <= '９' ? (char)(c - '０' + '0') : c));
-        if (int.TryParse(text, out var arabic)) return arabic;
-        if (text.Length > 12 || text.Any(char.IsAsciiDigit)) return null;
-        const string digits = "零一二三四五六七八九";
-        long total = 0, section = 0, digit = 0;
-        foreach (var c in text)
-        {
-            var value = c == '〇' ? 0 : c == '两' ? 2 : digits.IndexOf(c);
-            if (value >= 0) { digit = digit * 10 + value; continue; }
-            var unit = c switch { '十' => 10, '百' => 100, '千' => 1000, '万' => 10000, _ => 0 };
-            if (unit == 0) return null;
-            if (unit == 10000) { total += (section + digit) * unit; section = 0; }
-            else section += (digit == 0 ? 1 : digit) * unit;
-            digit = 0;
-        }
-        var result = total + section + digit;
-        return result <= int.MaxValue ? (int)result : null;
-    }
+    internal static int? ParseNumber(string text) => HeadingSyntax.ParseNumber(string.Concat(text.Where(c => !char.IsWhiteSpace(c))));
 }

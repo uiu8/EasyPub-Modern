@@ -13,7 +13,7 @@ public sealed record ConversionRequest(
 
 public sealed record ConversionOptions
 {
-    public static ConversionOptions LegacyDefault { get; } = new();
+    public static ConversionOptions LegacyDefault { get; } = new() { ChapterPattern = HeadingSyntax.LegacyPattern };
 
     public string? ChapterPattern { get; init; }
     public TocHierarchyOptions TocHierarchy { get; init; } = new();
@@ -103,9 +103,9 @@ public enum ChineseVariantConversion
 
 public sealed record TocHierarchyOptions
 {
-    public const string DefaultLevel1Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[卷部篇集].*";
-    public const string DefaultLevel2Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[章回].*";
-    public const string DefaultLevel3Pattern = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+节.*";
+    public const string DefaultLevel1Pattern = HeadingSyntax.VolumePattern;
+    public const string DefaultLevel2Pattern = HeadingSyntax.ChapterPattern;
+    public const string DefaultLevel3Pattern = HeadingSyntax.SectionPattern;
 
     public bool Enabled { get; init; }
     public bool IncludeHtmlTocPage { get; init; }
@@ -113,10 +113,12 @@ public sealed record TocHierarchyOptions
     public bool RecognizeNumericHeadings { get; init; }
     public int NumericHeadingMinimumBodyLines { get; init; } = 5;
     public string NumericHeadingPattern { get; init; } = NumericHeadingRule.DefaultPattern;
+    public string HeadingNumberCorrections { get; init; } = HeadingTypoRules.Default;
 
     public TocHierarchyOptions ForBook(ChapterTreePlan? plan) => this with
     {
         RecognizeNumericHeadings = plan?.NumericHeadingRecognition ?? RecognizeNumericHeadings,
+        HeadingNumberCorrections = plan?.HeadingNumberCorrections ?? HeadingNumberCorrections,
         NumericHeadingMinimumBodyLines = Math.Max(0, plan?.NumericHeadingMinimumBodyLines ?? NumericHeadingMinimumBodyLines),
         NumericHeadingPattern = plan?.NumericHeadingRecognition is not null
             ? plan.NumericHeadingPattern ?? NumericHeadingRule.DefaultPattern : NumericHeadingPattern,

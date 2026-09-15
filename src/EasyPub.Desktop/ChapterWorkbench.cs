@@ -16,6 +16,7 @@ public partial class ChapterEditorWindow
 {
     private ChapterEditorSnapshot? _initialSnapshot;
     private ChapterRuleState _recognitionState = null!;
+    private string _headingNumberCorrections = HeadingTypoRules.Default;
     private string? _initialRulesFingerprint;
     private bool _allowClose;
     private bool _sourceChanged;
@@ -26,6 +27,9 @@ public partial class ChapterEditorWindow
 
     private void InitializeWorkbench()
     {
+        RecognitionRulesPanel.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => UpdateRuleGuidance()));
+        RecognitionRulesPanel.AddHandler(System.Windows.Controls.Primitives.ToggleButton.CheckedEvent, new RoutedEventHandler((_, _) => UpdateRuleGuidance()));
+        RecognitionRulesPanel.AddHandler(System.Windows.Controls.Primitives.ToggleButton.UncheckedEvent, new RoutedEventHandler((_, _) => UpdateRuleGuidance()));
         _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
         _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); ApplySearchFilter(); };
         Loaded += (_, _) =>
@@ -65,18 +69,38 @@ public partial class ChapterEditorWindow
     private void UpdateSaveState()
     {
         if (_document is null || SaveStateText is null || _initialSnapshot is null) return;
-        SaveStateText.Text = _sourceChanged ? "原始 TXT 已变化 · 请重新识别，旧行号不可保存"
-            : (HasUnsavedChanges() ? "工作台修改未提交 · " : "原始 TXT 不变 · ") + "保存章节树后仍需保存项目";
+        SaveStateText.Text = _sourceChanged ? "原始 TXT 已变化 · 点击原文区的“刷新原文”，无需重新打开工作台"
+            : (HasUnsavedChanges() ? "工作台修改未提交 · " : "原始 TXT 不变 · ") + "应用并返回后自动保存；未命名项目保留恢复快照";
+        UpdateRuleGuidance();
         SaveChapterTreeButton.IsEnabled = !_sourceChanged;
+        RefreshSourceButton.Content = _sourceChanged ? "原文已变化 · 刷新" : "刷新原文";
+        RefreshSourceButton.FontWeight = _sourceChanged ? FontWeights.Bold : FontWeights.Normal;
         ChapterTree.IsEnabled = !_sourceChanged;
         if (_sourceChanged) UndoButton.IsEnabled = RedoButton.IsEnabled = false;
+    }
+
+    private void UpdateRuleGuidance()
+    {
+        if (_recognitionState is null || EffectiveRulesText is null) return;
+        var rules = CaptureRules();
+        var inherited = rules.Inherit && rules.Numeric == GlobalNumericDefaults.RecognizeNumericHeadings
+            && int.TryParse(rules.Minimum, out var minimum) && minimum == GlobalNumericDefaults.NumericHeadingMinimumBodyLines
+            && rules.NumericPattern == GlobalNumericDefaults.NumericHeadingPattern;
+        NumericScopeText.Text = inherited ? "继承全局规则；在此直接修改会成为本书覆盖。" : "本书独立规则；不影响其他书。";
+        EffectiveRulesText.Text = $"下次识别使用：普通章节{(string.IsNullOrWhiteSpace(rules.Pattern) ? "内置规则" : "自定义规则")}；"
+            + (rules.Numeric ? $"数字章节开启，至少 {rules.Minimum} 行正文（{(inherited ? "继承全局" : "本书独立")}）；" : "数字章节关闭；")
+            + (rules.Hierarchy ? "卷 / 章 / 节分层开启。" : "卷 / 章 / 节分层关闭，标题仍可作为普通章节识别。")
+            + (RecognitionRulesChanged() ? "\n设置已改变，当前树尚未重新识别。" : "\n输出使用当前章节树，手动编辑优先；设置不会自动覆盖它。");
+        WorkflowHintText.Text = _sourceChanged ? "下一步：原文已变化，请先刷新原文。"
+            : RecognitionRulesChanged() ? "规则已调整：当前树保持不变。需要套用新规则时，在“识别设置”中重新识别。"
+            : "先查看待核对问题 → 预览目录修复；来源或匹配不准确时手动核对 → 应用并返回。";
     }
 
     private ChapterRuleState CaptureRules() => new(ChapterPatternText.Text, NumericHeadingsCheck.IsChecked == true,
         NumericMinimumLinesText.Text, _numericPattern, HierarchyEnabledCheck.IsChecked == true,
         Level1PatternText.Text, Level2PatternText.Text, Level3PatternText.Text,
         IncludeHtmlTocPageCheck.IsChecked == true, IncludeChapterTopNavigationCheck.IsChecked == true,
-        InheritNumericDefaults, GlobalNumericDefaults, NumericPresets.ToArray());
+        InheritNumericDefaults, GlobalNumericDefaults, NumericPresets.ToArray(), _headingNumberCorrections);
 
     private void ApplyRules(ChapterRuleState rules, bool includeShared = false)
     {
@@ -84,6 +108,7 @@ public partial class ChapterEditorWindow
         NumericHeadingsCheck.IsChecked = rules.Numeric;
         NumericMinimumLinesText.Text = rules.Minimum;
         _numericPattern = rules.NumericPattern;
+        _headingNumberCorrections = rules.Corrections;
         HierarchyEnabledCheck.IsChecked = rules.Hierarchy;
         Level1PatternText.Text = rules.Level1; Level2PatternText.Text = rules.Level2; Level3PatternText.Text = rules.Level3;
         IncludeHtmlTocPageCheck.IsChecked = rules.HtmlToc; IncludeChapterTopNavigationCheck.IsChecked = rules.TopNavigation;
@@ -92,7 +117,7 @@ public partial class ChapterEditorWindow
     }
 
     private static string RecognitionSignature(ChapterRuleState rules) => JsonSerializer.Serialize(new
-    { rules.Pattern, rules.Numeric, rules.Minimum, rules.NumericPattern, rules.Hierarchy, rules.Level1, rules.Level2, rules.Level3 });
+    { rules.Pattern, rules.Numeric, rules.Minimum, rules.NumericPattern, rules.Hierarchy, rules.Level1, rules.Level2, rules.Level3, rules.Corrections });
 
     private bool RecognitionRulesChanged() => RecognitionSignature(CaptureRules()) != RecognitionSignature(_recognitionState);
 
@@ -100,6 +125,7 @@ public partial class ChapterEditorWindow
     {
         _ = ReadHierarchyOptions();
         NumericHeadingRule.Compile(_numericPattern);
+        HeadingTypoRules.Parse(_headingNumberCorrections);
         foreach (var expression in new[] { ChapterPatternText.Text, Level1PatternText.Text, Level2PatternText.Text, Level3PatternText.Text })
             if (!string.IsNullOrWhiteSpace(expression)) _ = new Regex(expression, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(200));
     }
@@ -109,6 +135,7 @@ public partial class ChapterEditorWindow
         if (_rulesDialog is not null) return;
         var before = CaptureRules();
         NumericScopeText.Text = InheritNumericDefaults ? "本书继承全局数字规则；直接修改仅本书生效。" : "本书独立数字规则，不影响其他书。";
+        UpdateRuleGuidance();
         var dialog = ThemedWindow("识别设置", 740, 690);
         dialog.MinWidth = 560; dialog.MinHeight = 400;
         var grid = new Grid();
@@ -217,7 +244,7 @@ public partial class ChapterEditorWindow
             var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(document.SourcePath)));
             if (!ReferenceEquals(document, _document)) return;
             _sourceChanged = hash != document.SourceSha256;
-            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已变化，当前章节位置可能失效。请打开识别设置重新识别。");
+            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已保存修改。点击右侧“原文已变化 · 刷新”即可在当前工作台更新章节和检查结果。");
         }
         catch (Exception error) { _sourceChanged = true; ShowReviewFeedback("无法校验原始 TXT：" + error.Message); }
         finally { _checkingSource = false; UpdateSaveState(); UpdateActionButtons(); }
@@ -254,8 +281,10 @@ public partial class ChapterEditorWindow
         void Add(MenuItem category, string title, RoutedEventHandler action, bool enabled = true)
         { var item = new MenuItem { Header = title, IsEnabled = enabled }; item.Click += action; category.Items.Add(item); }
         var all = Category("全书整理");
+        Add(all, "重建编号分组与结构（预览）…", RecoverStructure_Click, !_sourceChanged);
         Add(all, "清理全书重复标题…", CleanDuplicateTitles_Click, !_sourceChanged);
         Add(all, "规范化全书数字标题…", NormalizeAll_Click, !_sourceChanged);
+        Add(all, "批量修复跳章区间漏识别标题…", (_, _) => RepairMissingHeadings(null), !_sourceChanged);
         var toc = Category("目录（全书）");
         Add(toc, "全部加入目录", SelectAll_Click, !_sourceChanged);
         Add(toc, "全部不加入目录（保留正文）", (_, args) =>
@@ -305,7 +334,7 @@ public partial class ChapterEditorWindow
         var dialog = new OpenFileDialog { Title = "选择文本编辑器（如 Notepad3.exe）", Filter = "应用程序 (*.exe)|*.exe", CheckFileExists = true };
         if (dialog.ShowDialog(this) != true) return;
         TextEditorPath = dialog.FileName;
-        EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + "；保存章节树后保存编辑器配置";
+        EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + "；应用并返回后保存编辑器配置";
         ShowReviewFeedback("编辑器已选择：" + Path.GetFileName(TextEditorPath)); UpdateSaveState();
     }
 
@@ -339,7 +368,7 @@ public partial class ChapterEditorWindow
         SetOperationSelection(kept); if (_selectedNode is not null && !kept.Contains(_selectedNode)) _selectedNode = kept.FirstOrDefault();
         ShowReviewFeedback($"已取消 {selected.Length - kept.Length} 个隐藏项的选择。"); RefreshSelectedLines(); UpdateActionButtons();
     }
-    private void ChapterNode_Collapsed(object sender, RoutedEventArgs e) { if (IsLoaded && !_trackingPaused) ClearHiddenSelection(); }
+    private void ChapterNode_Collapsed(object sender, RoutedEventArgs e) { if (IsLoaded && !_trackingPaused && !_refreshingTreeView) ClearHiddenSelection(); }
     private void ChapterTree_RightClick(object sender, MouseButtonEventArgs e)
     {
         var item = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject);
@@ -357,9 +386,103 @@ public partial class ChapterEditorWindow
         SelectChapterForOperation(visible[index], Keyboard.Modifiers); e.Handled = true;
     }
     private void EditCurrentTitle_Click(object sender, RoutedEventArgs e) { if (!_sourceChanged && OperationSelection().Length == 1 && _selectedNode is not null) EditTitle(_selectedNode); }
+    private void HeadingCorrections_Click(object sender, RoutedEventArgs e)
+    {
+        var current = ReadHierarchyOptions();
+        var dialog = new NumericHeadingRulesWindow(current, GlobalNumericDefaults, NumericPresets,
+            _headingNumberCorrections == GlobalNumericDefaults.HeadingNumberCorrections, correctionsOnly: true) { Owner = _rulesDialog ?? this };
+        if (dialog.ShowDialog() != true) return;
+        NumericPresets = dialog.Presets;
+        _headingNumberCorrections = dialog.Result.HeadingNumberCorrections;
+        if (dialog.Scope == 1) GlobalNumericDefaults = GlobalNumericDefaults with { HeadingNumberCorrections = _headingNumberCorrections };
+        UpdateSaveState();
+    }
+
+    internal void RestoreContainerToBody(bool keepHeading = false)
+    {
+        if (_sourceChanged || _selectedNode is not { IsFrontMatter: false } node || OperationSelection().Length != 1) return;
+        var siblings = Siblings(node);
+        var index = siblings.IndexOf(node);
+        // Continue the preceding container where one exists; lifting everything to root
+        // would split a real volume in two and change numbering scope after a false boundary.
+        var destination = node.Children.Count > 0 && index > 0 && !siblings[index - 1].IsFrontMatter
+            && siblings[index - 1].Children.Count > 0 ? siblings[index - 1] : node.Parent;
+        var children = node.Children.ToArray();
+        var placement = destination is null ? "顶层目录" : $"「{destination.Title}」下";
+        if (!ConfirmWorkbench((keepHeading ? "保留本标题和正文，改为普通章节。" : "将本标题和正文还原到前一节正文。")
+            + $"\n原有 {children.Length} 个直属子章节按当前阅读顺序接续到{placement}，各自的子章节保持从属关系。\n后面的其他卷不变，操作可撤销。",
+            keepHeading ? "取消父级身份" : "移除误识别章节身份")) return;
+        var previous = Flatten().TakeWhile(n => n != node).LastOrDefault();
+        Mutate(() =>
+        {
+            if (!keepHeading && previous is null)
+            {
+                previous = new ChapterTreeNode(new ChapterTreeEntry(Guid.NewGuid().ToString("N"), "序", 1, true, null, WithOriginalTitle(node).ToArray()) { IsFrontMatter = true });
+                Roots.Insert(0, previous);
+            }
+            else if (!keepHeading) { previous!.ContentRanges = previous.ContentRanges.Concat(WithOriginalTitle(node)).ToArray(); previous.NotifyLineCount(); }
+            // Recompute after a possible front-matter insertion.
+            var insertion = siblings.IndexOf(node);
+            siblings.Remove(node);
+            var target = destination?.Children ?? Roots;
+            if (!ReferenceEquals(destination, node.Parent)) insertion = target.Count;
+            foreach (var child in children) node.Children.Remove(child);
+            if (keepHeading)
+            {
+                node.Parent = destination;
+                node.Level = destination is null ? 1 : destination.Level + 1;
+                target.Insert(insertion++, node);
+            }
+            foreach (var child in children)
+            {
+                child.Parent = destination;
+                SetLevelRecursive(child, destination is null ? 1 : destination.Level + 1);
+                target.Insert(insertion++, child);
+            }
+            if (destination is not null) destination.IsExpanded = true;
+            _selectedNode = keepHeading ? node : children.FirstOrDefault() ?? previous;
+            SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
+        });
+        ChapterSearchText.Text = ""; IssueCategoryCombo.SelectedIndex = 0;
+        ApplySearchFilter();
+        AllChapters_Click(this, new RoutedEventArgs());
+        SelectRestoredNode();
+        RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
+        SetReviewResult((keepHeading ? "已保留为普通章节。" : "已还原为前文正文。")
+            + $"原子章节已按原顺序接续到{placement}；已显示全部章节便于核对，可撤销。");
+    }
     private void ResetChapterPattern_Click(object sender, RoutedEventArgs e) => ChapterPatternText.Text = "";
     private void EditSource_Click(object sender, RoutedEventArgs e)
     { if (_selectedNode is not null && !_sourceChanged) EditOriginal_Click(new Button { DataContext = _selectedNode }, e); }
+
+    private void RepairMissingHeadings(int? nextLine)
+    {
+        if (_sourceChanged) return;
+        var entries = Flatten().Select(n => n.ToEntry()).ToArray();
+        var allCandidates = MissingChapterHeadings.Find(_document, entries);
+        var boundary = nextLine is null ? null : allCandidates.FirstOrDefault(c => c.Line == nextLine)?.NextLine;
+        var candidates = allCandidates.Where(c => nextLine is null || c.NextLine == boundary).ToArray();
+        if (candidates.Length == 0) { ShowReviewFeedback("没有可明确修复的候选；请继续核对跳章区间原文。"); return; }
+        var dialog = ThemedWindow("核对漏识别标题", 800, 550);
+        var panel = new DockPanel { Margin = new Thickness(16) };
+        var submit = new Button { Content = "修复勾选项", HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        DockPanel.SetDock(submit, Dock.Bottom); panel.Children.Add(submit);
+        var hint = new TextBlock { Text = "补建章节边界并修改成品标题；原始 TXT 不变。未找到的缺章仍会提醒，整批可撤销。", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+        DockPanel.SetDock(hint, Dock.Top); panel.Children.Add(hint);
+        var rows = candidates.Select(c => new CheckBox { IsChecked = true, Tag = c.Line, Margin = new Thickness(0, 6, 0, 6),
+            Content = new TextBlock { Text = $"第 {c.Line} 行：{c.Original}\n→ {c.Title}", TextWrapping = TextWrapping.Wrap } }).ToArray();
+        var list = new StackPanel(); foreach (var row in rows) list.Children.Add(row);
+        panel.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        dialog.Content = panel;
+        submit.Click += (_, _) => dialog.DialogResult = true;
+        if (dialog.ShowDialog() != true) return;
+        var selected = rows.Where(r => r.IsChecked == true).Select(r => (int)r.Tag).ToArray();
+        if (selected.Length == 0) return;
+        var repaired = MissingChapterHeadings.Repair(_document, entries, selected);
+        Mutate(() => { Roots.Clear(); foreach (var root in BuildTree(repaired)) Roots.Add(root); _selectedNode = null; SetOperationSelection([]); });
+        RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
+        SetReviewResult($"已补建 {repaired.Count - entries.Length} 个章节并规范标题；未找到的缺章仍会提醒，可撤销。");
+    }
     private void CopySource_Click(object sender, RoutedEventArgs e)
     { if (SourceLinesList.SelectedItem is ChapterTreeSourceLine line) Clipboard.SetText(line.Text); else ShowReviewFeedback("请先选择要复制的原文行。"); }
     private void WrapSource_Click(object sender, RoutedEventArgs e) => ScrollViewer.SetHorizontalScrollBarVisibility(SourceLinesList, WrapSourceCheck.IsChecked == true ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
@@ -369,4 +492,4 @@ public partial class ChapterEditorWindow
 
 internal sealed record ChapterRuleState(string Pattern, bool Numeric, string Minimum, string NumericPattern,
     bool Hierarchy, string Level1, string Level2, string Level3, bool HtmlToc, bool TopNavigation,
-    bool Inherit, TocHierarchyOptions Global, NamedNumericHeadingPreset[] Presets);
+    bool Inherit, TocHierarchyOptions Global, NamedNumericHeadingPreset[] Presets, string Corrections);

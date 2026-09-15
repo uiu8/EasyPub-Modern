@@ -137,11 +137,10 @@ public partial class ChapterEditorWindow
         var line = SourceLinesList.SelectedItem is ChapterTreeSourceLine chosen
             && (node.TitleLineNumber == chosen.LineNumber || node.ContentRanges.Any(r => chosen.LineNumber >= r.StartLine && chosen.LineNumber <= r.EndLine))
             ? chosen.LineNumber : node.TitleLineNumber ?? node.ContentRanges.FirstOrDefault()?.StartLine ?? 1;
-        if (InkDialog.Show(this, $"将打开原始 TXT 的第 {line} 行附近。\n编辑前会创建 .bak 备份。保存原文后须重新识别章节，当前树不能直接套用。\n不支持行号定位的编辑器请使用“转到行”；选择“是”也会复制行号。", "编辑原文", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (InkDialog.Show(this, $"将打开原始 TXT 的第 {line} 行附近。\n编辑前会集中保存首次原文备份，同一路径复用一份，可在主界面“原文备份管理”中查看。保存原文后须重新识别章节，当前树不能直接套用。\n不支持行号定位的编辑器请使用“转到行”；选择“是”也会复制行号。", "编辑原文", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         try
         {
-            var backup = _document.SourcePath + "." + Guid.NewGuid().ToString("N") + ".bak";
-            File.Copy(_document.SourcePath, backup, false);
+            var backup = SourceBackupStore.CreateDefault().EnsureBackup(_document.SourcePath);
             Clipboard.SetText(line.ToString());
             var info = CreateEditorStartInfo(TextEditorPath, _document.SourcePath, line);
             Process.Start(info)?.Dispose();

@@ -47,6 +47,8 @@ public partial class ChapterEditorWindow : Window
         _encodingMode = encodingMode;
         _detectUnrecognized = detectUnrecognized;
         Roots = BuildTree(document.Entries);
+        VisibleRoots = new ChapterDisplayCollection();
+        VisibleRoots.Synchronize(Roots);
         DataContext = this;
         SourceText.Text = System.IO.Path.GetFileName(document.SourcePath);
         SourceText.ToolTip = document.SourcePath;
@@ -57,6 +59,7 @@ public partial class ChapterEditorWindow : Window
         NumericHeadingsCheck.IsChecked = hierarchy.RecognizeNumericHeadings;
         NumericMinimumLinesText.Text = hierarchy.NumericHeadingMinimumBodyLines.ToString();
         _numericPattern = hierarchy.NumericHeadingPattern;
+        _headingNumberCorrections = hierarchy.HeadingNumberCorrections;
         Level1PatternText.Text = hierarchy.Level1Pattern;
         Level2PatternText.Text = hierarchy.Level2Pattern;
         Level3PatternText.Text = hierarchy.Level3Pattern;
@@ -70,6 +73,7 @@ public partial class ChapterEditorWindow : Window
     }
 
     public ObservableCollection<ChapterTreeNode> Roots { get; }
+    public ChapterDisplayCollection VisibleRoots { get; }
     public ObservableCollection<ChapterTreeSourceLine> SelectedLines { get; } = [];
     public ChapterTreePlan? ResultPlan { get; private set; }
     public TocHierarchyOptions? ResultHierarchyOptions { get; private set; }
@@ -104,6 +108,7 @@ public partial class ChapterEditorWindow : Window
         if (_selectedNode is null) { ShowReviewFeedback($"原文第 {lineNumber} 行不属于当前章节树。"); return; }
         _selectedNode.IsReviewVisible = true;
         for (var ancestor = _selectedNode.Parent; ancestor is not null; ancestor = ancestor.Parent) ancestor.IsReviewVisible = true;
+        RefreshFilteredTree();
         SelectRestoredNode();
         if (!_applyingMultiSelection) { SetOperationSelection([_selectedNode]); _selectionAnchor = _selectedNode; }
         RefreshSelectedLines();
@@ -123,6 +128,7 @@ public partial class ChapterEditorWindow : Window
 
     private void ChapterTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
+        if (_refreshingTreeView) return;
         _selectedNode = e.NewValue as ChapterTreeNode;
         if (!_applyingMultiSelection) SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
         RefreshSelectedLines();
@@ -322,6 +328,7 @@ public partial class ChapterEditorWindow : Window
                 NumericHeadingRecognition = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.RecognizeNumericHeadings,
                 NumericHeadingMinimumBodyLines = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingMinimumBodyLines,
                 NumericHeadingPattern = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingPattern,
+                HeadingNumberCorrections = _headingNumberCorrections == GlobalNumericDefaults.HeadingNumberCorrections ? null : _headingNumberCorrections,
             };
             ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
             _allowClose = true;
@@ -397,11 +404,13 @@ public partial class ChapterEditorWindow : Window
         {
             ValidateRules();
             RebuildRulesButton.IsEnabled = false;
+            RefreshSourceButton.IsEnabled = false;
+            IsEnabled = false;
             var replacement = await ChapterTreeDocument.LoadAsync(_document.SourcePath, NormalizePattern(ChapterPatternText.Text), ReadHierarchyOptions(), _encodingMode);
             ApplyRebuiltDocument(replacement);
         }
         catch (Exception exception) { InkDialog.Show(_rulesDialog ?? this, exception.Message, "无法重新识别章节", MessageBoxButton.OK, MessageBoxImage.Error); }
-        finally { RebuildRulesButton.IsEnabled = true; }
+        finally { IsEnabled = true; RebuildRulesButton.IsEnabled = true; RefreshSourceButton.IsEnabled = true; }
     }
 
     private void ResetRules_Click(object sender, RoutedEventArgs e)
@@ -418,6 +427,7 @@ public partial class ChapterEditorWindow : Window
         RecognizeNumericHeadings = NumericHeadingsCheck.IsChecked == true,
         NumericHeadingMinimumBodyLines = ReadNumericMinimumLines(),
         NumericHeadingPattern = _numericPattern,
+        HeadingNumberCorrections = _headingNumberCorrections,
         IncludeHtmlTocPage = IncludeHtmlTocPageCheck.IsChecked == true,
         IncludeChapterTopNavigation = IncludeChapterTopNavigationCheck.IsChecked == true,
         Level1Pattern = NormalizePattern(Level1PatternText.Text) ?? TocHierarchyOptions.DefaultLevel1Pattern,
@@ -447,12 +457,12 @@ public partial class ChapterEditorWindow : Window
             var dialog = new NumericHeadingRulesWindow(current, GlobalNumericDefaults, NumericPresets, UsesGlobalNumeric(current)) { Owner = _rulesDialog ?? this };
             if (dialog.ShowDialog() != true) return;
             NumericPresets = dialog.Presets;
-            if (dialog.Scope == 1) GlobalNumericDefaults = dialog.Result;
+            if (dialog.Scope == 1) GlobalNumericDefaults = dialog.Result with { HeadingNumberCorrections = GlobalNumericDefaults.HeadingNumberCorrections };
             InheritNumericDefaults = dialog.Scope != 0;
             NumericHeadingsCheck.IsChecked = dialog.Result.RecognizeNumericHeadings;
             NumericMinimumLinesText.Text = dialog.Result.NumericHeadingMinimumBodyLines.ToString();
             _numericPattern = dialog.Result.NumericHeadingPattern;
-            NumericScopeText.Text = InheritNumericDefaults ? "本书继承全局数字规则；独立覆盖不受影响。" : "本书独立数字规则；不影响其他书。";
+            UpdateRuleGuidance();
         }
         catch (Exception error) { InkDialog.Show(this, error.Message, "数字识别规则"); }
     }
@@ -503,6 +513,7 @@ public partial class ChapterEditorWindow : Window
         try { change(); }
         finally { _trackingPaused = false; }
         SubscribeToNodes(Roots);
+        RefreshFilteredTree();
         var after = CaptureSnapshot();
         if (!SnapshotsEqual(before, after))
         {
@@ -691,6 +702,9 @@ public partial class ChapterEditorWindow : Window
             _reviewGroupIndex.TryAdd((group.Issue.Code, group.Issue.LineNumber), group);
         _totalReviewGroups = analysis.TotalGroups;
         _allReviewIssues = _reviewGroups.Where(g => !_confirmedGroups.ContainsKey(ReviewKey(g))).Select(g => g.Issue).ToArray();
+        var structureSuggestion = _allReviewIssues.FirstOrDefault(i => i.Code == "chapter_structure_suggested");
+        StructureSuggestionBanner.Visibility = structureSuggestion is null ? Visibility.Collapsed : Visibility.Visible;
+        StructureSuggestionText.Text = structureSuggestion?.Message.Split('\n')[0] ?? "";
         var issues = FilteredReviewIssues();
         _refreshingSuggestions = true;
         try
@@ -874,6 +888,23 @@ public sealed class ChapterTreeNode : INotifyPropertyChanged
     public int HeadingLevel { get; set; }
     public ChapterTreeNode? Parent { get; set; }
     public ObservableCollection<ChapterTreeNode> Children { get; } = [];
+    private ChapterDisplayCollection? _visibleChildren;
+    public ChapterDisplayCollection VisibleChildren
+    {
+        get
+        {
+            if (_visibleChildren is null)
+            {
+                _visibleChildren = new ChapterDisplayCollection();
+                _visibleChildren.Synchronize(Children);
+            }
+            return _visibleChildren;
+        }
+    }
+    internal void RefreshVisibleChildren()
+    {
+        _visibleChildren?.Synchronize(Children);
+    }
     public string Title { get => _title; set => SetField(ref _title, value); }
     public int Level { get => _level; set { if (SetField(ref _level, value)) OnPropertyChanged(nameof(LevelLabel)); } }
     public bool IncludeInToc { get => _includeInToc; set => SetField(ref _includeInToc, value); }

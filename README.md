@@ -1,3 +1,11 @@
+> 当前本地交付：**v1.46.0**（标题识别与工作台流程）。[版本说明](docs/RELEASE_v1.46.0.md) · [便携 ZIP](outputs/EasyPubModern-v1.46.0-heading-workflow-win-x64.zip) · [安装包](outputs/EasyPubModern-Setup-v1.46.0-x64.exe)。下方 v1.45.0 及远程发布链接为历史版本。
+
+> **本地支线当前版本：v1.45.0（2026-09-15）**
+>
+> [本版修复、使用步骤和验收边界](docs/RELEASE_v1.45.0.md) · [便携目录](outputs/EasyPubModern-v1.45.0-repair-integrity-win-x64/) · [便携 ZIP](outputs/EasyPubModern-v1.45.0-repair-integrity-win-x64.zip) · [安装包](outputs/EasyPubModern-Setup-v1.45.0-x64.exe)
+>
+> 以下 GitHub v1.22.0 链接属于旧远程发布。v1.45.0 在本地支线交付，尚未推送 GitHub。
+
 <div align="center">
 
 # EasyPub Modern

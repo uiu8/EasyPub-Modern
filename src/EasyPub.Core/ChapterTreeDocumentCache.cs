@@ -37,6 +37,7 @@ public sealed class ChapterTreeDocumentCache
             hierarchy.RecognizeNumericHeadings,
             hierarchy.NumericHeadingMinimumBodyLines,
             hierarchy.NumericHeadingPattern,
+            hierarchy.HeadingNumberCorrections,
             encoding,
             existingPlan?.SourceSha256 ?? string.Empty,
             existingPlan?.Entries.Count ?? 0);
@@ -120,6 +121,7 @@ public sealed class ChapterTreeDocumentCache
         bool RecognizeNumericHeadings,
         int NumericHeadingMinimumBodyLines,
         string NumericHeadingPattern,
+        string HeadingNumberCorrections,
         TextEncodingMode Encoding,
         string PlanSourceSha256,
         int PlanEntryCount);

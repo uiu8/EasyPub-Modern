@@ -2,7 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace EasyPub.Core;
 
-public sealed record NamedNumericHeadingPreset(string Name, string Pattern, int MinimumBodyLines, bool Enabled);
+public sealed record NamedNumericHeadingPreset(string Name, string Pattern, int MinimumBodyLines, bool Enabled)
+{
+    public string HeadingNumberCorrections { get; init; } = HeadingTypoRules.Default;
+}
 
 public static class NumericHeadingRule
 {

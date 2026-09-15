@@ -2,8 +2,10 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:EasyPub.Desktop"
+             xmlns:sys="clr-namespace:System;assembly=System.Runtime"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <sys:Boolean x:Key="MotionEnabled">True</sys:Boolean>
         <!-- EasyPub Ink: Kindle-inspired warm monochrome design tokens. -->
         <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F3F1EC"/>
         <SolidColorBrush x:Key="SurfaceBrush" Color="#FBFAF7"/>
@@ -11,10 +13,10 @@
         <SolidColorBrush x:Key="SubtleSurfaceBrush" Color="#F7F5F0"/>
         <SolidColorBrush x:Key="SelectedSurfaceBrush" Color="#E7E3DB"/>
         <SolidColorBrush x:Key="PrimaryTextBrush" Color="#151515"/>
-        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#706D67"/>
+        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#625F59"/>
         <SolidColorBrush x:Key="DisabledTextBrush" Color="#AAA69E"/>
         <SolidColorBrush x:Key="BorderBrush" Color="#D9D6CF"/>
-        <SolidColorBrush x:Key="StrongBorderBrush" Color="#BDB9B1"/>
+        <SolidColorBrush x:Key="StrongBorderBrush" Color="#8A857C"/>
         <SolidColorBrush x:Key="PrimaryActionBrush" Color="#151515"/>
         <SolidColorBrush x:Key="PrimaryActionTextBrush" Color="#FBFAF7"/>
         <SolidColorBrush x:Key="SuccessBrush" Color="#4F7A45"/>
@@ -23,6 +25,28 @@
         <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#FFF7ED"/>
         <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#F0F2F5"/>
 
+        <Style x:Key="WorkspaceSplitter" TargetType="GridSplitter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="SizeWE"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="GridSplitter">
+                    <Grid Background="{TemplateBinding Background}">
+                        <Border x:Name="Grip" Width="3" Height="42" CornerRadius="1.5"
+                                HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Background="{DynamicResource StrongBorderBrush}"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Grip" Property="Background" Value="{DynamicResource PrimaryTextBrush}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Grip" Property="Background" Value="{DynamicResource PrimaryTextBrush}"/><Setter TargetName="Grip" Property="Width" Value="5"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="KeyboardFocusRing" TargetType="Control">
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Control">
+                <Rectangle Margin="-3" Stroke="{DynamicResource PrimaryTextBrush}" StrokeThickness="1.5" StrokeDashArray="2 1" RadiusX="8" RadiusY="8"/>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
         <Style x:Key="ScrollPageButton" TargetType="RepeatButton">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="IsTabStop" Value="False"/>
@@ -99,6 +123,8 @@
             <Setter Property="SnapsToDevicePixels" Value="True"/>
         </Style>
         <Style TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusRing}"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="Padding" Value="14,7"/>
             <Setter Property="MinHeight" Value="36"/>
             <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
@@ -111,6 +137,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="ButtonBorder" Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}"
+                                local:MotionEffects.HoverEnabled="{DynamicResource MotionEnabled}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
                         </Border>
@@ -146,6 +173,9 @@
             <Setter Property="Background" Value="{DynamicResource RaisedSurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource PrimaryTextBrush}"/></Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="ComboBox">
             <Setter Property="Padding" Value="9,6"/>
@@ -247,8 +277,10 @@
             <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
         </Style>
         <Style TargetType="MenuItem">
-            <Setter Property="Padding" Value="12,9"/>
-            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="Background" Value="{DynamicResource RaisedSurfaceBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
@@ -318,6 +350,9 @@
             </Style.Triggers>
         </Style>
         <Style TargetType="ContextMenu">
+            <Setter Property="FontFamily" Value="Microsoft YaHei UI"/>
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+            <Setter Property="MinWidth" Value="220"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="0"/>
@@ -327,7 +362,9 @@
                     <ControlTemplate TargetType="ContextMenu">
                         <Border Margin="4" Padding="6" Background="{DynamicResource RaisedSurfaceBrush}"
                                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10">
-                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                            <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True">
+                                <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                            </ScrollViewer>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>

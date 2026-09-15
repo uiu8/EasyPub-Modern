@@ -37,7 +37,18 @@ public static class ChapterReviewAnalyzer
         bool detectUnrecognized = true, int maximumGroups = 200, CancellationToken cancellationToken = default)
     {
         var entries = currentEntries ?? document.Entries;
-        var raw = ChapterDiagnostics.Inspect(document, cancellationToken, detectUnrecognized, entries, int.MaxValue).ToList();
+        // A tree reconciled against an official directory already answers "which chapters exist".
+        // These heuristics exist to guess exactly that, so once the reference has been applied their
+        // findings describe the source text rather than a problem still left to fix.
+        var referenceAligned = entries.Any(entry => string.Equals(entry.RecognitionSource, "reference", StringComparison.Ordinal));
+        var raw = ChapterDiagnostics.Inspect(document, cancellationToken, detectUnrecognized, entries, int.MaxValue)
+            // A gap between chapter numbers is deliberately NOT suppressed after alignment. The
+            // directory knows which chapters exist, so a gap now means the source text really is
+            // missing chapters the official release has — the one thing the user must be told.
+            .Where(issue => !referenceAligned || issue.Code is not ("chapter_unrecognized"
+                or "chapter_number_order" or "chapter_heading_typo" or "chapter_content_duplicate"
+                or "chapter_duplicate" or "chapter_repeated_sequence"))
+            .ToList();
         var parentIds = new Dictionary<string, string>();
         var stack = new Stack<ChapterTreeEntry>();
         foreach (var entry in entries)
@@ -48,15 +59,51 @@ public static class ChapterReviewAnalyzer
             stack.Push(entry);
         }
         var groups = new List<ChapterReviewGroup>();
+        var unnumberedGroups = referenceAligned
+            ? []
+            : UnnumberedHeadings.Find(document, entries).GroupBy(p => p.OwnerId).ToArray();
+        foreach (var candidates in unnumberedGroups)
+        {
+            var first = candidates.First();
+            var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_unnumbered",
+                $"异常长章中发现 {candidates.Count()} 处疑似无编号标题。可在目录辅助修复中调整行数阈值、获取参考目录并预览补建；不会自动拆分正文。",
+                PreflightTargetKind.Chapters, first.Line);
+            groups.Add(new(issue, ReviewCategories.Missing, [first.OwnerId], candidates.Select(c => c.Line).ToArray(), [issue]));
+        }
+        foreach (var gap in (referenceAligned ? [] : MissingChapterHeadings.Find(document, entries, cancellationToken).GroupBy(c => c.NextLine).ToArray()))
+        {
+            var candidates = gap.ToArray();
+            var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_heading_typo",
+                $"跳章区间发现 {candidates.Length} 个疑似漏识别标题：" + string.Join("；", candidates.Select(c => $"第 {c.Line} 行：{c.Original} → {c.Title}")),
+                PreflightTargetKind.Chapters, candidates[0].Line);
+            groups.Add(new(issue, ReviewCategories.Missing, candidates.Select(c => c.OwnerId).Distinct().ToArray(), candidates.Select(c => c.Line).ToArray(), [issue]));
+        }
         if (FindNumericChapters(document, entries, cancellationToken) is { } suggestion)
         {
             var first = suggestion.Lines[0];
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "numeric_chapters_suspected",
                 $"未识别到章节，但发现 {suggestion.Lines.Count} 处疑似数字章节（每章至少 {suggestion.MinimumBodyLines} 行非空正文）。可在章节工作台核对原文后，一键识别本书；不会修改全局设置。",
                 PreflightTargetKind.Chapters, first);
-            groups.Add(new(issue, "疑似漏识别", entries.Where(e => e.IsFrontMatter).Select(e => e.Id).ToArray(), suggestion.Lines, [issue]));
+            groups.Add(new(issue, ReviewCategories.Missing, entries.Where(e => e.IsFrontMatter).Select(e => e.Id).ToArray(), suggestion.Lines, [issue]));
         }
+        if (ChapterStructureSuggestion.Find(document, entries) is { } structure) groups.Add(structure);
         var consumed = new HashSet<ConversionPreflightIssue>();
+        var duplicateBodies = referenceAligned ? [] : ChapterContentDuplicates.Find(document, entries, cancellationToken);
+        if (!referenceAligned) groups.AddRange(ChapterRepeatedSequences.Find(document, entries, duplicateBodies));
+        var byId = entries.ToDictionary(e => e.Id);
+        foreach (var pair in duplicateBodies)
+        {
+            var first = byId[pair.FirstId];
+            var second = byId[pair.SecondId];
+            var description = pair.Exact ? "正文完全相同（忽略空白）" : $"正文相似度 {pair.Similarity:P1}（疑似重复，请对比）";
+            var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_content_duplicate",
+                $"同名章节“{second.Title}”：{description}；正文 {pair.FirstLines} / {pair.SecondLines} 行，{pair.FirstCharacters} / {pair.SecondCharacters} 字符。可对比后选择删除一份，原始 TXT 不变。",
+                PreflightTargetKind.Chapters, second.TitleLineNumber);
+            groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id], new[] { first.TitleLineNumber, second.TitleLineNumber }.OfType<int>().ToArray(), [issue]));
+            // The content comparison supersedes duplicate-title / same-number noise at this copy,
+            // but never consumes a gap or a missing-heading diagnosis.
+            foreach (var old in raw.Where(i => i.LineNumber == second.TitleLineNumber && i.Code is "chapter_duplicate" or "chapter_number_order")) consumed.Add(old);
+        }
         var numeric = NumericHeadingRule.Compile(document.RecognitionOptions.NumericHeadingPattern);
         bool IsNumeric(ChapterTreeEntry entry) => !entry.IsFrontMatter && entry.RecognitionSource is not ("manual" or "pattern")
             && entry.TitleLineNumber is int line && NumericHeadingRule.Matches(numeric, document.SourceLine(line)?.Text ?? "");
@@ -88,7 +135,7 @@ public static class ChapterReviewAnalyzer
                 var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "numeric_body_group",
                     $"普通章节之间有 {members.Length} 个连续数字条目，多数正文很短，疑似正文列举（请核对原文）",
                     PreflightTargetKind.Chapters, members[0].TitleLineNumber);
-                Add(issue, "疑似正文误识别", members, related);
+                Add(issue, ReviewCategories.Misrecognized, members, related);
             }
             i = end;
         }
@@ -103,15 +150,15 @@ public static class ChapterReviewAnalyzer
                 var same = entries.Where(n => !n.IsFrontMatter && parentIds[n.Id] == parentIds[node.Id]
                     && n.Level == node.Level && n.Title.Trim() == node.Title.Trim()).ToArray();
                 var lines = same.Select(n => n.TitleLineNumber).ToHashSet();
-                Add(issue, "重复标题", same, raw.Where(r => r.Code == "chapter_duplicate" && lines.Contains(r.LineNumber)));
+                Add(issue, ReviewCategories.Duplicate, same, raw.Where(r => r.Code == "chapter_duplicate" && lines.Contains(r.LineNumber)));
                 continue;
             }
             var category = issue.Code switch
             {
-                "volume_number_duplicate" or "chapter_level_gap" => "卷与层级",
-                "chapter_unrecognized" => "疑似漏识别",
-                "chapter_number_order" or "chapter_number_gap" => node is not null && IsNumeric(node) ? "疑似正文误识别" : "编号异常",
-                _ => "其他提醒"
+                "volume_number_duplicate" or "chapter_level_gap" => ReviewCategories.Structure,
+                "chapter_unrecognized" => ReviewCategories.Missing,
+                "chapter_number_order" or "chapter_number_gap" => node is not null && IsNumeric(node) ? ReviewCategories.Misrecognized : ReviewCategories.Structure,
+                _ => ReviewCategories.Other
             };
             var associated = node is null ? Array.Empty<ChapterTreeEntry>() : new[] { node };
             if (issue.Code == "volume_number_duplicate")

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using EasyPub.Core;
 
 namespace EasyPub.Desktop;
@@ -38,8 +39,10 @@ public partial class TextCleanupWindow : Window
         ScopeExpander.Header = hasOverride ? "本书：独立规则" : "本书：继承通用规则";
     }
     private CancellationTokenSource? _previewCancellation;
+    private readonly DispatcherTimer _optionRefreshTimer;
     private int _previewVersion;
     private bool _previewReady;
+    private bool _applyAfterPreview;
     private sealed record RuleTarget(string Key, string Label, string? CustomId = null);
     private RuleTarget? _recentRule;
     private AdvertisementRuleOptions? _undoAdvertisement;
@@ -135,6 +138,15 @@ public partial class TextCleanupWindow : Window
     private TextCleanupWindow(string inputPath, string sourceText, TextCleanupOptions initial)
     {
         InitializeComponent();
+        _optionRefreshTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(120),
+        };
+        _optionRefreshTimer.Tick += (_, _) =>
+        {
+            _optionRefreshTimer.Stop();
+            RefreshPreview(allowApplyWhilePreviewing: true);
+        };
         _sourceText = sourceText;
         _sourceLines = sourceText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         _initial = initial;
@@ -149,7 +161,11 @@ public partial class TextCleanupWindow : Window
         _loaded = true;
         ChangeSummaryText.Text = "正在分析文本…";
         Loaded += TextCleanupWindow_Loaded;
-        Closed += (_, _) => _previewCancellation?.Cancel();
+        Closed += (_, _) =>
+        {
+            _optionRefreshTimer.Stop();
+            _previewCancellation?.Cancel();
+        };
     }
 
     public TextCleanupOptions Result { get; private set; }
@@ -212,9 +228,10 @@ public partial class TextCleanupWindow : Window
         _loaded = wasLoaded;
     }
 
-    private async void RefreshPreview(bool runInBackground = true)
+    private async void RefreshPreview(bool runInBackground = true, bool allowApplyWhilePreviewing = false)
     {
         if (!_loaded) return;
+        _optionRefreshTimer.Stop();
         Result = CaptureOptions();
         var options = Result;
         if (_lastAddedAdvertisement is not null && (options.Advertisement != _lastAddedAdvertisement
@@ -224,9 +241,14 @@ public partial class TextCleanupWindow : Window
             UndoConditionButton.Visibility = Visibility.Collapsed;
         }
         var selectedKey = (ChangesGrid.SelectedItem as TextCleanupChangeRow)?.Key;
+        var selectedKeys = ChangesGrid.SelectedItems.Cast<TextCleanupChangeRow>().Select(row => row.Key).ToHashSet();
         _previewReady = false;
-        ApplyRulesButton.IsEnabled = false;
+        // 已有成功预览时仍允许点击；如果此刻正在重新分析，Apply_Click 会排队，
+        // 避免用户连续勾选规则后遇到“应用规则”静默无效。
+        ApplyRulesButton.IsEnabled = allowApplyWhilePreviewing && _preview is not null;
+        ApplyRulesButton.Content = _preview is null ? "应用规则" : "应用规则（等待预览）";
         AddAdvertisementRuleButton.IsEnabled = false;
+        AdoptSelectedButton.IsEnabled = KeepSelectedButton.IsEnabled = false;
         var version = ++_previewVersion;
         _previewCancellation?.Cancel();
         _previewCancellation?.Dispose();
@@ -248,6 +270,11 @@ public partial class TextCleanupWindow : Window
         catch (Exception exception)
         {
             if (version != _previewVersion) return;
+            _previewReady = false;
+            ApplyRulesButton.IsEnabled = false;
+            ApplyRulesButton.Content = "应用规则";
+            AddAdvertisementRuleButton.IsEnabled = false;
+            _applyAfterPreview = false;
             ChangeSummaryText.Text = "预览失败；请修正规则后再应用";
             InkDialog.Show(this, exception.Message, "清理规则无法执行", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
@@ -264,9 +291,12 @@ public partial class TextCleanupWindow : Window
         ApplyChangeFilter();
         _previewReady = true;
         ApplyRulesButton.IsEnabled = true;
+        ApplyRulesButton.Content = "应用规则";
         AddAdvertisementRuleButton.IsEnabled = true;
         ChangesGrid.SelectedItem = ChangesGrid.Items.Cast<TextCleanupChangeRow>().FirstOrDefault(row => row.Key == selectedKey)
             ?? ChangesGrid.Items.Cast<TextCleanupChangeRow>().FirstOrDefault();
+        foreach (var row in ChangesGrid.Items.Cast<TextCleanupChangeRow>().Where(row => selectedKeys.Contains(row.Key)))
+            if (!ChangesGrid.SelectedItems.Contains(row)) ChangesGrid.SelectedItems.Add(row);
         var applied = _preview.Changes.Count(change => change.IsApplied);
         ChangeSummaryText.Text = _preview.Changes.Count == 0
             ? "没有检测到需要修改的内容"
@@ -277,6 +307,12 @@ public partial class TextCleanupWindow : Window
         active.AddRange(_customRules.Where(rule => rule.Enabled).Select(rule => "自定义：" + rule.Name));
         ActiveRulesText.Text = active.Count == 0 ? "未开启清理规则" : "已开启：" + string.Join("、", active);
         UpdatePreview();
+        if (_applyAfterPreview)
+        {
+            _applyAfterPreview = false;
+            Result = options;
+            DialogResult = true;
+        }
     }
 
     private void ChangesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -294,6 +330,8 @@ public partial class TextCleanupWindow : Window
     private void UpdatePreview()
     {
         if (_preview is null) return;
+        SelectionSummaryText.Text = $"已选 {ChangesGrid.SelectedItems.Count} 项 · Ctrl / Shift 多选";
+        AdoptSelectedButton.IsEnabled = KeepSelectedButton.IsEnabled = _previewReady && ChangesGrid.SelectedItems.Count > 0;
         var row = ChangesGrid.SelectedItem as TextCleanupChangeRow;
         var change = row?.Change;
         CurrentChangeSummary.Text = row is null ? "请选择检测记录" : $"{row.Status} · 第 {row.LineNumber} 行 · {row.Rule}" + (row.Members.Count > 1 ? "（正文显示首处；可展开逐处核对）" : "");
@@ -358,7 +396,6 @@ public partial class TextCleanupWindow : Window
         PreviewLocationText.Text = view.LocationText;
         if (view.SelectionLength <= 0) return;
 
-        PreviewText.Focus();
         PreviewText.Select(
             Math.Clamp(view.SelectionStart, 0, PreviewText.Text.Length),
             Math.Clamp(view.SelectionLength, 0, Math.Max(0, PreviewText.Text.Length - view.SelectionStart)));
@@ -366,17 +403,43 @@ public partial class TextCleanupWindow : Window
         if (line >= 0) PreviewText.ScrollToLine(line);
     }
 
-    private void Option_Click(object sender, RoutedEventArgs e) => RefreshPreview();
-    private void ChineseVariantCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshPreview();
+    private void SchedulePreviewRefresh()
+    {
+        if (!_loaded) return;
+        _previewReady = false;
+        ++_previewVersion;
+        _previewCancellation?.Cancel();
+        AdoptSelectedButton.IsEnabled = KeepSelectedButton.IsEnabled = false;
+        _optionRefreshTimer.Stop();
+        _optionRefreshTimer.Start();
+    }
+
+    private void Option_Click(object sender, RoutedEventArgs e) => SchedulePreviewRefresh();
+    private void ChineseVariantCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => SchedulePreviewRefresh();
     private void ChangeFilter_Changed(object sender, RoutedEventArgs e) { if (_loaded) ApplyChangeFilter(); }
     private void ToggleChange_Click(object sender, RoutedEventArgs e)
     {
+        if (!_previewReady) return;
         if (sender is not Button { Tag: string key }) return;
         var row = ChangesGrid.Items.Cast<TextCleanupChangeRow>().FirstOrDefault(item => item.Key == key);
         if (row is null) return;
         var keep = row.Members.Any(change => change.IsApplied);
         foreach (var change in row.Members)
             if (keep) _excludedKeys.Add(change.Key); else _excludedKeys.Remove(change.Key);
+        RefreshPreview();
+    }
+
+    private void AdoptSelected_Click(object sender, RoutedEventArgs e) => SetSelectedChanges(keep: false);
+    private void KeepSelected_Click(object sender, RoutedEventArgs e) => SetSelectedChanges(keep: true);
+
+    private void SetSelectedChanges(bool keep)
+    {
+        if (!_previewReady) return;
+        var changes = ChangesGrid.SelectedItems.Cast<TextCleanupChangeRow>().SelectMany(row => row.Members).ToArray();
+        if (changes.Length == 0) return;
+        foreach (var change in changes)
+            if (keep) _excludedKeys.Add(change.Key); else _excludedKeys.Remove(change.Key);
+        ProcessedPreviewRadio.IsChecked = true;
         RefreshPreview();
     }
 
@@ -423,7 +486,25 @@ public partial class TextCleanupWindow : Window
         RefreshPreview();
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
-    private void Apply_Click(object sender, RoutedEventArgs e) { if (!_previewReady) return; Result = CaptureOptions(); DialogResult = true; }
+    private void Apply_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded) return;
+        if (!_previewReady)
+        {
+            _applyAfterPreview = true;
+            if (_optionRefreshTimer.IsEnabled)
+            {
+                _optionRefreshTimer.Stop();
+                RefreshPreview();
+            }
+            ApplyRulesButton.IsEnabled = false;
+            ApplyRulesButton.Content = "等待分析完成…";
+            ChangeSummaryText.Text = "正在分析文本，完成后将自动应用当前规则…";
+            return;
+        }
+        Result = CaptureOptions();
+        DialogResult = true;
+    }
 
     private void ManageCustomRules_Click(object sender, RoutedEventArgs e)
     {

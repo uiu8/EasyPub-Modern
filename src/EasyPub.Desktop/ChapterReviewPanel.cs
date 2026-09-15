@@ -29,7 +29,7 @@ public partial class ChapterEditorWindow
         + string.Join(";", Flatten().Where(n => group.NodeIds.Contains(n.Id)).Select(n =>
             n.Id + ":" + n.Title + ":" + n.Level + ":" + string.Join(",", n.ContentRanges.Select(r => r.StartLine + "-" + r.EndLine))));
 
-    private string ReviewCategory(ConversionPreflightIssue issue) => ReviewGroup(issue)?.Category ?? "其他提醒";
+    private string ReviewCategory(ConversionPreflightIssue issue) => ReviewGroup(issue)?.Category ?? ReviewCategories.Other;
 
     private ChapterTreeNode[] CurrentNumericGroup(ConversionPreflightIssue? issue) =>
         issue is { Code: "numeric_body_group" } && ReviewGroup(issue) is { } group
@@ -76,6 +76,18 @@ public partial class ChapterEditorWindow
         if (_document is null || Roots is null) return;
         var nodes = Flatten().ToArray();
         var nodesById = nodes.ToDictionary(node => node.Id);
+        // Both lookups used to scan a whole group/sibling list for each issue.
+        // A preorder traversal preserves sibling order, including nested volumes.
+        var siblingPositions = new Dictionary<ChapterTreeNode, int>();
+        var nextPosition = new Dictionary<string, int>();
+        foreach (var node in nodes)
+        {
+            var parentKey = node.Parent?.Id ?? string.Empty;
+            var position = nextPosition.GetValueOrDefault(parentKey);
+            siblingPositions[node] = position;
+            nextPosition[parentKey] = position + 1;
+        }
+        var groupsByIssue = _reviewGroups.GroupBy(group => group.Issue).ToDictionary(group => group.Key, group => group.First());
         var relevant = FilteredReviewIssues();
         var shown = new HashSet<ChapterTreeNode>();
         var reviewOnly = ReviewOnlyCheck.IsChecked == true;
@@ -83,7 +95,7 @@ public partial class ChapterEditorWindow
             foreach (var node in string.IsNullOrWhiteSpace(_searchQuery) ? nodes : nodes.Where(MatchesSearch)) shown.Add(node);
         else foreach (var issue in relevant)
         {
-            var group = ReviewGroup(issue);
+            var group = groupsByIssue.GetValueOrDefault(issue);
             if (group is null) continue;
             // Resolve group members by id instead of scanning the entire tree for every issue.
             foreach (var id in group.NodeIds)
@@ -92,7 +104,7 @@ public partial class ChapterEditorWindow
                 shown.Add(member);
                 // Include real neighbors of the entire group, not just its first member.
                 var siblings = Siblings(member);
-                var index = siblings.IndexOf(member);
+                var index = siblingPositions[member];
                 if (index > 0) shown.Add(siblings[index - 1]);
                 if (index + 1 < siblings.Count) shown.Add(siblings[index + 1]);
             }
@@ -113,6 +125,7 @@ public partial class ChapterEditorWindow
                 RefreshSelectedLines();
             }
         }
+        RefreshFilteredTree();
         var confirmedKeys = _confirmedGroups.Count == 0 ? null : _confirmedGroups.Keys.ToHashSet();
         var marked = _reviewGroups.Where(g => confirmedKeys is null || !confirmedKeys.Contains(ReviewKey(g)))
             .SelectMany(g => g.NodeIds.Select(id => (id, g.Category))).GroupBy(x => x.id).ToDictionary(g => g.Key, g => string.Join(" · ", g.Select(x => x.Category).Distinct()));
@@ -121,6 +134,25 @@ public partial class ChapterEditorWindow
         FilterSummaryText.Text = reviewOnly
             ? $"当前 {relevant.Length} 组 / 已加载 {_allReviewIssues.Length} 组 · 提醒不一定是错误"
             : string.IsNullOrWhiteSpace(_searchQuery) ? "搜索标题，或输入 行:51397 · 勾选框仅控制目录" : $"匹配 {matches} 章（含原始标题）；祖先和上下文不计入匹配数";
+    }
+
+    private bool _refreshingTreeView;
+
+    private void RefreshFilteredTree()
+    {
+        // Filter data, not container Visibility: zero-height hidden rows make WPF
+        // realize the entire expanded tree while trying to fill its viewport.
+        _refreshingTreeView = true;
+        try
+        {
+            foreach (var node in Flatten()) node.RefreshVisibleChildren();
+            VisibleRoots.Synchronize(Roots);
+            // Removing filtered items can change native selection. The workbench's
+            // selection/highlight remains on the model. Do not force BringIntoView
+            // here: measuring all preceding expanded volumes defeats virtualization.
+            // Explicit chapter/suggestion navigation still uses SelectRestoredNode.
+        }
+        finally { _refreshingTreeView = false; }
     }
 
     private ConversionPreflightIssue? CurrentReviewIssue()
@@ -143,14 +175,21 @@ public partial class ChapterEditorWindow
             GroupLocationsCombo.ItemsSource = group?.Lines.Select(line =>
                 new ReviewLocation(line, $"原文第 {line} 行 · {_document.SourceLine(line)?.Text.Trim()}")).ToArray() ?? [];
             GroupLocationsCombo.SelectedItem = GroupLocationsCombo.Items.Cast<ReviewLocation>().FirstOrDefault(p => p.Line == _selectedNode?.TitleLineNumber);
+            if (GroupLocationsCombo.SelectedItem is null && GroupLocationsCombo.Items.Count > 0) GroupLocationsCombo.SelectedIndex = 0;
         }
         finally { _refreshingLocations = false; }
         GroupLocationsCombo.IsEnabled = group is not null && group.Lines.Count > 0;
+        GroupLocationsCombo.Visibility = GroupLocationsCombo.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        ReviewEvidenceExpander.Visibility = group is not null ? Visibility.Visible : Visibility.Collapsed;
+        ReviewGroupControls.Visibility = group?.NodeIds.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        OnlyCurrentIssueCheck.Visibility = CurrentReviewIssue()?.Code == "numeric_body_group" ? Visibility.Visible : Visibility.Collapsed;
+        GroupLocationsCombo.ToolTip = "选择原文位置，跳转并显示对应章节；不会修改内容。";
     }
 
     private void UpdateReviewCard()
     {
         if (ReviewHeading is null || _document is null) return;
+        RefreshReviewGroupPreview();
         var selected = OperationSelection();
         var count = selected.Length;
         var issue = CurrentReviewIssue();
@@ -172,12 +211,56 @@ public partial class ChapterEditorWindow
             FinalTitleText.Visibility = Visibility.Visible;
         }
         OnlyCurrentIssueCheck.IsEnabled = group?.NodeIds.Count > 1;
+        if (issue?.Code == "chapter_unnumbered")
+        {
+            ReviewHeading.Text = "异常长章 · 疑似无编号标题";
+            ReviewExplanation.Text = issue.Message;
+            ReviewDetailsText.Text = "本地检查默认扫描至少 200 行的章节，寻找同名分段独立短行。可在目录辅助修复中自定义阈值并结合参考目录。";
+            ReviewActionButton.Content = "预览补建 / 获取参考目录…";
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = "只补建已确认的标题，不修改原始 TXT；原有跳章检测保留。";
+            return;
+        }
+        if (issue?.Code == "chapter_repeated_sequence")
+        {
+            ReviewHeading.Text = "疑似重复拼接区段";
+            ReviewExplanation.Text = "连续多章在另一处重复出现。先核对两段前后衔接，不要当成正常分卷。";
+            ReviewDetailsText.Text = issue.Message;
+            ReviewActionButton.Content = "定位另一段开头";
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = "展开判断依据可逐处定位；重复正文问题中可逐对比较并选择保留。";
+            return;
+        }
+        if (issue?.Code == "chapter_content_duplicate")
+        {
+            ReviewHeading.Text = "疑似重复正文";
+            ReviewExplanation.Text = "同名章节正文相似度达到 90%。先对比，再选择保留哪一份；不会自动删除。";
+            ReviewDetailsText.Text = issue.Message + "\n相似度采用去空白后的连续 5 字片段重合度；行数仅作参考，不作为重复依据。选择下方位置可跳转原文。";
+            ReviewActionButton.Content = "对比正文，选择保留…";
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = "仅处理本对章节 · 删除包含该章正文 · 可撤销 · 原始 TXT 不变";
+            return;
+        }
         if (_resultMessage is not null)
         {
             ReviewHeading.Text = "本次处理结果";
             ReviewExplanation.Text = _resultMessage;
             ReviewDetailsText.Text = "原始 TXT 未被修改。核对下方原文后，可撤销或前往下一组。";
             ActionScopeText.Text = _selectedNode is null ? "" : "当前结果：" + _selectedNode.Title;
+            return;
+        }
+        if (issue?.Code == "chapter_structure_suggested")
+        {
+            ReviewHeading.Text = "建议整理章节结构";
+            ReviewExplanation.Text = "多处结构信号同时出现。可以先补建漏识别标题，再预览整体整理；不会自动应用。";
+            ReviewDetailsText.Text = issue.Message;
+            ReviewActionButton.Content = "预览结构整理…";
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = "展开涉及位置可查看依据；局部修复功能仍可使用。";
             return;
         }
         if (issue?.Code == "numeric_chapters_suspected")
@@ -194,14 +277,26 @@ public partial class ChapterEditorWindow
             OnlyCurrentIssueCheck.IsEnabled = false;
             return;
         }
-        ReviewHeading.Text = count > 1 ? $"已选 {count} 个章节" : category ?? (_selectedNode is null ? "选择章节，核对原文" : "编辑当前章节");
+        if (issue?.Code == "chapter_heading_typo")
+        {
+            ReviewHeading.Text = "疑似标题缺字 / 错字";
+            ReviewExplanation.Text = "在跳章区间找到对应缺失编号；核对后补建章节并规范成品标题。";
+            ReviewDetailsText.Text = issue.Message;
+            ReviewActionButton.Content = "修复本组漏识别标题…";
+            ReviewActionButton.Visibility = Visibility.Visible;
+            ReviewActionButton.IsEnabled = !_sourceChanged;
+            ActionScopeText.Text = "可撤销 · 原始 TXT 不变 · 批量入口在“更多”";
+            return;
+        }
+        ReviewHeading.Text = count > 1 ? $"已选 {count} 个章节"
+            : issue?.Code == "numeric_body_group" ? "疑似正文被识别为章节"
+            : category ?? (_selectedNode is null ? "选择章节，核对原文" : "编辑当前章节");
         var advice = category switch
         {
-            "疑似正文误识别" => "若是正文列举，可还原正文；原始数字条目及正文会完整保留。",
-            "重复标题" => "先预览再清理。默认仅清理相邻同名、正文 0 行的重复标题。",
-            "编号异常" => "核对前后章号；跳号可能是漏识别，分卷也可能重新编号。",
-            "卷与层级" => "提醒不自动改层级；核对原文后选择设为子章节或移出父章节。",
-            "疑似漏识别" => "确认属于标题后，选择原文行建立章节；不要把普通正文再次拆成章节。",
+            ReviewCategories.Misrecognized => "若是正文列举，可还原正文；原始数字条目及正文会完整保留。",
+            ReviewCategories.Duplicate => "同一段内容出现多次。先预览再清理：同名相邻标题默认只清理正文 0 行的；重复正文需逐对比较后选择保留。",
+            ReviewCategories.Structure => "核对前后章号与层级。跳号可能是漏识别，分卷也可能重新编号；层级不会自动修改，核对原文后选择设为子章节或移出父章节。",
+            ReviewCategories.Missing => "确认属于标题后，选择原文行建立章节；不要把普通正文再次拆成章节。",
             _ => "编辑成品标题不改原始 TXT。Ctrl 多选，Shift 连选；目录勾选与操作选择独立。"
         };
         ReviewExplanation.Text = count > 1 ? "按真实兄弟顺序分段归入上一章；原始标题行与正文全部保留。" : advice;
@@ -209,15 +304,15 @@ public partial class ChapterEditorWindow
         ReviewExplanation.ToolTip = ReviewDetailsText.Text;
         var numericGroup = CurrentNumericGroup(issue);
         var targets = count == 1 && OnlyCurrentIssueCheck.IsChecked != true && numericGroup.Length > 1 ? numericGroup : selected;
-        var restore = count > 1 || category == "疑似正文误识别";
+        var restore = count > 1 || issue?.Code == "numeric_body_group";
         ReviewActionButton.Content = restore ? targets.Length > 1 ? $"还原{(count > 1 ? "已选" : "本组")} {targets.Length} 处为正文" : "还原为上一章正文"
-            : category == "重复标题" ? "检查并清理本组…"
-            : category == "疑似漏识别" ? "从选中行建立章节"
+            : issue?.Code == "chapter_duplicate" ? "检查并清理本组…"
+            : category == ReviewCategories.Missing ? "从选中行建立章节"
             : SuggestedTitle() is { } title ? "修改为：" + title
-            : category == "卷与层级" ? "核对层级处理…" : "编辑成品标题…";
+            : issue?.Code is "volume_number_duplicate" or "chapter_level_gap" ? "核对层级处理…" : "编辑成品标题…";
         var plan = PlanBatchAction(targets, merge: true);
         ReviewActionButton.IsEnabled = !_sourceChanged && count > 0 && (restore ? plan.Any(p => p.Reason is null)
-            : category != "疑似漏识别" || CanSplitSelectedLine());
+            : category != ReviewCategories.Missing || CanSplitSelectedLine());
         ActionScopeText.Text = restore ? DescribeBatchPlan(plan) : count == 1 ? $"当前章节：{_selectedNode?.Title}" : "请选择左侧章节。";
         if (_sourceChanged) ActionScopeText.Text = "原始 TXT 已变化，请先重新识别；当前行号不能继续编辑。";
     }
@@ -226,6 +321,16 @@ public partial class ChapterEditorWindow
     {
         if (!ReviewActionButton.IsEnabled || _sourceChanged) return;
         var issue = CurrentReviewIssue();
+        if (issue?.Code == "chapter_unnumbered") { CatalogAssist_Click(sender, e); return; }
+        if (issue?.Code == "chapter_repeated_sequence" && ReviewGroup(issue) is { } sequence)
+        {
+            var first = sequence.Lines.First();
+            NavigateToSourceLine(_selectedNode?.TitleLineNumber == first ? issue.LineNumber!.Value : first);
+            return;
+        }
+        if (issue?.Code == "chapter_content_duplicate") { CompareDuplicateContents(ReviewGroup(issue)); return; }
+        if (issue?.Code == "chapter_structure_suggested") { RecoverStructure_Click(sender, e); return; }
+        if (issue?.Code == "chapter_heading_typo") { RepairMissingHeadings(issue.LineNumber); return; }
         if (issue?.Code == "numeric_chapters_suspected")
         {
             await RecognizeSuggestedNumericChaptersAsync(normalizeTitles: true);
@@ -235,10 +340,10 @@ public partial class ChapterEditorWindow
         var before = _undo.Count;
         var group = OperationSelection().Length == 1 && OnlyCurrentIssueCheck.IsChecked != true ? CurrentNumericGroup(issue) : [];
         if (group.Length > 1) SetOperationSelection(group);
-        if (OperationSelection().Length > 1 || category == "疑似正文误识别") Merge_Click(sender, e);
-        else if (category == "重复标题") CleanDuplicateTitles(ReviewGroup(issue)?.NodeIds.ToHashSet());
-        else if (category == "卷与层级") { ReviewMore_Click(sender, e); return; }
-        else if (category == "疑似漏识别") Split_Click(sender, e);
+        if (OperationSelection().Length > 1 || issue?.Code == "numeric_body_group") Merge_Click(sender, e);
+        else if (issue?.Code == "chapter_duplicate") CleanDuplicateTitles(ReviewGroup(issue)?.NodeIds.ToHashSet());
+        else if (issue?.Code is "volume_number_duplicate" or "chapter_level_gap") { ReviewMore_Click(sender, e); return; }
+        else if (category == ReviewCategories.Missing) Split_Click(sender, e);
         else if (SuggestedTitle() is not null) CorrectNumber_Click(sender, e);
         else if (_selectedNode is not null) EditTitle(_selectedNode);
         if (_undo.Count > before && _resultMessage is null) SetReviewResult("修改已完成，原始 TXT 不变。核对下方原文后再前往下一组。");
@@ -287,8 +392,23 @@ public partial class ChapterEditorWindow
     private void ReviewMore_Click(object sender, RoutedEventArgs e)
     {
         UpdateActionButtons();
-        ChapterActionsPopup.PlacementTarget = sender as UIElement ?? ReviewMoreButton;
-        ChapterActionsPopup.IsOpen = true;
+        var menu = new ContextMenu { PlacementTarget = sender as UIElement ?? ReviewMoreButton };
+        foreach (var control in CurrentActionsPanel.Children)
+        {
+            if (control is Separator) { menu.Items.Add(new Separator()); continue; }
+            if (control is not Button button || button.Visibility != Visibility.Visible) continue;
+            var item = new MenuItem { Header = button.Content, IsEnabled = button.IsEnabled };
+            item.Click += (_, _) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            menu.Items.Add(item);
+        }
+        var restore = new MenuItem { Header = "取消章节身份，还原为正文…", IsEnabled = !_sourceChanged && _selectedNode is { IsFrontMatter: false } && OperationSelection().Length == 1 };
+        restore.Click += (_, _) => RestoreContainerToBody();
+        var keep = new MenuItem { Header = "取消父级，保留为普通章节…", IsEnabled = restore.IsEnabled && _selectedNode!.Children.Count > 0 };
+        keep.Click += (_, _) => RestoreContainerToBody(keepHeading: true);
+        menu.Items.Insert(0, keep);
+        menu.Items.Insert(0, restore);
+        menu.Items.Insert(2, new Separator());
+        menu.IsOpen = true;
     }
 
     private void GroupLocation_Changed(object sender, SelectionChangedEventArgs e)
