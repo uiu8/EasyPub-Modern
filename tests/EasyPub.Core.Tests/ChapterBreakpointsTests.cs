@@ -137,14 +137,17 @@ public class ChapterBreakpointsTests
     }
 
     [Fact]
-    public void A_repeated_number_is_not_turned_into_a_missing_stretch()
+    public void A_repeated_number_does_not_turn_the_rest_of_the_book_into_a_gap()
     {
-        // 牧神记 prints 第一五五章 where 第一五五五章 belongs, so 155 repeats. What follows is a
-        // duplicate-number problem, and calling it a fifteen-hundred-chapter gap would bury the real gaps.
-        var document = Document("第一五五四章 甲", "第一五五章 神话的破灭", "第一五五六章 生无可恋");
-        var breaks = ChapterBreakpoints.Between(document);
-        Assert.DoesNotContain(breaks, item => item.Kind == ChapterBreakpointKind.NumberGap);
-        Assert.All(breaks, item => Assert.True(item.MissingNumbers.Count == 0));
+        // 牧神记 prints 第一五五章 where 第一五五五章 belongs, so 155 appears inside a run of 1553…1556.
+        // Whatever the tree makes of that, it must never claim that a whole volume's worth of chapters —
+        // which the tree clearly does contain — went missing.
+        var document = Document("第一五五三章 甲", "第一五五章 神话的破灭", "第一五五五章 乙", "第一五五六章 丙");
+        foreach (var gap in ChapterBreakpoints.Between(document).Where(item => item.Kind == ChapterBreakpointKind.NumberGap))
+        {
+            Assert.True(gap.MissingNumbers.Count <= 30, $"缺口被夸大：{gap.Detail}");
+            Assert.Contains("编号", gap.Detail);
+        }
     }
 
     [Fact]

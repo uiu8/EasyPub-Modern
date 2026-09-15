@@ -5,9 +5,9 @@ public enum ChapterBreakpointKind
 {
     /// <summary>The chapter numbers themselves skip, so the source text is missing chapters.</summary>
     NumberGap,
-    /// <summary>The reference directory lists chapters this tree does not contain.</summary>
+    /// <summary>The reference directory lists these chapters and the tree does not contain them.</summary>
     ReferenceMissing,
-    /// <summary>A nearby heading reads as a chapter number it cannot actually be.</summary>
+    /// <summary>A stretch of numbers is absent, but a heading already in the tree reads as one of them.</summary>
     HeadingTypo,
 }
 
@@ -35,6 +35,13 @@ public sealed record ChapterBreakpoint(
 /// </summary>
 public static class ChapterBreakpoints
 {
+    /// <summary>
+    /// The most consecutive chapter numbers that can be read as "this file lost these chapters". A real
+    /// release sometimes drops a handful; a run of hundreds means the numbering itself is faulty (repeated
+    /// or miswritten numbers), and claiming those chapters are missing would be a false alarm.
+    /// </summary>
+    private const int LargestPlausibleGap = 30;
+
     public static IReadOnlyList<ChapterBreakpoint> Between(
         ChapterTreeDocument document,
         IReadOnlyList<ChapterTreeEntry>? entries = null,
@@ -43,77 +50,83 @@ public static class ChapterBreakpoints
     {
         entries ??= document.Entries;
         var corrections = HeadingTypoRules.Parse(document.RecognitionOptions.HeadingNumberCorrections);
-        var ordered = new List<(ChapterTreeEntry Entry, ChapterNumber Reading, int? Value, bool Odd, string Scope)>();
+        // Only what the tree itself shows is reported: chapter numbers that skip, and chapters the reference
+        // directory lists that the tree lacks. Nothing here guesses that a heading is *written* wrong — a
+        // release legitimately prints "第335章" after "第1章" across volumes and restarts, and calling that a
+        // miswritten number would bury the real gaps. Recognising headings is ChapterDiagnostics' job.
+        var ordered = new List<(ChapterTreeEntry Entry, ChapterNumber Reading, int? Value, string Scope)>();
         var parents = new List<ChapterTreeEntry>();
-        var previousValue = 0;
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (entry.IsFrontMatter) { parents.Clear(); previousValue = 0; continue; }
+            if (entry.IsFrontMatter) { parents.Clear(); continue; }
             while (parents.Count > 0 && parents[^1].Level >= entry.Level) parents.RemoveAt(parents.Count - 1);
             var scope = (parents.Count > 0 ? parents[^1].Id : "") + "|" + entry.Level + "|" + Unit(entry.Title);
             parents.Add(entry);
             var reading = Read(entry.Title, corrections);
-            var value = reading.Number;
-            // A heading whose digits are nowhere near the chapter before it ("第四百零十八章" reading 4080
-            // where 418 belongs) is a miswritten number, not a chapter four thousand places away. The 零
-            // reading is adopted only where it lands on the very next chapter, so an ordinary "第一千零八"
-            // keeps its literal 1008 instead of becoming 1018.
-            var odd = false;
-            if (value.HasValue && Math.Abs((long)value.Value - (previousValue + 1)) > MisreadDistance)
-            {
-                var repaired = reading.Relaxed;
-                if (repaired == previousValue + 1) value = repaired;
-                else odd = true;
-            }
-            previousValue = value ?? previousValue;
-            ordered.Add((entry, reading, value, odd, scope));
+            ordered.Add((entry, reading, reading.Number, scope));
         }
 
         var result = new List<ChapterBreakpoint>();
-        var used = new HashSet<int>();
+        // The numbers this scope shows, and the span they cover. A gap is only believable when the missing
+        // numbers sit inside that span: 择天记 prints 中文 chapters and 阿拉伯 chapters side by side
+        // ("第十七章" then "第335章"), and comparing across two numbering systems invents hundreds of
+        // "missing" chapters that belong to the other system.
+        var span = new Dictionary<string, (int Low, int High)>();
+        var scopes = ordered.GroupBy(item => item.Scope).ToDictionary(
+            group => group.Key,
+            group => group.Select(item => item.Value).OfType<int>().ToArray());
+        var present = scopes.Values.SelectMany(values => values).ToHashSet();
+        foreach (var pair in scopes.Where(pair => pair.Value.Length > 0))
+            span[pair.Key] = (pair.Value.Min(), pair.Value.Max());
+        // The number the previous row showed, inside the scope being walked. A row that repeats a number is
+        // a duplicate-number problem; it must be skipped, not used as the left end of a comparison.
+        var seen = new Dictionary<string, HashSet<int>>();
         for (var index = 1; index < ordered.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var previous = ordered[index - 1];
             var current = ordered[index];
-            if (previous.Scope != current.Scope) { used.Clear(); if (previous.Value is int carried) used.Add(carried); continue; }
+            if (!seen.TryGetValue(current.Scope, out var scopeSeen))
+                seen[current.Scope] = scopeSeen = [.. ordered.Take(index).Where(item => item.Scope == current.Scope)
+                    .Select(item => item.Value).OfType<int>()];
+            if (previous.Scope != current.Scope) continue;
             if (previous.Value is not int before || current.Value is not int now) continue;
-            // A number already used earlier in this scope means the tree is grappling with a repeated or
-            // miswritten number ("第一五五章" where 第一五五五章 belongs repeats 155), not that chapters were
-            // skipped. Reporting a fifteen-hundred-chapter gap there would bury the real ones.
-            if (!used.Add(now)) continue;
+            if (!scopeSeen.Add(now)) continue;
             if (now <= before + 1) continue;
-
-            // The number jumps somewhere it cannot plausibly belong. Saying so next to the row beats
-            // reporting four thousand "missing" chapters in between.
-            if (current.Odd)
-            {
-                result.Add(new(ChapterBreakpointKind.HeadingTypo, previous.Entry.Id, current.Entry.Id, before, [], [],
-                    $"「{current.Entry.Title}」的章号与前一章（第 {before} 章）接不上，疑似编号写法有误；此处应紧接第 {before + 1} 章。"));
-                continue;
-            }
 
             // The numbers that should be here are the ones this tree failed to read. A heading the tree put
             // later but whose other reading is exactly one of them is a miswritten number, not an absent
             // chapter — reporting it as missing would send the user hunting for text in plain sight.
             var missing = new List<int>();
             var typos = new List<(int Expected, string Title)>();
+            var beyondScope = 0;
+            var (low, high) = span.TryGetValue(current.Scope, out var range) ? range : (int.MinValue, int.MaxValue);
             for (var expected = before + 1; expected < now; expected++)
             {
-                var match = ordered.Skip(index).TakeWhile(item => item.Scope == current.Scope)
+                if (present.Contains(expected)) continue;
+                if (expected < low || expected > high) { beyondScope++; continue; }
+                var match = ordered.Where(item => item.Scope == current.Scope)
                     .FirstOrDefault(item => item.Reading.Relaxed == expected);
                 if (match.Entry is null) { missing.Add(expected); continue; }
                 typos.Add((expected, match.Entry.Title));
             }
+            if (missing.Count == 0 && typos.Count == 0 && beyondScope == 0) continue;
             if (typos.Count > 0)
                 result.Add(new(ChapterBreakpointKind.HeadingTypo, previous.Entry.Id, current.Entry.Id, before, [], [],
                     "此处标题的编号写法有误：" + string.Join("；", typos.Select(t => $"「{t.Title}」按前后章号应为第 {t.Expected} 章")) + "。"));
-            if (missing.Count > 0)
-                result.Add(new(ChapterBreakpointKind.NumberGap, previous.Entry.Id, current.Entry.Id, before, missing, [],
-                    missing.Count == 1
+            // Naming chapters is only honest while the numbers line up. When the range holds numbering from
+            // another system (择天记 prints 中文 and 阿拉伯 chapters side by side) or covers hundreds of
+            // numbers, say that the numbering breaks and let the user look at the row.
+            if (missing.Count == 0 && beyondScope == 0) continue;
+            var names = missing.Count is > 0 and <= LargestPlausibleGap;
+            result.Add(new(ChapterBreakpointKind.NumberGap, previous.Entry.Id, current.Entry.Id, before,
+                names ? missing : [], [],
+                names
+                    ? missing.Count == 1
                         ? $"第 {before} 章之后直接是第 {now} 章，源文件缺第 {missing[0]} 章。"
-                        : $"第 {before} 章之后直接是第 {now} 章，源文件缺第 {missing[0]}–{missing[^1]} 章（共 {missing.Count} 章）。"));
+                        : $"第 {before} 章之后直接是第 {now} 章，源文件缺第 {missing[0]}–{missing[^1]} 章（共 {missing.Count} 章）。"
+                    : $"第 {before} 章与第 {now} 章之间的编号对不上（{Math.Max(missing.Count, beyondScope)} 个号码既不在本节范围内、也未出现），源文件这一段可能混用了另一套编号或存在重号，请核对。"));
         }
         if (reference is not null) AddReferenceMissing(entries, reference, corrections, result, cancellationToken);
         return result.OrderBy(item => item.PreviousNumber).ToArray();
@@ -183,17 +196,11 @@ public static class ChapterBreakpoints
     }
 
     /// <summary>
-    /// How far a heading number may sit from the chapter before it before the digits are treated as
-    /// miswritten rather than as a chapter four thousand places away. Volumes restart numbering inside the
-    /// same tree, but a restart changes scope, so it never reaches this comparison.
-    /// </summary>
-    private const int MisreadDistance = 50;
-
-    /// <summary>
     /// A chapter number read from a heading, in two readings. <paramref name="Number"/> is the heading
     /// after the book's own 编号纠错表 ("第六百八十久章" is 689); <paramref name="Relaxed"/> additionally
     /// reads a 零 in front of a unit as the "one" it was meant to be ("第四百零十" is 4110 literally and
-    /// 410 as meant). Neither reading rewrites the heading.
+    /// 410 as meant). Neither reading rewrites the heading; the second one exists only so that a heading
+    /// which *is* present under a miswritten number is not counted among the missing.
     /// </summary>
     public readonly record struct ChapterNumber(int? Number, int? Relaxed, bool Readable);
 
