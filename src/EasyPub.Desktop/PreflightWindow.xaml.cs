@@ -74,7 +74,7 @@ public partial class PreflightWindow : Window
         {
             var items = group.ToArray();
             if (items.Length == 1) { collapsed.Add(items[0]); continue; }
-            collapsed.Add(items[0] with { Message = $"共 {items.Length} 条同类提醒 · 最早：{items[0].Message}" });
+            collapsed.Add(items[0] with { Count = items.Length });
         }
         return collapsed.ToArray();
     }
@@ -112,6 +112,14 @@ public sealed record PreflightIssueRow(
     string Message,
     ConversionPreflightIssue? Issue)
 {
+    /// <summary>
+    /// How many reminders this row stands for. It gets its own column so the number is scannable —
+    /// prefixed onto the message it pushed the actual evidence out of view.
+    /// </summary>
+    public int Count { get; init; } = 1;
+
+    public string CountLabel => Count > 1 ? $"{Count} 条" : "";
+
     public bool CanNavigate => Issue is not null;
     public string Category => Issue is null ? "全部" : IssueCategory.For(Issue);
     public string ActionLabel => Issue is null ? "—" : Issue.Code switch

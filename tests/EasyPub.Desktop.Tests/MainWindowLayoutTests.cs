@@ -79,7 +79,8 @@ public sealed class MainWindowLayoutTests
             // row instead of listing them separately. The folded row keeps the group's first issue,
             // which is why the jump-gap assertions below still find their row.
             var overview = Assert.Single(grid.Items.Cast<PreflightIssueRow>());
-            Assert.Contains("共 2 条同类提醒", overview.Message);
+            Assert.Equal(2, overview.Count);
+            Assert.Equal("2 条", overview.CountLabel);
             var combo = Assert.IsType<ComboBox>(window.FindName("WorkflowCategoryCombo"));
             combo.SelectedItem = ReviewCategories.Missing;
             // Choosing one category is a drill-down, so those rows stay individual and actionable.

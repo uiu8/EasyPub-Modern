@@ -27,7 +27,8 @@ public class PreflightCollapseTests
         var collapsed = PreflightWindow.Collapse(rows);
 
         var row = Assert.Single(collapsed);
-        Assert.Contains("共 3 条同类提醒", row.Message);
+        Assert.Equal(3, row.Count);
+        Assert.Equal("3 条", row.CountLabel);
     }
 
     /// <summary>The real failure: identical book, paths differing only by extension and directory.</summary>
@@ -43,7 +44,7 @@ public class PreflightCollapseTests
         var collapsed = PreflightWindow.Collapse(rows);
 
         Assert.Single(collapsed);
-        Assert.Contains("共 2 条同类提醒", collapsed[0].Message);
+        Assert.Equal(2, collapsed[0].Count);
     }
 
     [Fact]

@@ -140,6 +140,7 @@
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="状态" Binding="{Binding SeverityText}" Width="65"/>
                                 <DataGridTextColumn Header="问题类型" Binding="{Binding Category}" Width="125"/>
+                                <DataGridTextColumn Header="条数" Binding="{Binding CountLabel}" Width="58"/>
                                 <DataGridTextColumn Header="书稿" Binding="{Binding BookName}" Width="160"/>
                                 <DataGridTextColumn Header="判断依据" Binding="{Binding Message}" Width="*" MinWidth="160">
                                     <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding Message}"/></Style></DataGridTextColumn.ElementStyle>

@@ -25,6 +25,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="级别" Binding="{Binding SeverityText}" Width="80"/>
                     <DataGridTextColumn Header="类型" Binding="{Binding Category}" Width="110"/>
+                    <DataGridTextColumn Header="条数" Binding="{Binding CountLabel}" Width="58"/>
                     <DataGridTextColumn Header="书稿" Binding="{Binding BookName}" Width="150"/>
                     <DataGridTextColumn Header="检查结果" Binding="{Binding Message}" Width="*"/>
                     <DataGridTemplateColumn Header="操作" Width="112"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="{Binding ActionLabel}" Tag="{Binding}" Padding="10,4" MinHeight="28" Click="HandleIssue_Click" IsEnabled="{Binding CanNavigate}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
