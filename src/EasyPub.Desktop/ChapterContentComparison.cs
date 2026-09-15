@@ -82,6 +82,19 @@ public partial class ChapterEditorWindow
         var kept = entries.Single(e => e.Id == keepId);
         var remaining = ChapterContentDuplicates.RemoveCopy(_document, entries, removeId, keepId);
         if (!ConfirmWorkbench($"将从成品删除原文第 {removed.TitleLineNumber} 行的“{removed.Title}”及其正文。\n保留原文第 {kept.TitleLineNumber} 行的章节。\n原始 TXT 不变，可撤销。确定删除？", "确认删除重复正文")) return;
+        string? receipt;
+        try
+        {
+            var dropped = RepairIntegrity.Coverage(entries);
+            dropped.ExceptWith(RepairIntegrity.Coverage(remaining));
+            RepairIntegrity.Verify(entries, remaining, dropped);
+            receipt = RepairIntegrity.SaveRemovedAsync(_document, dropped.Order().ToArray()).GetAwaiter().GetResult();
+        }
+        catch (Exception error)
+        {
+            SetReviewResult("未删除：备份或移除清单未完成。" + error.Message);
+            return;
+        }
         Mutate(() =>
         {
             Roots.Clear();
@@ -90,6 +103,6 @@ public partial class ChapterEditorWindow
         });
         SetOperationSelection([_selectedNode!]);
         RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
-        SetReviewResult($"已从成品删除第 {removed.TitleLineNumber} 行的一份重复章节及正文，保留第 {kept.TitleLineNumber} 行的章节。原始 TXT 不变，可撤销。");
+        SetReviewResult($"已从成品删除第 {removed.TitleLineNumber} 行的一份重复章节及正文，保留第 {kept.TitleLineNumber} 行的章节。原始 TXT 不变，可撤销。移除清单：{receipt}");
     }
 }

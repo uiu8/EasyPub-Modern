@@ -11,7 +11,9 @@ public enum ReferenceActionKind
     /// <summary>本地有、参考目录没有。只提示，永不自动处理。</summary>
     KeepExtra,
     /// <summary>参考目录的卷结构无法在原文中落地（卷名与章标题同行），仅作提示。</summary>
-    VolumeNote
+    VolumeNote,
+    /// <summary>建议把目录外的疑似正文标题并回正文；必须明确选中。</summary>
+    DemoteExtra
 }
 
 public sealed record ReferenceAction(
@@ -37,7 +39,7 @@ public sealed record ReferencePlan(
 
     /// <summary>Actions safe to pre-select: they only add structure the reference confirms.</summary>
     public IEnumerable<ReferenceAction> DefaultSelection => Actions.Where(a => a.Recommended && a.Kind is
-        ReferenceActionKind.AddChapter or ReferenceActionKind.Retitle or ReferenceActionKind.RemoveDuplicate);
+        ReferenceActionKind.AddChapter or ReferenceActionKind.Retitle or ReferenceActionKind.RemoveDuplicate or ReferenceActionKind.DemoteExtra);
 }
 
 /// <summary>
@@ -85,7 +87,7 @@ public static class ReferencePlanner
                 if (!string.Equals(existing.Title.Trim(), chapter.Reference.Title.Trim(), StringComparison.Ordinal))
                     actions.Add(new(ReferenceActionKind.Retitle, line, chapter.Reference.Title,
                         $"{volume}当前标题「{existing.Title}」与参考目录「{chapter.Reference.Title}」不同；勾选后使用参考标题。",
-                        existing.Id, chapter.Reference, true));
+                        existing.Id, chapter.Reference, existing.RecognitionSource != "manual"));
             }
             else
             {
@@ -97,7 +99,8 @@ public static class ReferencePlanner
             {
                 var others = chapter.Lines.Where(value => value != line && !assignedLines.Contains(value) && byLine.ContainsKey(value)).ToArray();
                 if (others.Length == 0) continue;
-                var safe = others.All(other => SameBody(document, entries, line, other));
+                var safe = others.All(other => byLine[other].RecognitionSource != "manual"
+                    && !HasChildren(entries, byLine[other]) && SameBody(document, entries, line, other));
                 actions.Add(new(ReferenceActionKind.RemoveDuplicate, line, chapter.Reference.Title,
                     $"{volume}「{chapter.Reference.Title}」在原文出现 {chapter.Occurrences} 次（第 {string.Join("、", chapter.Lines)} 行），" +
                     $"参考目录只出现一次。保留第 {line} 行（与参考位置一致），仅正文一致时默认移除，其余需对比后手动选择。",
@@ -110,8 +113,13 @@ public static class ReferencePlanner
         // so they get no action and no alignment pass is allowed to take them away.
         foreach (var entry in entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is int line
                      && !locatedLines.Contains(line) && e.RecognitionSource != "manual"))
-            actions.Add(new(ReferenceActionKind.KeepExtra, entry.TitleLineNumber!.Value, entry.Title,
-                $"「{entry.Title}」未列入参考目录；有章号的保留为章节，无章号的并回正文，内容保留。", entry.Id, null, false));
+        {
+            var demote = ReferenceOutline.ParseKey(entry.Title).Number.Length == 0
+                || entry.Title.Trim().Length > MaximumExtraTitleLength;
+            actions.Add(new(demote ? ReferenceActionKind.DemoteExtra : ReferenceActionKind.KeepExtra,
+                entry.TitleLineNumber!.Value, entry.Title,
+                $"「{entry.Title}」未列入参考目录。勾选后并回正文（保留全部文字）；不勾选则保留章节。", entry.Id, null, demote));
+        }
 
         if (catalog.VolumeTitles.Count > 1)
         {
@@ -139,6 +147,11 @@ public static class ReferencePlanner
         ICollection<int>? droppedLines = null)
     {
         var chosen = selected.ToHashSet();
+        if (chosen.Count == 0 && !buildVolumeLevels) return entries;
+        // A hand-edited tree owns its order, levels and body ranges. Reconcile locally instead
+        // of reconstructing it from physical source positions.
+        if (entries.Any(e => e.RecognitionSource == "manual" || (!e.IsFrontMatter && e.TitleLineNumber is null)))
+            return ApplyPreservingEdits(document, entries, plan, chosen, useReferenceTitles, droppedLines);
         var allowed = RepairIntegrity.Coverage(entries);
         var keep = new SortedDictionary<int, ChapterTreeEntry>();
         foreach (var entry in entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is not null))
@@ -167,6 +180,7 @@ public static class ReferencePlanner
                         for (var row = line; row < end; row++) if (allowed.Contains(row)) dropped.Add(row);
                     }
                     break;
+                case ReferenceActionKind.DemoteExtra when action.Line > 0:
                 case ReferenceActionKind.KeepExtra when action.Line > 0:
                     // Selected means "this heading is not in the official directory, so it must not
                     // stand as a chapter". Only the heading boundary goes away — its lines fall into
@@ -182,10 +196,6 @@ public static class ReferencePlanner
         // so prose like "九节鞭、三节棍，随意变换的冰武…" parses as "第 9 节" and would keep its
         // chapter status. Anything outside the directory that runs past a plausible title length is
         // body text whatever its number looks like; user-added headings stay untouched either way.
-        foreach (var line in keep.Keys.ToArray())
-            if (!reserved.Contains(line) && keep[line].RecognitionSource != "manual"
-                && (ReferenceOutline.ParseKey(keep[line].Title).Number.Length == 0
-                    || keep[line].Title.Trim().Length > MaximumExtraTitleLength)) keep.Remove(line);
         if (keep.Count == 0) return entries;
         allowed.ExceptWith(dropped);
         var ordered = keep.Keys.ToArray();
@@ -234,12 +244,71 @@ public static class ReferencePlanner
             result.Add(keep[line] with { Level = volume is null ? 1 : 2, ContentRanges = ranges[line],
                 // A heading the user added by hand keeps its mark: the reports use it to leave those
                 // entries out of "needs your decision", because the user already decided.
-                RecognitionSource = keep[line].RecognitionSource == "manual" ? "manual" : "reference" });
+                RecognitionSource = keep[line].RecognitionSource == "manual" ? "manual"
+                    : reserved.Contains(line) ? "reference" : keep[line].RecognitionSource });
         }
         RepairIntegrity.Verify(entries,result,dropped);
         document.CreatePlan(result);
         foreach (var line in dropped.Order()) droppedLines?.Add(line);
         return result;
+    }
+
+    private static IReadOnlyList<ChapterTreeEntry> ApplyPreservingEdits(ChapterTreeDocument document,
+        IReadOnlyList<ChapterTreeEntry> entries, ReferencePlan plan, HashSet<ReferenceAction> chosen,
+        bool useReferenceTitles, ICollection<int>? droppedLines)
+    {
+        var result = entries.ToList();
+        foreach (var action in plan.Actions.Where(chosen.Contains))
+        {
+            var index = result.FindIndex(e => e.Id == action.EntryId);
+            if (action.Kind == ReferenceActionKind.Retitle && useReferenceTitles && index >= 0)
+                result[index] = result[index] with { Title = action.Title };
+            else if (action.Kind == ReferenceActionKind.AddChapter && action.Line > 0
+                && !result.Any(e => e.TitleLineNumber == action.Line))
+            {
+                index = result.FindIndex(e => e.ContentRanges.Any(r => r.StartLine <= action.Line && r.EndLine >= action.Line));
+                if (index < 0 || result[index].RecognitionSource == "manual") continue;
+                var owner = result[index];
+                var body = RepairIntegrity.Coverage([owner]);
+                if (owner.TitleLineNumber is int title) body.Remove(title);
+                var tail = body.Where(line => line > action.Line).ToArray();
+                result[index] = owner with { ContentRanges = RepairIntegrity.Ranges(body.Where(line => line < action.Line)) };
+                result.Insert(index + 1, new ChapterTreeEntry(Guid.NewGuid().ToString("N"),
+                    useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(),
+                    owner.IsFrontMatter ? 1 : owner.Level, true, action.Line, RepairIntegrity.Ranges(tail)) { RecognitionSource = "reference" });
+            }
+            else if (action.Kind == ReferenceActionKind.RemoveDuplicate)
+            {
+                var located = plan.Location.Chapters.FirstOrDefault(c => ReferenceEquals(c.Reference, action.Reference));
+                var reserved = plan.Location.Chapters.Where(c => c.Line is not null).Select(c => c.Line!.Value).ToHashSet();
+                if (located is null) continue;
+                result.RemoveAll(e => e.RecognitionSource != "manual" && e.TitleLineNumber is int line
+                    && line != action.Line && !reserved.Contains(line) && located.Lines.Contains(line)
+                    && !HasChildren(entries, e));
+            }
+            else if (action.Kind is ReferenceActionKind.KeepExtra or ReferenceActionKind.DemoteExtra
+                && index > 0 && result[index].RecognitionSource != "manual" && !HasChildren(result, result[index])
+                && result[index - 1].RecognitionSource != "manual")
+            {
+                var previous = result[index - 1];
+                var merged = RepairIntegrity.Coverage([previous, result[index]]);
+                if (previous.TitleLineNumber is int title) merged.Remove(title);
+                result[index - 1] = previous with { ContentRanges = RepairIntegrity.Ranges(merged) };
+                result.RemoveAt(index);
+            }
+        }
+        var removed = RepairIntegrity.Coverage(entries);
+        removed.ExceptWith(RepairIntegrity.Coverage(result));
+        RepairIntegrity.Verify(entries, result, removed);
+        document.CreatePlan(result);
+        foreach (var line in removed.Order()) droppedLines?.Add(line);
+        return result;
+    }
+
+    private static bool HasChildren(IReadOnlyList<ChapterTreeEntry> entries, ChapterTreeEntry entry)
+    {
+        var index = entries.ToList().FindIndex(e => e.Id == entry.Id);
+        return index >= 0 && index + 1 < entries.Count && entries[index + 1].Level > entry.Level;
     }
 
     private static bool SameBody(ChapterTreeDocument document, IReadOnlyList<ChapterTreeEntry> entries, int first, int second)

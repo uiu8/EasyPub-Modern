@@ -40,12 +40,18 @@ public static class ChapterReviewAnalyzer
         // A tree reconciled against an official directory already answers "which chapters exist".
         // These heuristics exist to guess exactly that, so once the reference has been applied their
         // findings describe the source text rather than a problem still left to fix.
-        var referenceAligned = entries.Any(entry => string.Equals(entry.RecognitionSource, "reference", StringComparison.Ordinal));
+        var referenceIds = entries.Where(e => e.RecognitionSource == "reference").Select(e => e.Id).ToHashSet();
+        bool Unverified(string id) => !referenceIds.Contains(id);
+        bool UnverifiedLine(int? line) => line is null || entries.Any(e => Unverified(e.Id)
+            && (e.TitleLineNumber == line || e.ContentRanges.Any(r => line >= r.StartLine && line <= r.EndLine)));
+        var referenceAligned = entries.Any(e => e.RecognitionSource == "reference")
+            && entries.Where(e => !e.IsFrontMatter && e.RecognitionSource is not ("reference-volume" or "inferred-volume"))
+                .All(e => !Unverified(e.Id));
         var raw = ChapterDiagnostics.Inspect(document, cancellationToken, detectUnrecognized, entries, int.MaxValue)
             // A gap between chapter numbers is deliberately NOT suppressed after alignment. The
             // directory knows which chapters exist, so a gap now means the source text really is
             // missing chapters the official release has — the one thing the user must be told.
-            .Where(issue => !referenceAligned || issue.Code is not ("chapter_unrecognized"
+            .Where(issue => UnverifiedLine(issue.LineNumber) || issue.Code is not ("chapter_unrecognized"
                 or "chapter_number_order" or "chapter_heading_typo" or "chapter_content_duplicate"
                 or "chapter_duplicate" or "chapter_repeated_sequence"))
             .ToList();
@@ -61,7 +67,7 @@ public static class ChapterReviewAnalyzer
         var groups = new List<ChapterReviewGroup>();
         var unnumberedGroups = referenceAligned
             ? []
-            : UnnumberedHeadings.Find(document, entries).GroupBy(p => p.OwnerId).ToArray();
+            : UnnumberedHeadings.Find(document, entries).Where(p => Unverified(p.OwnerId)).GroupBy(p => p.OwnerId).ToArray();
         foreach (var candidates in unnumberedGroups)
         {
             var first = candidates.First();
@@ -70,7 +76,7 @@ public static class ChapterReviewAnalyzer
                 PreflightTargetKind.Chapters, first.Line);
             groups.Add(new(issue, ReviewCategories.Missing, [first.OwnerId], candidates.Select(c => c.Line).ToArray(), [issue]));
         }
-        foreach (var gap in (referenceAligned ? [] : MissingChapterHeadings.Find(document, entries, cancellationToken).GroupBy(c => c.NextLine).ToArray()))
+        foreach (var gap in (referenceAligned ? [] : MissingChapterHeadings.Find(document, entries, cancellationToken).Where(c => Unverified(c.OwnerId)).GroupBy(c => c.NextLine).ToArray()))
         {
             var candidates = gap.ToArray();
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_heading_typo",
@@ -88,7 +94,8 @@ public static class ChapterReviewAnalyzer
         }
         if (ChapterStructureSuggestion.Find(document, entries) is { } structure) groups.Add(structure);
         var consumed = new HashSet<ConversionPreflightIssue>();
-        var duplicateBodies = referenceAligned ? [] : ChapterContentDuplicates.Find(document, entries, cancellationToken);
+        var duplicateBodies = referenceAligned ? [] : ChapterContentDuplicates.Find(document, entries, cancellationToken)
+            .Where(p => Unverified(p.FirstId) || Unverified(p.SecondId)).ToArray();
         if (!referenceAligned) groups.AddRange(ChapterRepeatedSequences.Find(document, entries, duplicateBodies));
         var byId = entries.ToDictionary(e => e.Id);
         foreach (var pair in duplicateBodies)
@@ -169,6 +176,20 @@ public static class ChapterReviewAnalyzer
                     && entries.FirstOrDefault(n => n.TitleLineNumber == line) is { } origin) associated = new[] { origin }.Concat(associated).ToArray();
             }
             Add(issue, category, associated, [issue]);
+        }
+        // Group repeated order warnings for review, without changing recognition or dropping
+        // any original evidence. Scope remains the same parent and level.
+        var orderGroups = groups.Where(g => g.Issue.Code == "chapter_number_order" && g.NodeIds.Count == 1)
+            .GroupBy(g => (Parent: parentIds.GetValueOrDefault(g.NodeIds[0], ""), Level: byId[g.NodeIds[0]].Level))
+            .Where(g => g.Count() > 1).Select(g => g.ToArray()).ToArray();
+        foreach (var batch in orderGroups)
+        {
+            foreach (var group in batch) groups.Remove(group);
+            var first = batch.OrderBy(g => g.Issue.LineNumber).First();
+            var issue = first.Issue with { Code = "chapter_numbering_variants",
+                Message = $"同一层级有 {batch.Length} 处编号顺序差异，已合并展示。可能涉及编号重启、体系混用或顺序调整；不据此认定缺章，也不自动改号。请选择原文位置逐项核对。" };
+            groups.Add(new(issue, ReviewCategories.Structure, batch.SelectMany(g => g.NodeIds).Distinct().ToArray(),
+                batch.SelectMany(g => g.Lines).Distinct().Order().ToArray(), batch.SelectMany(g => g.RelatedIssues).ToArray()));
         }
         var ordered = groups.OrderBy(g => g.Issue.LineNumber ?? int.MaxValue).ToArray();
         return new(ordered.Take(Math.Max(1, maximumGroups)).ToArray(), ordered.Length);

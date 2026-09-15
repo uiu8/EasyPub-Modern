@@ -31,7 +31,7 @@ internal static class LegacyEpubWriter
         ValidateOptions(options);
         var metadata = options.Metadata;
         progress?.Report(new ConversionProgress(inputPath, 0.03, "正在读取并分析 TXT"));
-        var chapters = await LegacyTextParser.ParseAsync(inputPath, options, request.ChapterTree, cancellationToken);
+        var chapters = await LegacyTextParser.ParseAsync(inputPath, options, request.ChapterTree, cancellationToken, request.CaptureTextChanges);
         progress?.Report(new ConversionProgress(inputPath, 0.14, $"已识别 {chapters.Count} 个章节"));
         var bookId = CreateLegacyBookId(title, author);
         var cover = string.IsNullOrWhiteSpace(options.CoverImagePath)

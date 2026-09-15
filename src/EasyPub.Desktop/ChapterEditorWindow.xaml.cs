@@ -29,6 +29,7 @@ public partial class ChapterEditorWindow : Window
     public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();
     public IReadOnlyList<NamedNumericHeadingPreset> NumericPresets { get; set; } = [];
     public bool InheritNumericDefaults { get; set; } = true;
+    public Action<string>? WorkingCopyCreated { get; set; }
 
     public ChapterEditorWindow(ChapterTreeDocument document)
         : this(document, document.RecognitionOptions, null, TextEncodingMode.Auto)
@@ -40,13 +41,22 @@ public partial class ChapterEditorWindow : Window
         TocHierarchyOptions hierarchy,
         string? chapterPattern,
         TextEncodingMode encodingMode,
-        bool detectUnrecognized = true)
+        bool detectUnrecognized = true,
+        ChapterTreePlan? savedPlan = null)
     {
         InitializeComponent();
+        Closed += (_, _) => { _editorClosed = true; _breakpointRequest?.Cancel(); _catalogRequest?.Cancel(); };
         _document = document;
         _encodingMode = encodingMode;
         _detectUnrecognized = detectUnrecognized;
         Roots = BuildTree(document.Entries);
+        if (savedPlan?.SourceSha256 == document.SourceSha256)
+        {
+            foreach (var pair in savedPlan.ConfirmedReviews ?? new Dictionary<string, ChapterReviewGroup>())
+                _confirmedGroups[pair.Key] = pair.Value;
+            if (savedPlan.ReferenceCatalog is { } reference)
+            { _referenceCatalog = reference; _referenceCatalogLoaded = true; }
+        }
         VisibleRoots = new ChapterDisplayCollection();
         VisibleRoots.Synchronize(Roots);
         DataContext = this;
@@ -329,6 +339,8 @@ public partial class ChapterEditorWindow : Window
                 NumericHeadingMinimumBodyLines = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingMinimumBodyLines,
                 NumericHeadingPattern = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.NumericHeadingPattern,
                 HeadingNumberCorrections = _headingNumberCorrections == GlobalNumericDefaults.HeadingNumberCorrections ? null : _headingNumberCorrections,
+                ReferenceCatalog = SavedReference(),
+                ConfirmedReviews = new Dictionary<string, ChapterReviewGroup>(_confirmedGroups),
             };
             ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
             _allowClose = true;
@@ -505,13 +517,26 @@ public partial class ChapterEditorWindow : Window
         RestoreSnapshot(_redo.Pop());
     }
 
-    private void Mutate(Action change)
+    private void Mutate(Action change, bool markManual = true)
     {
         if (_sourceChanged) { ShowReviewFeedback("原文已变化，请先重新识别。"); return; }
         var before = CaptureSnapshot();
         _trackingPaused = true;
         try { change(); }
+        catch { RestoreSnapshot(before); throw; }
         finally { _trackingPaused = false; }
+        if (markManual)
+        {
+            var old = before.Entries.Select((entry, index) => (entry, index)).ToDictionary(p => p.entry.Id);
+            var nodes = Flatten().ToArray();
+            for (var i = 0; i < nodes.Length; i++)
+            {
+                var node = nodes[i];
+                if (!old.TryGetValue(node.Id, out var prior) || i != prior.index || node.Title != prior.entry.Title
+                    || node.Level != prior.entry.Level || !node.ContentRanges.SequenceEqual(prior.entry.ContentRanges))
+                    node.RecognitionSource = "manual";
+            }
+        }
         SubscribeToNodes(Roots);
         RefreshFilteredTree();
         var after = CaptureSnapshot();
@@ -531,6 +556,7 @@ public partial class ChapterEditorWindow : Window
     private void Node_Changed(object? sender, EventArgs e)
     {
         if (_trackingPaused) return;
+        if (sender is ChapterTreeNode changed) changed.RecognitionSource = "manual";
         var after = CaptureSnapshot();
         if (!SnapshotsEqual(_currentSnapshot, after))
         {

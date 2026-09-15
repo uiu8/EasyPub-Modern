@@ -57,6 +57,7 @@ public sealed record AutoRepairOutcome(
     public IReadOnlyList<string> MissingTitles { get; init; } = [];
     public int NeedsReview { get; init; }
     public string? CatalogSource { get; init; }
+    public ReferenceCatalog? Catalog { get; init; }
     /// <summary>Categorised account of what the repair changed, ready to display.</summary>
     public IReadOnlyList<RepairReportGroup> Report { get; init; } = [];
     /// <summary>Measured cost of each stage of this pass.</summary>
@@ -125,7 +126,7 @@ public static class ChapterAutoRepair
             progress?.Report("正在查找本书已保存的目录与来源…");
             var preferred = await LoadPreferredSourcesAsync(path).ConfigureAwait(false);
             var saved = ReferenceCatalogInput.Load(document.SourceSha256);
-            reference = string.IsNullOrWhiteSpace(saved?.Text) ? null : ReferenceCatalogInput.ParseText(saved.Text);
+            reference = ReferenceCatalogInput.ReadCatalog(saved);
             if (reference is not null && !string.IsNullOrWhiteSpace(saved?.Url)) reference = reference with { Source = saved.Url + "（本书已保存目录）" };
             if (reference is null)
             {
@@ -148,7 +149,7 @@ public static class ChapterAutoRepair
         var catalogMs = watch.ElapsedMilliseconds;
         progress?.Report("正在核对章节、分配正文并检查行完整性…");
         var outcome = await Task.Run(() => Prepare(document,reference,error,token,catalogMs),token).ConfigureAwait(false);
-        return outcome.CatalogTimings.Count == 0 ? outcome with { CatalogTimings = timings } : outcome;
+        return outcome with { Catalog = reference, CatalogTimings = timings };
     }
 
     /// <summary>Set only while a repair pass is running, so <see cref="Prepare"/> can report its own cost.</summary>
@@ -183,7 +184,7 @@ public static class ChapterAutoRepair
         var rebuilt=ReferencePlanner.Apply(document,entries,plan,plan.DefaultSelection.ToArray(),true,catalog.VolumeTitles.Count>0,dropped);
         var applyMs = _pass?.ElapsedMilliseconds ?? 0;
         var inferred=false;
-        if(catalog.VolumeTitles.Count==0 && restarts.Count>0)
+        if(catalog.VolumeTitles.Count==0 && restarts.Count>0 && !entries.Any(e => e.RecognitionSource == "manual"))
         {
             rebuilt=WithInferredVolumes(document,rebuilt,restarts);
             inferred=true;
@@ -217,7 +218,7 @@ public static class ChapterAutoRepair
     /// cost without threading a second stopwatch through every call.
     /// </summary>
     private static AutoRepairTiming Finish(long catalogMs, long planMs, long applyMs, ReferenceLocation? location) =>
-        new(Math.Max(0, catalogMs), Math.Max(0, planMs - catalogMs), Math.Max(0, applyMs - planMs),
+        new(Math.Max(0, catalogMs), Math.Max(0, planMs), Math.Max(0, applyMs - planMs),
             _pass?.ElapsedMilliseconds ?? 0, catalogMs + (_pass?.ElapsedMilliseconds ?? 0),
             location?.Stats, location?.Timing);
 
@@ -234,7 +235,11 @@ public static class ChapterAutoRepair
         var groups = new List<RepairReportGroup>();
         void Add(string label, ReferenceActionKind kind, string unit, Func<ReferenceAction[], string> summary)
         {
-            var items = plan.OfKind(kind).Where(action => action.Line > 0).OrderBy(action => action.Line).ToArray();
+            var items = plan.OfKind(kind).Where(action => action.Line > 0 && action.Recommended)
+                .Where(action => kind != ReferenceActionKind.Retitle || rebuilt.Any(e => e.Id == action.EntryId && e.Title == action.Title))
+                .Where(action => kind != ReferenceActionKind.AddChapter || rebuilt.Any(e => e.TitleLineNumber == action.Line))
+                .Where(action => kind != ReferenceActionKind.DemoteExtra || !rebuilt.Any(e => e.Id == action.EntryId))
+                .OrderBy(action => action.Line).ToArray();
             if (items.Length == 0) return;
             groups.Add(new(label, items.Length, unit, summary(items),
                 items.Select(action => new RepairReportItem(action.Line, action.Title, action.Detail)).ToArray()));
@@ -244,6 +249,7 @@ public static class ChapterAutoRepair
             items => $"已在原文中定位并收录；例：第 {items[0].Line} 行「{items[0].Title}」");
         Add("标题按目录改写", ReferenceActionKind.Retitle, "章",
             items => $"以参考目录写法为准；例：第 {items[0].Line} 行「{items[0].Title}」");
+        Add("标题并回正文", ReferenceActionKind.DemoteExtra, "处", items => "移除所选标题边界，全部文字保留在正文中。");
         Add("移除重复正文", ReferenceActionKind.RemoveDuplicate, "处",
             items => $"参考目录只出现一次，多余的那份已从成品移除；例：第 {items[0].Line} 行「{items[0].Title}」");
 
@@ -266,8 +272,8 @@ public static class ChapterAutoRepair
                 string.Join(" · ", spans.Select(span => $"{span.Title} {span.First}–{span.Last}")), []));
 
         if (missing.Count > 0)
-            groups.Add(new("目录里有、源文本找不到", missing.Count, "章",
-                "这些章节在源 TXT 里没有对应标题，需要换来源或人工补齐——软件不会凭空造出正文。",
+            groups.Add(new("参考目录未匹配", missing.Count, "章",
+                "未定位到可用标题，也可能是版本或写法差异。请先核对来源与原文；软件不会补造正文。",
                 missing.Select(title => new RepairReportItem(0, title, "")).ToArray()));
 
         return groups;

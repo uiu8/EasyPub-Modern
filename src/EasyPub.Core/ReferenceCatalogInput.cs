@@ -3,10 +3,20 @@ using System.Text.RegularExpressions;
 
 namespace EasyPub.Core;
 
-public sealed record CatalogPreferences(string Query, string Url, string Text, int MinimumLines);
+public sealed record CatalogPreferences(string Query, string Url, string Text, int MinimumLines)
+{
+    public ReferenceCatalog? Catalog { get; init; }
+}
 
 public static class ReferenceCatalogInput
 {
+    public static ReferenceCatalog? ReadCatalog(CatalogPreferences? saved) => saved?.Catalog
+        ?? (string.IsNullOrWhiteSpace(saved?.Text) ? null : ParseText(saved.Text) is { } parsed
+            ? parsed with { Source = string.IsNullOrWhiteSpace(saved.Url) ? parsed.Source : saved.Url } : null);
+
+    public static void SaveCatalog(string hash, ReferenceCatalog catalog, string query = "", int minimumLines = 3) =>
+        Save(hash, new(query, catalog.Source, string.Join(Environment.NewLine, catalog.Nodes.Select(n => n.Title)), minimumLines)
+        { Catalog = catalog });
     public static string SettingsPath(string hash) => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "EasyPub Modern", "Catalogs", hash + ".json");
 

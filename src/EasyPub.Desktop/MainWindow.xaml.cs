@@ -1859,8 +1859,9 @@ public partial class MainWindow : Window
                     encoding,
                     existingPlan: null);
             }
-            var editor = new ChapterEditorWindow(document, bookHierarchy, chapterPattern, encoding, book.ChapterTree is null) { Owner = this };
+            var editor = new ChapterEditorWindow(document, bookHierarchy, chapterPattern, encoding, book.ChapterTree is null, book.ChapterTree) { Owner = this };
             editor.TextEditorPath = _textEditorPath;
+            editor.WorkingCopyCreated = path => { AddFiles([path]); _pendingSourceEdits[path] = SourceFileStamp.Capture(path); };
             editor.GlobalNumericDefaults = _numericDefaults;
             editor.NumericPresets = _numericPresets;
             editor.InheritNumericDefaults = book.ChapterTree?.NumericHeadingRecognition is null;
@@ -1930,17 +1931,18 @@ public partial class MainWindow : Window
 
         try
         {
-            _pendingSourceEdits[selected.InputPath] = SourceFileStamp.Capture(selected.InputPath);
-            SourceBackupStore.CreateDefault().EnsureBackup(selected.InputPath);
+            var copy = SourceBackupStore.CreateDefault().CreateWorkingCopy(selected.InputPath);
+            AddFiles([copy]);
+            _pendingSourceEdits[copy] = SourceFileStamp.Capture(copy);
             var startInfo = new ProcessStartInfo(editor) { UseShellExecute = true };
-            startInfo.ArgumentList.Add(selected.InputPath);
+            startInfo.ArgumentList.Add(copy);
             var process = Process.Start(startInfo);
             if (process is not null)
             {
                 process.EnableRaisingEvents = true;
                 process.Exited += (_, _) => _ = Dispatcher.BeginInvoke(new Action(async () => await RefreshPendingSourceEditsAsync()));
             }
-            StatusText.Text = $"已用 {Path.GetFileNameWithoutExtension(editor)} 打开：{selected.DisplayName}";
+            StatusText.Text = $"已打开并导入独立 TXT 副本：{copy}。原稿保持不变，请在副本上重新识别章节。";
         }
         catch (Exception exception)
         {

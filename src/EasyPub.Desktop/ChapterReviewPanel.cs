@@ -22,7 +22,11 @@ public partial class ChapterEditorWindow
     private ReferenceCatalog? _referenceCatalog;
     private bool _referenceCatalogLoaded;
     private bool _fetchingCatalog;
+    private CancellationTokenSource? _catalogRequest;
     private string? _breakpointSignature;
+    private CancellationTokenSource? _breakpointRequest;
+    private bool _editorClosed;
+    private ChapterBreakpoint[] _numberingNotes = [];
 
     private ChapterReviewGroup? ReviewGroup(ConversionPreflightIssue? issue) => issue is null ? null
         : _reviewGroupIndex.TryGetValue((issue.Code, issue.LineNumber), out var group)
@@ -171,7 +175,7 @@ public partial class ChapterEditorWindow
         if (_referenceCatalogLoaded) return _referenceCatalog;
         _referenceCatalogLoaded = true;
         var saved = ReferenceCatalogInput.Load(_document.SourceSha256);
-        if (!string.IsNullOrWhiteSpace(saved?.Text)) _referenceCatalog = ReferenceCatalogInput.ParseText(saved.Text);
+        _referenceCatalog = ReferenceCatalogInput.ReadCatalog(saved);
         return _referenceCatalog;
     }
 
@@ -192,10 +196,10 @@ public partial class ChapterEditorWindow
     {
         if (FetchCatalogButton is null) return;
         var catalog = SavedReference();
-        FetchCatalogButton.Content = catalog is null
+        FetchCatalogButton.Content = _fetchingCatalog ? "取消获取目录" : catalog is null
             ? "获取参考目录（联网）"
-            : $"已获取目录（{catalog.Titles.Count} 章）";
-        FetchCatalogButton.IsEnabled = catalog is null && !_fetchingCatalog;
+            : $"查看 / 更换目录（{catalog.Titles.Count} 章）";
+        FetchCatalogButton.IsEnabled = true;
         FetchCatalogButton.ToolTip = catalog is null
             ? "按书源顺序搜索本书的公开目录并保存。只有拿到目录，才能标出「这里本该有哪一章」；失败时可改用手动核对并粘贴网址。"
             : $"来源：{catalog.PageTitle}。目录只用于核对结构，不会修改原始 TXT。";
@@ -209,7 +213,12 @@ public partial class ChapterEditorWindow
     /// </summary>
     private async void FetchCatalog_Click(object sender, RoutedEventArgs e)
     {
-        if (_fetchingCatalog || SavedReference() is not null) return;
+        if (_fetchingCatalog) { _catalogRequest?.Cancel(); return; }
+        if (SavedReference() is not null) { CatalogAssist_Click(sender, e); return; }
+        using var request = new CancellationTokenSource();
+        _catalogRequest = request;
+        EventHandler cancelOnClose = (_, _) => request.Cancel();
+        Closed += cancelOnClose;
         _fetchingCatalog = true;
         RefreshCatalogState();
         ShowReviewFeedback("正在按书源顺序搜索公开目录…");
@@ -218,25 +227,24 @@ public partial class ChapterEditorWindow
             var url = await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(_document.SourcePath));
             var query = string.IsNullOrWhiteSpace(url) ? ChapterAutoRepair.ExtractBookName(_document.SourcePath) : url;
             var preferred = await ChapterAutoRepair.LoadPreferredSourcesAsync(_document.SourcePath);
-            var catalogs = await new ReferenceCatalogClient().DiscoverAsync(query, CancellationToken.None, preferred);
+            var catalogs = await new ReferenceCatalogClient().DiscoverAsync(query, request.Token, preferred);
+            request.Token.ThrowIfCancellationRequested();
             if (ReferenceCatalogInput.Pick(catalogs) is not { } catalog)
             {
                 ShowReviewFeedback("未获取到可用目录。可粘贴书籍网址／编号，或导入目录文字。");
                 CatalogAssist_Click(this, new RoutedEventArgs());
                 return;
             }
-            ReferenceCatalogInput.Save(_document.SourceSha256, new CatalogPreferences(
-                query,
-                catalog.Source,
-                string.Join(Environment.NewLine, catalog.Nodes.Select(node => node.Title)),
-                _document.RecognitionOptions.NumericHeadingMinimumBodyLines));
+            ReferenceCatalogInput.SaveCatalog(_document.SourceSha256, catalog, query,
+                _document.RecognitionOptions.NumericHeadingMinimumBodyLines);
             _referenceCatalog = catalog;
             _referenceCatalogLoaded = true;
             _breakpointSignature = null;
             ApplyBreakpoints();
             ShowReviewFeedback($"已获取目录：{catalog.PageTitle}（{catalog.Titles.Count} 章）。"
-                + "章节树上已标出目录里有、源文件里找不到的章节。");
+                + "章节树上标出的目录未匹配项仍需对照原文核实。");
         }
+        catch (OperationCanceledException) { ShowReviewFeedback("已取消获取目录。"); }
         catch (Exception error)
         {
             ShowReviewFeedback("获取目录失败：" + error.Message + "。可点「手动核对目录…」粘贴网址或导入目录文字。");
@@ -244,6 +252,8 @@ public partial class ChapterEditorWindow
         finally
         {
             _fetchingCatalog = false;
+            _catalogRequest = null;
+            Closed -= cancelOnClose;
             RefreshCatalogState();
         }
     }
@@ -265,17 +275,28 @@ public partial class ChapterEditorWindow
         }, DispatcherPriority.Background);
     }
 
-    private void ApplyBreakpoints()
+    private async void ApplyBreakpoints()
     {
-        if (_document is null || Roots is null) return;
+        if (_editorClosed || _document is null || Roots is null) return;
         var nodes = Flatten().ToArray();
         var signature = BreakpointSignature(nodes);
         if (signature == _breakpointSignature) return;
         _breakpointSignature = signature;
-
-        var breaks = ChapterBreakpoints.Between(_document, nodes.Select(node => node.ToEntry()).ToArray(), SavedReference());
-        var byAnchor = breaks.Where(item => item.AnchorId is not null)
-            .GroupBy(item => item.AnchorId!).ToDictionary(group => group.Key, group => group.ToArray());
+        _breakpointRequest?.Cancel();
+        using var request = new CancellationTokenSource();
+        _breakpointRequest = request;
+        var document = _document;
+        var entries = nodes.Select(node => node.ToEntry()).ToArray();
+        var catalog = SavedReference();
+        try
+        {
+        var breaks = await Task.Run(() => ChapterBreakpoints.Between(document, entries, catalog, request.Token), request.Token);
+        if (_editorClosed || request.IsCancellationRequested || signature != _breakpointSignature) return;
+        _numberingNotes = breaks.Where(item => item.Kind == ChapterBreakpointKind.NumberGap && item.MissingNumbers.Count == 0).ToArray();
+        NumberingNotesButton.Content = $"编号差异 {_numberingNotes.Length} 处…";
+        NumberingNotesButton.Visibility = _numberingNotes.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        var byAnchor = breaks.Except(_numberingNotes).Where(item => item.AnchorId is not null || item.NextId is not null)
+            .GroupBy(item => item.AnchorId ?? item.NextId!).ToDictionary(group => group.Key, group => group.ToArray());
         foreach (var node in nodes)
         {
             if (!byAnchor.TryGetValue(node.Id, out var items)) { node.ClearBreak(); continue; }
@@ -283,15 +304,40 @@ public partial class ChapterEditorWindow
             node.BreakDetail = string.Join("\n", items.Select(item => item.Detail));
             node.BreakAccent = items.Any(item => item.Kind != ChapterBreakpointKind.NumberGap) ? "Error" : "Warning";
         }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { _breakpointSignature = null; ShowReviewFeedback("断点核对未完成：" + error.Message); }
+        finally { if (ReferenceEquals(_breakpointRequest, request)) _breakpointRequest = null; }
     }
 
     /// <summary>Identity of the tree plus the directory, so an unchanged tree is never analysed twice.</summary>
     private string BreakpointSignature(IReadOnlyList<ChapterTreeNode> nodes) => string.Join("|",
-        (_document.SourceSha256, SavedReference()?.Titles.Count ?? 0).ToString(),
+        _document.SourceSha256, System.Text.Json.JsonSerializer.Serialize(SavedReference()),
         nodes.Count,
-        string.Join(";", nodes.Select(node => node.Id + ":" + node.Title + ":" + node.Level)));
+        string.Join(";", nodes.Select(node => node.Id + ":" + node.Title + ":" + node.Level + ":"
+            + string.Join(",", node.ContentRanges.Select(r => r.StartLine + "-" + r.EndLine)))));
 
     private static string BreakLabel(IReadOnlyList<ChapterBreakpoint> items) => ChapterBreakpointLabel.For(items);
+
+    private void NumberingNotes_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = ThemedWindow("编号差异 · 不作为缺章结论", 850, 580);
+        var panel = new DockPanel { Margin = new Thickness(18) };
+        var footer = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        var locate = new Button { Content = "定位选中位置" };
+        footer.Children.Add(locate); footer.Children.Add(new Button { Content = "关闭", IsCancel = true });
+        DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
+        var list = new ListBox { ItemsSource = _numberingNotes, DisplayMemberPath = "Detail" };
+        panel.Children.Add(list); dialog.Content = panel;
+        locate.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not ChapterBreakpoint item) return;
+            var node = Flatten().FirstOrDefault(n => n.Id == (item.NextId ?? item.AnchorId));
+            if (node?.TitleLineNumber is not int line) return;
+            dialog.Close(); LocateDuplicateChapter(line);
+        };
+        dialog.ShowDialog();
+    }
 
     private ConversionPreflightIssue? CurrentReviewIssue()
     {
@@ -569,7 +615,8 @@ public partial class ChapterEditorWindow
         if (OperationSelection().Length > 1 || ReviewGroup(CurrentReviewIssue()) is not { } group) return;
         _confirmedGroups[ReviewKey(group)] = group;
         RefreshSuggestions(Flatten().Select(n => n.ToEntry()).ToArray());
-        SetReviewResult("已确认本组正常，仅本次窗口有效；更多 → 视图可查看和恢复。");
+        SetReviewResult("已确认本组正常；应用并返回后随项目保存。原文或相关章节变化后重新提示；更多 → 视图可恢复。");
+        UpdateSaveState();
         _resultUndoDepth = -1;
         UndoResultButton.Visibility = Visibility.Collapsed;
         UpdateReviewVisibility();

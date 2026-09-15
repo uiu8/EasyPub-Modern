@@ -14,7 +14,7 @@ public partial class ChapterEditorWindow
             Roots.Clear();
             foreach (var root in BuildTree(entries)) Roots.Add(root);
             _selectedNode = Flatten().FirstOrDefault();
-        });
+        }, markManual: false);
         // The pass just wrote the directory it used next to this source hash, so re-read it: the rows can
         // now name the chapters the release has and this file does not.
         InvalidateBreakpoints();
@@ -44,7 +44,7 @@ public partial class ChapterEditorWindow
         try
         {
             var reporter = new Progress<string>(text => { if (!cancellation.IsCancellationRequested) stage.Text = text; });
-            var outcome = await ChapterAutoRepair.RepairAsync(snapshot.SourcePath,cancellation.Token,reporter,snapshot);
+            var outcome = await ChapterAutoRepair.RepairAsync(snapshot.SourcePath,cancellation.Token,reporter,snapshot,SavedReference());
             cancellation.Token.ThrowIfCancellationRequested();
             finished = true; progress.Close(); IsEnabled = true;
             if (!outcome.CatalogFound)
@@ -57,6 +57,14 @@ public partial class ChapterEditorWindow
             var panel=new DockPanel { Margin=new Thickness(20) };
             var footer=new WrapPanel { HorizontalAlignment=HorizontalAlignment.Right };
             var apply=new Button { Content="应用修复方案", IsDefault=true };
+            if (outcome.Report.Any(group => group.Label == "来源与文件对不上"))
+            {
+                var verified = new CheckBox { Content = "已核实参考目录确属本书此版本", Margin = new Thickness(0, 6, 12, 0) };
+                apply.IsEnabled = false;
+                verified.Checked += (_, _) => apply.IsEnabled = true;
+                verified.Unchecked += (_, _) => apply.IsEnabled = false;
+                footer.Children.Add(verified);
+            }
             var close=new Button { Content="暂不应用", IsCancel=true };
             footer.Children.Add(apply); footer.Children.Add(close);
             DockPanel.SetDock(footer,Dock.Bottom); panel.Children.Add(footer);
@@ -64,6 +72,7 @@ public partial class ChapterEditorWindow
             var lines=new List<string>
             {
                 "参考来源："+outcome.CatalogSource,
+                "目录页面："+outcome.Catalog?.PageTitle,
                 "参考目录仅用于核对结构，不代表正文已经完整。",
                 "",outcome.Verdict,
                 $"本次从成品移除 {outcome.RemovedLines} 行重复内容；应用前保存备份及逐行清单。",
@@ -84,10 +93,11 @@ public partial class ChapterEditorWindow
                 lines.Add("");
                 lines.Add($"── {group.Headline} ──");
                 lines.Add("   "+group.Summary);
-                foreach(var item in group.Items.Take(3))
-                    lines.Add($"   · {(item.Line>0?$"第 {item.Line} 行 ":"")}{item.Title}");
-                if(group.Items.Count>3) lines.Add($"   …… 同类还有 {group.Items.Count-3} 条");
+                foreach(var item in group.Items)
+                    lines.Add($"   · {(item.Line>0?$"第 {item.Line} 行 ":"")}{item.Title}：{item.Detail}");
             }
+            lines.Add("\n── 实际变化（以本次应用结果为准）──");
+            lines.AddRange(RepairIntegrity.DescribeChanges(snapshot.Entries, outcome.Entries ?? snapshot.Entries));
             details.Text=string.Join(Environment.NewLine,lines);
             panel.Children.Add(details); dialog.Content=panel;
             apply.Click+=(_,_)=>dialog.DialogResult=true;
@@ -95,6 +105,7 @@ public partial class ChapterEditorWindow
             IsEnabled = false;
             var backup=SourceBackupStore.CreateDefault().EnsureSnapshot(snapshot);
             var receipt=await RepairIntegrity.SaveRemovedAsync(snapshot,outcome.RemovedSourceLines);
+            if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
             ApplyRepairEntries(outcome.Entries ?? throw new InvalidDataException("修复方案没有章节树。"));
             SetReviewResult(outcome.Verdict+"。可撤销。备份："+backup+(receipt is null ? "" : "；移除清单："+receipt));
         }

@@ -35,7 +35,7 @@ public partial class ChapterEditorWindow
         Loaded += (_, _) =>
         {
             _initialRulesFingerprint ??= SettingsFingerprint();
-            EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + " 编辑；先备份，源文件变化后须重新识别";
+            EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + " 编辑独立副本；原稿不变，副本需重新识别";
             UpdateSaveState();
             RefreshCatalogState();
             if (_allReviewIssues.FirstOrDefault(i => i.Code == "numeric_chapters_suspected") is { } numericSuggestion)
@@ -65,7 +65,8 @@ public partial class ChapterEditorWindow
     private bool HasUnsavedChanges() => _initialSnapshot is not null && (!SnapshotsEqual(_initialSnapshot, CaptureSnapshot())
         || _initialRulesFingerprint is not null && _initialRulesFingerprint != SettingsFingerprint());
 
-    private string SettingsFingerprint() => JsonSerializer.Serialize(CaptureRules()) + "|" + TextEditorPath;
+    private string SettingsFingerprint() => JsonSerializer.Serialize(CaptureRules()) + "|" + TextEditorPath
+        + "|" + string.Join(";", _confirmedGroups.Keys.Order()) + "|" + JsonSerializer.Serialize(SavedReference());
 
     private void UpdateSaveState()
     {
@@ -299,8 +300,8 @@ public partial class ChapterEditorWindow
             foreach (var node in Flatten()) node.IsExpanded = false;
             ClearHiddenSelection();
         });
-        Add(view, "查看 / 恢复本次已确认的提醒…", (_, _) => ShowConfirmedGroups(), _confirmedGroups.Count > 0);
-        Add(view, "恢复本次已确认的提醒", (_, _) => RestoreConfirmedGroups(), _confirmedGroups.Count > 0);
+        Add(view, "查看 / 恢复本书已确认的提醒…", (_, _) => ShowConfirmedGroups(), _confirmedGroups.Count > 0);
+        Add(view, "恢复本书已确认的提醒", (_, _) => RestoreConfirmedGroups(), _confirmedGroups.Count > 0);
         Add(view, "清除搜索与筛选", (_, args) => { ChapterSearchText.Text = ""; IssueCategoryCombo.SelectedIndex = 0; AllChapters_Click(this, args); ApplySearchFilter(); });
         menu.Items.Add(new Separator());
         var copy = new MenuItem { Header = "复制原始文件路径" }; copy.Click += (_, _) => Clipboard.SetText(_document.SourcePath); menu.Items.Add(copy);
@@ -312,12 +313,12 @@ public partial class ChapterEditorWindow
     {
         _confirmedGroups.Clear(); ClearReviewResult();
         RefreshSuggestions(Flatten().Select(n => n.ToEntry()).ToArray());
-        ShowReviewFeedback("已恢复本次确认过的提醒。");
+        ShowReviewFeedback("已恢复本书确认过的提醒。");
     }
 
     private void ShowConfirmedGroups()
     {
-        var dialog = ThemedWindow("本次确认正常的提醒", 650, 430);
+        var dialog = ThemedWindow("本书确认正常的提醒", 650, 430);
         var panel = new DockPanel { Margin = new Thickness(16) };
         var list = new ListBox { ItemsSource = _confirmedGroups.ToArray(), DisplayMemberPath = "Value.Issue.Message" };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };

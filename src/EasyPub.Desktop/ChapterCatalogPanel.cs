@@ -123,7 +123,7 @@ public partial class ChapterEditorWindow
         var settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EasyPub Modern", "Catalogs", _document.SourceSha256 + ".json");
         try
         {
-            if (File.Exists(settingsPath) && JsonSerializer.Deserialize<CatalogPreferences>(File.ReadAllText(settingsPath)) is { } saved)
+            if (ReferenceCatalogInput.Load(_document.SourceSha256) is { } saved)
             { query.Text = saved.Query; url.Text = saved.Url; catalogText.Text = saved.Text; minimum.Text = saved.MinimumLines.ToString(); }
         }
         catch (Exception ex) when (ex is IOException or JsonException) { status.Text = "已保存目录无法读取，可重新获取或导入。"; }
@@ -135,10 +135,12 @@ public partial class ChapterEditorWindow
         void Save()
         {
             if (!int.TryParse(minimum.Text, out var count) || count < 1) throw new InvalidOperationException("行数必须为正整数。");
-            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
-            var temp = settingsPath + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(new CatalogPreferences(query.Text, url.Text, catalogText.Text, count)));
-            File.Move(temp, settingsPath, true);
+            var exact = sources.SelectedItem as ReferenceCatalog;
+            if (exact is not null && catalogText.Text != string.Join(Environment.NewLine, exact.Nodes.Select(n => n.Title))) exact = null;
+            ReferenceCatalogInput.Save(_document.SourceSha256,
+                new CatalogPreferences(query.Text, url.Text, catalogText.Text, count) { Catalog = exact });
+            InvalidateBreakpoints();
+            ScheduleBreakpoints();
         }
         async Task Network(bool discover)
         {
@@ -153,7 +155,7 @@ public partial class ChapterEditorWindow
                 if (discover && searchInput == ChapterAutoRepair.ExtractBookName(_document.SourcePath))
                     searchInput = await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(_document.SourcePath), request.Token) ?? searchInput;
                 var found = discover
-                    ? await client.DiscoverAsync(searchInput, request.Token, preferred)
+                    ? await client.DiscoverAsync(searchInput, request.Token, preferred, refresh: true)
                     : new[] { await client.FetchAsync(url.Text, request.Token) };
                 if (lifetime.IsCancellationRequested) return;
                 sources.ItemsSource = found; sources.IsEnabled = found.Count > 0;

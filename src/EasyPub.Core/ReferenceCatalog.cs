@@ -496,7 +496,8 @@ private static readonly Regex QidianVolume = new(
     public async Task<IReadOnlyList<ReferenceCatalog>> DiscoverAsync(
         string book,
         CancellationToken token = default,
-        IReadOnlyList<string>? preferred = null)
+        IReadOnlyList<string>? preferred = null,
+        bool refresh = false)
     {
         if (book.Trim().Length < 2) throw new InvalidOperationException("请填写书名，可加作者避免同名书。");
         // A pasted book address is the strongest statement of intent there is, so follow it at once.
@@ -506,7 +507,7 @@ private static readonly Regex QidianVolume = new(
         // Repairs are iterative: the same book gets fixed, checked, adjusted and fixed again, and each
         // pass used to ask every site from scratch — measured at 98% of the wall clock. A recent answer
         // is reused instead. Clearing the cache or waiting out its lifetime asks the sources again.
-        if (CatalogCache.TryRead(name, preferred, out var remembered))
+        if (!refresh && CatalogCache.TryRead(name, preferred, out var remembered))
         {
             LastTimings = [];
             return remembered;

@@ -11,7 +11,7 @@ namespace EasyPub.Desktop;
 internal static class ChapterIssueAction
 {
     /// <summary>Nothing can be repaired before the trade-off is explained, so the card only navigates.</summary>
-    internal static bool IsInformational(string? code) => code is "chapter_structure_suggested" or "chapter_repeated_sequence";
+    internal static bool IsInformational(string? code) => code is "chapter_structure_suggested" or "chapter_repeated_sequence" or "chapter_numbering_variants";
 
     /// <summary>
     /// The label for a reminder with no dedicated repair flow. <paramref name="canSplit"/> says whether the

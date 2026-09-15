@@ -9,6 +9,7 @@ public sealed record ConversionRequest(
 {
     public ChapterTreePlan? ChapterTree { get; init; }
     public AutomaticCheckOptions? AutomaticChecks { get; init; }
+    internal Action<byte[], TextCleanupPreview>? CaptureTextChanges { get; init; }
 }
 
 public sealed record ConversionOptions

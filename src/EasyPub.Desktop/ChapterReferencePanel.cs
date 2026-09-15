@@ -20,6 +20,7 @@ public partial class ChapterEditorWindow
             ReferenceActionKind.Retitle => "标题差异",
             ReferenceActionKind.RemoveDuplicate => "重复章节",
             ReferenceActionKind.KeepExtra => "目录外条目",
+            ReferenceActionKind.DemoteExtra => "并回正文",
             _ => "说明"
         };
         public string Line => Action.Line > 0 ? Action.Line.ToString() : "";
@@ -123,7 +124,7 @@ public partial class ChapterEditorWindow
                 ? rows.Where(row => row.Action.Kind == ReferenceActionKind.RemoveDuplicate).ToArray()
                 : rows;
             var count = rows.Count(row => row.Selected);
-            status.Text = $"已勾选 {count} 项。默认只选正文一致的重复项；不同正文请核对后手动选择。移除包含标题和正文，原始 TXT 不变。";
+            status.Text = $"已勾选 {count} 项。默认勾选补建、非手改标题、疑似正文标题及正文一致的去重项；可取消勾选。手工结构保留，应用前显示实际变化。";
         }
         onlyDuplicates.Checked += (_, _) => Refresh();
         onlyDuplicates.Unchecked += (_, _) => Refresh();
@@ -136,17 +137,19 @@ public partial class ChapterEditorWindow
             if (selected.Length == 0 && volumeLevels.IsChecked != true) { status.Text = "请至少勾选一项。"; return; }
             try
             {
-                if (!ConfirmWorkbench($"将按参考目录调整章节树：应用 {selected.Length} 项。原始 TXT 不变，可撤销。确定应用？", "确认调整章节树")) return;
                 var dropped = new List<int>();
                 var rebuilt = ReferencePlanner.Apply(_document, snapshot, plan, selected, useReferenceTitles.IsChecked == true, volumeLevels.IsChecked == true, dropped);
+                if (!ConfirmRepairChanges(snapshot, rebuilt)) return;
                 SourceBackupStore.CreateDefault().EnsureSnapshot(_document);
                 var receipt = await RepairIntegrity.SaveRemovedAsync(_document, dropped);
+                ReferenceCatalogInput.SaveCatalog(_document.SourceSha256, catalog);
+                InvalidateBreakpoints();
                 Mutate(() =>
                 {
                     Roots.Clear();
                     foreach (var root in BuildTree(rebuilt)) Roots.Add(root);
                     _selectedNode = Flatten().FirstOrDefault();
-                });
+                }, markManual: false);
                 SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
                 RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
                 dialog.DialogResult = true;
@@ -161,5 +164,21 @@ public partial class ChapterEditorWindow
     private static ReferenceCatalog? CatalogFromText(string text)
     {
         return ReferenceCatalogInput.ParseText(text);
+    }
+
+    private bool ConfirmRepairChanges(IReadOnlyList<ChapterTreeEntry> before, IReadOnlyList<ChapterTreeEntry> after)
+    {
+        var dialog = ThemedWindow("确认实际变化", 900, 650);
+        var panel = new DockPanel { Margin = new Thickness(18) };
+        var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        var apply = new Button { Content = "应用以上变化" };
+        buttons.Children.Add(apply); buttons.Children.Add(new Button { Content = "返回核对", IsCancel = true });
+        DockPanel.SetDock(buttons, Dock.Bottom); panel.Children.Add(buttons);
+        panel.Children.Add(new TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Text = "原始 TXT 不变；应用前备份，移除正文会生成逐行清单。手工章节的顺序、层级及正文范围保留。\n\n"
+                + string.Join(Environment.NewLine, RepairIntegrity.DescribeChanges(before, after)) });
+        dialog.Content = panel; apply.Click += (_, _) => dialog.DialogResult = true;
+        return dialog.ShowDialog() == true;
     }
 }

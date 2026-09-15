@@ -8,6 +8,16 @@ public sealed class SourceBackupStore(string directory)
 {
     public string DirectoryPath { get; } = Path.GetFullPath(directory);
 
+    public string CreateWorkingCopy(string sourcePath)
+    {
+        EnsureBackup(sourcePath);
+        var folder = Path.Combine(DirectoryPath, "WorkingCopies", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var copy = Path.Combine(folder, Path.GetFileName(sourcePath));
+        File.Copy(sourcePath, copy, false);
+        return copy;
+    }
+
     public static SourceBackupStore CreateDefault() => new(
         Environment.GetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH") ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EasyPub Modern", "SourceBackups"));

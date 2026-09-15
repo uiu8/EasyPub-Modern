@@ -56,6 +56,13 @@ public partial class ChapterEditorWindow
         ignoreNumber.Click += (_, _) => Preview(); preferFirst.Click += (_, _) => Preview();
         apply.Click += (_, _) => { if (apply.IsEnabled) dialog.DialogResult = true; };
         if (dialog.ShowDialog() != true || cleaned is null) return;
+        try
+        {
+            var dropped = RepairIntegrity.Coverage(Flatten().Select(n => n.ToEntry()));
+            dropped.ExceptWith(RepairIntegrity.Coverage(cleaned));
+            RepairIntegrity.SaveRemovedAsync(_document, dropped.Order().ToArray()).GetAwaiter().GetResult();
+        }
+        catch (Exception error) { SetReviewResult("未清理标题：备份或逐行清单未完成。" + error.Message); return; }
         var oldSelected = _selectedNode;
         Mutate(() => { Roots.Clear(); foreach (var root in BuildTree(cleaned)) Roots.Add(root); _selectedNode = Flatten().FirstOrDefault(n => n.Id == oldSelected?.Id)
             ?? Flatten().FirstOrDefault(n => scope?.Contains(n.Id) == true) ?? Flatten().FirstOrDefault(n => !n.IsFrontMatter); });
@@ -137,14 +144,14 @@ public partial class ChapterEditorWindow
         var line = SourceLinesList.SelectedItem is ChapterTreeSourceLine chosen
             && (node.TitleLineNumber == chosen.LineNumber || node.ContentRanges.Any(r => chosen.LineNumber >= r.StartLine && chosen.LineNumber <= r.EndLine))
             ? chosen.LineNumber : node.TitleLineNumber ?? node.ContentRanges.FirstOrDefault()?.StartLine ?? 1;
-        if (InkDialog.Show(this, $"将打开原始 TXT 的第 {line} 行附近。\n编辑前会集中保存首次原文备份，同一路径复用一份，可在主界面“原文备份管理”中查看。保存原文后须重新识别章节，当前树不能直接套用。\n不支持行号定位的编辑器请使用“转到行”；选择“是”也会复制行号。", "编辑原文", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         try
         {
-            var backup = SourceBackupStore.CreateDefault().EnsureBackup(_document.SourcePath);
+            var copy = SourceBackupStore.CreateDefault().CreateWorkingCopy(_document.SourcePath);
+            WorkingCopyCreated?.Invoke(copy);
             Clipboard.SetText(line.ToString());
-            var info = CreateEditorStartInfo(TextEditorPath, _document.SourcePath, line);
+            var info = CreateEditorStartInfo(TextEditorPath, copy, line);
             Process.Start(info)?.Dispose();
-            SourceText.ToolTip = "原文备份：" + backup;
+            ShowReviewFeedback($"已打开独立副本第 {line} 行附近：{copy}。原稿与当前章节树不变；编辑后请在主界面打开副本重新识别。");
         }
         catch (Exception ex) { InkDialog.Show(this, ex.Message, "无法打开原文", MessageBoxButton.OK, MessageBoxImage.Error); }
     }

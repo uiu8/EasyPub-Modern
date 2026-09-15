@@ -74,7 +74,8 @@ public static class CatalogCache
     /// </summary>
     private static string PathFor(string name, IReadOnlyList<string>? preferred)
     {
-        var identity = name + "\u0000" + string.Join("\u0001", preferred ?? []);
+        var identity = name + "\u0000" + string.Join("\u0001", preferred ?? []) + "\u0000"
+            + JsonSerializer.Serialize(ReferenceCatalogClient.Sources);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..16];
         return Path.Combine(Folder, hash + ".json");
     }

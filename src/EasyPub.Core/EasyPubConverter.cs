@@ -17,12 +17,17 @@ public sealed class EasyPubConverter
         ArgumentNullException.ThrowIfNull(request);
         var stopwatch = Stopwatch.StartNew();
         var extension = Path.GetExtension(request.OutputPath);
+        PublicationChangeReceipt? receipt = null;
+        var originalRequest = request;
+        request = request with { CaptureTextChanges = (bytes, cleanup) =>
+            receipt = PublicationChangeReceipt.Prepare(originalRequest, bytes, cleanup) };
         var result = string.Equals(extension, ".epub", StringComparison.OrdinalIgnoreCase)
             ? await LegacyEpubWriter.WriteAsync(request, cancellationToken, progress)
             : string.Equals(extension, ".mobi", StringComparison.OrdinalIgnoreCase)
                 ? await LegacyMobiWriter.WriteAsync(request, cancellationToken, progress)
                 : throw new NotSupportedException("Output extension must be .epub or .mobi.");
         stopwatch.Stop();
+        if (receipt is not null) await receipt.CompleteAsync(cancellationToken).ConfigureAwait(false);
 
         return new ConversionResult(
             Path.GetFullPath(request.InputPath),

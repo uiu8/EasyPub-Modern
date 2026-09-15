@@ -26,6 +26,8 @@ public sealed record ChapterTreePlan(
     public int? NumericHeadingMinimumBodyLines { get; init; }
     public string? NumericHeadingPattern { get; init; }
     public string? HeadingNumberCorrections { get; init; }
+    public ReferenceCatalog? ReferenceCatalog { get; init; }
+    public IReadOnlyDictionary<string, ChapterReviewGroup>? ConfirmedReviews { get; init; }
 }
 
 public sealed record ChapterTreeSourceLine(int LineNumber, string Text);

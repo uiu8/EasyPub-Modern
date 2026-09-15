@@ -17,12 +17,14 @@ internal static partial class LegacyTextParser
         string inputPath,
         ConversionOptions options,
         ChapterTreePlan? chapterTree,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<byte[], TextCleanupPreview>? captureChanges = null)
     {
         var bytes = await File.ReadAllBytesAsync(inputPath, cancellationToken);
         var text = TextFileDecoder.Decode(bytes, options.TextEncoding).Text;
         var cleanup = TextCleanupPipeline.Apply(text, options.TextCleanup, cancellationToken);
         cleanup.EnsureSourcePositionsAreSafe(chapterTree is not null || options.Illustrations.Any(image => image.InsertAfterLine.HasValue));
+        captureChanges?.Invoke(bytes, cleanup);
         var sourceLines = cleanup.Lines;
         if (chapterTree is not null)
             return ParseUsingChapterTree(bytes, sourceLines, options, chapterTree);

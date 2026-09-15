@@ -76,7 +76,7 @@ public static class ChapterBreakpoints
         var scopes = ordered.GroupBy(item => item.Scope).ToDictionary(
             group => group.Key,
             group => group.Select(item => item.Value).OfType<int>().ToArray());
-        var present = scopes.Values.SelectMany(values => values).ToHashSet();
+        var present = scopes.ToDictionary(pair => pair.Key, pair => pair.Value.ToHashSet());
         foreach (var pair in scopes.Where(pair => pair.Value.Length > 0))
             span[pair.Key] = (pair.Value.Min(), pair.Value.Max());
         // The number the previous row showed, inside the scope being walked. A row that repeats a number is
@@ -94,6 +94,12 @@ public static class ChapterBreakpoints
             if (previous.Value is not int before || current.Value is not int now) continue;
             if (!scopeSeen.Add(now)) continue;
             if (now <= before + 1) continue;
+            if ((long)now - before - 1 > LargestPlausibleGap)
+            {
+                result.Add(new(ChapterBreakpointKind.NumberGap, previous.Entry.Id, current.Entry.Id, before, [], [],
+                    $"第 {before} 章之后是第 {now} 章；编号跨度较大，可能存在编号体系切换或版本差异，不能据此认定缺章。"));
+                continue;
+            }
 
             // The numbers that should be here are the ones this tree failed to read. A heading the tree put
             // later but whose other reading is exactly one of them is a miswritten number, not an absent
@@ -104,7 +110,7 @@ public static class ChapterBreakpoints
             var (low, high) = span.TryGetValue(current.Scope, out var range) ? range : (int.MinValue, int.MaxValue);
             for (var expected = before + 1; expected < now; expected++)
             {
-                if (present.Contains(expected)) continue;
+                if (present[current.Scope].Contains(expected)) continue;
                 if (expected < low || expected > high) { beyondScope++; continue; }
                 var match = ordered.Where(item => item.Scope == current.Scope)
                     .FirstOrDefault(item => item.Reading.Relaxed == expected);
@@ -124,8 +130,8 @@ public static class ChapterBreakpoints
                 names ? missing : [], [],
                 names
                     ? missing.Count == 1
-                        ? $"第 {before} 章之后直接是第 {now} 章，源文件缺第 {missing[0]} 章。"
-                        : $"第 {before} 章之后直接是第 {now} 章，源文件缺第 {missing[0]}–{missing[^1]} 章（共 {missing.Count} 章）。"
+                        ? $"第 {before} 章之后直接是第 {now} 章，当前目录未出现第 {missing[0]} 章，请对照原文核实。"
+                        : $"第 {before} 章之后直接是第 {now} 章，当前目录未出现第 {missing[0]}–{missing[^1]} 章（共 {missing.Count} 章），请对照原文核实。"
                     : $"第 {before} 章与第 {now} 章之间的编号对不上（{Math.Max(missing.Count, beyondScope)} 个号码既不在本节范围内、也未出现），源文件这一段可能混用了另一套编号或存在重号，请核对。"));
         }
         if (reference is not null) AddReferenceMissing(entries, reference, corrections, result, cancellationToken);
@@ -163,8 +169,8 @@ public static class ChapterBreakpoints
             var before = anchor is null ? 0 : Read(anchor.Title, corrections).Number ?? 0;
             result.Add(new(ChapterBreakpointKind.ReferenceMissing, anchor?.Id, next?.Id, before, [], titles,
                 titles.Count == 1
-                    ? $"参考目录在此处有「{titles[0]}」，源文件里找不到这一章。"
-                    : $"参考目录在此处有 {titles.Count} 章在源文件里找不到：{string.Join("；", titles.Take(4))}{(titles.Count > 4 ? " …" : "")}。"));
+                    ? $"参考目录在此处有「{titles[0]}」，当前章节树未匹配，需对照原文核实。"
+                    : $"参考目录在此处有 {titles.Count} 章未与当前章节树匹配：{string.Join("；", titles)}。需对照原文核实。"));
         }
     }
 
