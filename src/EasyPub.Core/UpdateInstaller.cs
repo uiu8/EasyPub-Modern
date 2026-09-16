@@ -169,9 +169,10 @@ public static class UpdateInstaller
     public static bool StagingLooksComplete(string stagingDirectory) =>
         File.Exists(Path.Combine(stagingDirectory, ExecutableName));
 
-    public static UpdateApplyPlan CreatePlan(string stagingDirectory, string targetDirectory, int processId, string currentVersion)
+    /// <param name="replacedVersion">即将被替换掉的版本（不是要更新到的版本）。备份目录用它命名。</param>
+    public static UpdateApplyPlan CreatePlan(string stagingDirectory, string targetDirectory, int processId, string replacedVersion)
     {
-        var backup = Path.Combine(targetDirectory, $".backup-{currentVersion}");
+        var backup = Path.Combine(targetDirectory, $".backup-{replacedVersion}");
         var script = Path.Combine(stagingDirectory, "apply-update.ps1");
         return new UpdateApplyPlan(stagingDirectory, targetDirectory, ExecutableName, backup, script, processId);
     }

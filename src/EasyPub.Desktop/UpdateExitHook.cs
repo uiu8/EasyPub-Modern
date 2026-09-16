@@ -17,11 +17,15 @@ internal static class UpdateExitHook
     /// </summary>
     public static void Apply(PendingUpdate pending, PendingUpdateStore store)
     {
+        // 备份目录用「即将被替换掉的版本」命名——它记录的是更新前的状态，回滚时要靠它辨认。
+        // 早先这里传的是 pending.Version（目标版本），于是备份目录变成 .backup-1.57.1，
+        // 里面装的却是 1.57.0，名字和内容对不上。
+        var replaced = AppVersion.Display(typeof(UpdateExitHook).Assembly.GetName().Version);
         var plan = UpdateInstaller.CreatePlan(
             pending.StagingDirectory,
             pending.TargetDirectory,
             Environment.ProcessId,
-            pending.Version);
+            replaced);
         UpdateInstaller.WriteScript(plan);
         UpdateInstaller.Launch(plan.ScriptPath);
         store.Clear();
