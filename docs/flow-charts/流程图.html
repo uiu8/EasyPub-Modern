@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>EasyPub Modern 核心流程图</title>
+<style>
+  :root { --ink:#151515; --muted:#625F59; --line:#D9D6CF; --bg:#F3F1EC; --surface:#FBFAF7; }
+  html, body { margin:0; padding:0; background:var(--bg); }
+  body { font-family:"Microsoft YaHei UI","Segoe UI",sans-serif; color:var(--ink); padding:28px 34px 44px; width:1160px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 26px; }
+  section { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+            padding:22px 24px 26px; margin:0 0 24px; }
+  h2 { font-size:16px; margin:0 0 3px; }
+  .note { color:var(--muted); font-size:12.5px; margin:0 0 16px; }
+  .mermaid { display:flex; justify-content:center; }
+  .mermaid svg { max-width:100%; height:auto; }
+  code { background:#EFEDE7; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<h1>EasyPub Modern · 核心流程图</h1>
+<p class="sub">全部来自真实代码（main @ 825ea0b）。完整说明见 <code>docs/2026-09-16_功能逻辑与流程图全景.md</code>。</p>
+
+<section>
+  <h2>一、一条主线：原始 TXT 到成品</h2>
+  <p class="note">原文行号是唯一坐标系；章节树只是内存里的解释，原文一行不改。</p>
+  <pre class="mermaid">
+flowchart TD
+    TXT[原始 TXT] --> DEC[解码 TextFileDecoder]
+    DEC --> LINES[行数组 唯一坐标系]
+    LINES --> REC[识别 ChapterTree.LoadAsync]
+    REC --> TREE[章节树 ChapterTreeEntry 列表]
+    TREE --> FIX[修复 目录对齐或本地规则]
+    FIX --> GUARD{行守恒校验}
+    GUARD -->|通过| TREE2[新章节树]
+    GUARD -->|不通过| STOP[抛异常 停止应用]
+    TREE2 --> CLEAN[文本清理流水线]
+    LINES --> CLEAN
+    CLEAN --> SPLIT[分章与组装]
+    TREE2 --> SPLIT
+    SPLIT --> EPUB[EPUB 打包]
+    SPLIT --> MOBI[MOBI 与原版兼容路径]
+    EPUB --> VAL[成品验收]
+    MOBI --> VAL
+    VAL --> OUT[落盘 加 变更记录]
+  </pre>
+</section>
+
+<section>
+  <h2>二、目录对齐修复：三遍逐章定位</h2>
+  <p class="note">全项目最核心的算法。每一遍都在解决上一遍解决不了的情况，且各自单独计时。</p>
+  <pre class="mermaid">
+flowchart TD
+    START[ReferenceLocator.Locate 入口] --> PREP[解析卷名前缀<br/>按词长降序]
+    PREP --> CAND[第一遍 采集候选行]
+    CAND --> C1[逐行扫全部原文]
+    C1 --> C2{行长 0 到 60}
+    C2 -->|否| SKIP1[跳过]
+    C2 -->|是| C3{上下有空邻居<br/>或 是已知标题行}
+    C3 -->|否| SKIP1
+    C3 -->|是| C4[解析出 章号 与 标题词]
+    C4 --> C5{键非空 且 看起来像标题}
+    C5 -->|否| SKIP1
+    C5 -->|是| ADD[加入候选集]
+    ADD --> MATCH[第二遍 按目录顺序匹配]
+    MATCH --> M1[遍历目录里的每一章]
+    M1 --> M2[对所有未占用候选打分]
+    M2 --> M3[排序<br/>章号一致优先 然后得分 然后行号]
+    M3 --> M4{严格在游标之后有候选}
+    M4 -->|有| TAKE1[取之 推进游标]
+    M4 -->|无| TAKE2[退而取最佳剩余候选]
+    TAKE2 --> PEND[记入 pending 待补位]
+    TAKE1 --> NEXT{还有目录章}
+    PEND --> NEXT
+    NEXT -->|是| M1
+    NEXT -->|否| FILL[补位<br/>把 pending 章插在前后邻居之间]
+    FILL --> THIRD[第三遍 兜底逐行搜索]
+    THIRD --> T1{该章仍未定位}
+    T1 -->|否| DONE[返回 ReferenceLocation]
+    T1 -->|是| T2{标题词少于 2 个}
+    T2 -->|是| UNRES[记为 unrescuable 未扫描]
+    T2 -->|否| T3[预解析全部行的键 只算一次]
+    T3 --> T4[对每一行按最强证据测试]
+    T4 --> T5{章号一致}
+    T5 -->|是| HIT1[命中 章号证据]
+    T5 -->|否| T6{短标题 少于 3 词}
+    T6 -->|是| NEXT2[跳过该行]
+    T6 -->|否| T7{行文本包含标题词}
+    T7 -->|是| HIT2[记为 fallback 继续找更强的]
+    T7 -->|否| T8{词长差 不超过 1}
+    T8 -->|是| T9[算字符相似度 达 0.67 记为模糊命中]
+    T8 -->|否| NEXT2
+    T9 --> NEXT2
+    NEXT2 --> T4
+    HIT2 --> NEXT3{还有未定位章}
+    HIT1 --> NEXT3
+    UNRES --> NEXT3
+    NEXT3 -->|是| T1
+    NEXT3 -->|否| DONE
+  </pre>
+</section>
+
+<section>
+  <h2>三、重建章节树：两条分支，由"有没有手工编辑"决定</h2>
+  <p class="note">一旦树里有 <code>manual</code> 条目，就从"按原文物理位置重建"退化为"在现有树上局部改动"。</p>
+  <pre class="mermaid">
+flowchart TD
+    A0[ReferencePlanner.Apply 入口] --> A1{所选为空 且 不建卷层级}
+    A1 -->|是| R0[原样返回]
+    A1 -->|否| A2{树里有 manual 条目<br/>或 有非前置项缺标题行}
+    A2 -->|是| PE[保守分支<br/>就地局部改动]
+    A2 -->|否| RB[按原文物理位置重建]
+    RB --> R1[建立 keep 表<br/>标题行 到 条目]
+    R1 --> R2[逐个应用所选动作]
+    R2 --> R3[AddChapter 插入新条目]
+    R2 --> R4[Retitle 改标题]
+    R2 --> R5[RemoveDuplicate 移除多余副本<br/>并记入 dropped]
+    R2 --> R6[DemoteExtra 或 KeepExtra<br/>只移除标题边界<br/>正文归入前一章]
+    R3 --> R7{keep 为空}
+    R4 --> R7
+    R5 --> R7
+    R6 --> R7
+    R7 -->|是| R0
+    R7 -->|否| R8[先处理被移除的标题边界<br/>再分配正文]
+    R8 --> R9[按行号顺序重排<br/>目录外条目插在物理邻居旁]
+    R9 --> R10[建卷层级<br/>按目录卷序分组]
+    R10 --> R11[行守恒校验]
+    R11 --> R12[落回文档]
+    R12 --> DONE[返回新条目数组]
+    PE --> P1[以现有条目数组为起点]
+    P1 --> P2[逐个所选动作就地改]
+    P2 --> P3[重算行覆盖与移除清单]
+    P3 --> P4[行守恒校验]
+    P4 --> DONE
+  </pre>
+</section>
+
+<section>
+  <h2>四、一处正文行被谁同时引用（全项目最大的风险面）</h2>
+  <p class="note">清理规则一旦增删行，后面所有行号整体位移——这就是"转换成功但正文缺失"的成因。</p>
+  <pre class="mermaid">
+flowchart TD
+    LINE[原文第 N 行] --> R1[章节树的标题行或正文范围]
+    LINE --> R2[插图定位 按行号插入]
+    LINE --> R3[文本清理规则 按行或跨行匹配]
+    LINE --> R4[章节树行间标注]
+    LINE --> R5[变更记录]
+    R3 --> RISK{清理规则增删了行}
+    RISK -->|是| SHIFT[后续所有行号整体位移]
+    SHIFT --> BAD[章节树与插图的旧行号失配]
+    BAD --> GUARD1[拦截一 无法安全映射时阻止输出]
+    BAD --> GUARD2[拦截二 转换前检查列为阻止项]
+    BAD --> GUARD3[拦截三 成品验收比对原文尾部]
+  </pre>
+</section>
+
+<!--
+  Mermaid 优先用同目录下的 mermaid.min.js（离线可用），没有就回退到 CDN。
+  本地文件不在仓库里：需要离线看图时把 mermaid 的 dist/mermaid.min.js 放到本文件旁边即可。
+-->
+<script>
+  (function () {
+    var sources = ["./mermaid.min.js", "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"];
+    var index = 0;
+    function load() {
+      if (index >= sources.length) {
+        document.title = "error: 无法加载 mermaid（离线且没有本地副本）";
+        document.body.insertAdjacentHTML("afterbegin",
+          '<p style="color:#B42318">无法加载 mermaid。把 mermaid.min.js 放到本文件同目录，或连网后刷新。</p>');
+        return;
+      }
+      var script = document.createElement("script");
+      script.src = sources[index++];
+      script.onload = render;
+      script.onerror = load;
+      document.head.appendChild(script);
+    }
+    function render() {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeVariables: {
+          fontFamily: "Microsoft YaHei UI, Segoe UI, sans-serif",
+          fontSize: "14px",
+          primaryColor: "#FBFAF7",
+          primaryTextColor: "#151515",
+          primaryBorderColor: "#8A857C",
+          lineColor: "#625F59",
+          secondaryColor: "#F7F5F0",
+          tertiaryColor: "#EFEDE7"
+        },
+        flowchart: { curve: "basis", useMaxWidth: true, htmlLabels: true }
+      });
+      // 渲染完把标记写进 title，截图工具据此判断页面已就绪。
+      mermaid.run({ querySelector: ".mermaid" })
+        .then(function () { document.title = "ready · EasyPub Modern 核心流程图"; })
+        .catch(function (error) { document.title = "error: " + error.message; });
+    }
+    load();
+  })();
+</script>
+</body>
+</html>
