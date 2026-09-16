@@ -53,60 +53,22 @@ public partial class ChapterEditorWindow
                 CatalogAssist_Click(this,new RoutedEventArgs());
                 return;
             }
-            var dialog=ThemedWindow("目录修复 · 核对后应用",760,580);
-            var panel=new DockPanel { Margin=new Thickness(20) };
-            var footer=new WrapPanel { HorizontalAlignment=HorizontalAlignment.Right };
-            var apply=new Button { Content="应用修复方案", IsDefault=true };
-            if (outcome.Report.Any(group => group.Label == "来源与文件对不上"))
-            {
-                var verified = new CheckBox { Content = "已核实参考目录确属本书此版本", Margin = new Thickness(0, 6, 12, 0) };
-                apply.IsEnabled = false;
-                verified.Checked += (_, _) => apply.IsEnabled = true;
-                verified.Unchecked += (_, _) => apply.IsEnabled = false;
-                footer.Children.Add(verified);
-            }
-            var close=new Button { Content="暂不应用", IsCancel=true };
-            footer.Children.Add(apply); footer.Children.Add(close);
-            DockPanel.SetDock(footer,Dock.Bottom); panel.Children.Add(footer);
-            var details=new TextBox { IsReadOnly=true, TextWrapping=TextWrapping.Wrap, VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
-            var lines=new List<string>
-            {
-                "参考来源："+outcome.CatalogSource,
-                "目录页面："+outcome.Catalog?.PageTitle,
-                "参考目录仅用于核对结构，不代表正文已经完整。",
-                "",outcome.Verdict,
-                $"本次从成品移除 {outcome.RemovedLines} 行重复内容；应用前保存备份及逐行清单。",
-                "已编辑的章节范围保留；原始 TXT 不变；应用后可以撤销。"
-            };
-            if(outcome.Missing>0)
-            {
-                lines.Add("\n未定位章节（可能是缺内容、标题差异或先前已删除，不能直接认定需要重新下载）：");
-                lines.AddRange(outcome.MissingTitles);
-                lines.Add("\n下一步：在目录辅助修复中核对来源和标题，再对照原文；只有确认原文缺失时才补充书稿。");
-            }
-            if(outcome.NeedsReview>0) lines.Add("\n同名但正文不同的条目已保留。请在「目录辅助修复」中逐项核对后决定是否去重。");
-            // Categorised account of the repair. Long books produce hundreds of actions, so each
-            // category shows its count plus one concrete example (or the volume ranges) and the rest
-            // stays folded away — enough to judge the result without reading a wall of chapter titles.
-            foreach(var group in outcome.Report)
-            {
-                lines.Add("");
-                lines.Add($"── {group.Headline} ──");
-                lines.Add("   "+group.Summary);
-                foreach(var item in group.Items)
-                    lines.Add($"   · {(item.Line>0?$"第 {item.Line} 行 ":"")}{item.Title}：{item.Detail}");
-            }
-            lines.Add("\n── 实际变化（以本次应用结果为准）──");
-            lines.AddRange(RepairIntegrity.DescribeChanges(snapshot.Entries, outcome.Entries ?? snapshot.Entries));
-            details.Text=string.Join(Environment.NewLine,lines);
-            panel.Children.Add(details); dialog.Content=panel;
-            apply.Click+=(_,_)=>dialog.DialogResult=true;
-            if(dialog.ShowDialog()!=true) { SetReviewResult("未应用修复方案，当前章节树保持不变。"); return; }
+            // The window states what will change and lets every change be struck out; the applying
+            // half is kept here unchanged, so the backup, the removal receipt and the undo hint still
+            // happen exactly where they did before. Only the selection comes from the user now.
+            IReadOnlyCollection<ReferenceAction>? chosen = null;
+            var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions) { Owner = _rulesDialog ?? this };
+            if (dialog.ShowDialog()!=true || chosen is null)
+            { SetReviewResult("未应用修复方案，当前章节树保持不变。"); return; }
             IsEnabled = false;
+            // Rebuilt before anything is written: a plan that cannot be applied must fail here, where
+            // the tree and the source are still untouched, not after a backup has been taken.
+            var applied = ChapterAutoRepair.RebuildWithSelection(snapshot, outcome, chosen);
+            if (applied.Count == 0) throw new InvalidDataException("修复方案没有章节树。");
             var backup=SourceBackupStore.CreateDefault().EnsureSnapshot(snapshot);
             var receipt=await RepairIntegrity.SaveRemovedAsync(snapshot,outcome.RemovedSourceLines);
             if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
-            ApplyRepairEntries(outcome.Entries ?? throw new InvalidDataException("修复方案没有章节树。"));
+            ApplyRepairEntries(applied);
             SetReviewResult(outcome.Verdict+"。可撤销。备份："+backup+(receipt is null ? "" : "；移除清单："+receipt));
         }
         catch(OperationCanceledException) { SetReviewResult("目录修复已取消，当前章节树保持不变。"); }

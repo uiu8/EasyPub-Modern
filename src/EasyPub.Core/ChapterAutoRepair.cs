@@ -1,7 +1,28 @@
 namespace EasyPub.Core;
 
-/// <summary>One entry inside a report group: where it is and what was done to it.</summary>
-public sealed record RepairReportItem(int Line, string Title, string Detail);
+/// <summary>
+/// One entry inside a report group: where it is and what was done to it. <paramref name="Kind"/> is
+/// what lets the confirmation window turn a row's checkbox back into the action it selects, and
+/// <paramref name="Recommended"/> is its default state, so the window never has to re-derive either
+/// from the label text. Both are null/false for rows that are not selectable — a reference entry that
+/// was never located, or a volume that was only described.
+/// </summary>
+public sealed record RepairReportItem(int Line, string Title, string Detail,
+    ReferenceActionKind? Kind = null, bool Recommended = false);
+
+/// <summary>
+/// One reference entry the repair did not locate in the text, carried with the reason it is worth a
+/// second look. Aggregator directories collect the author's leave notices ("请假一天", "今天的更新
+/// 也会晚一些") beside real chapters, so of 264 entries reported as "not located" the large majority
+/// are not missing prose at all. <paramref name="HasChapterNumber"/> is that distinction: it reuses the
+/// number test already used to tell a section heading from body prose, so a directory entry without a
+/// chapter number is what the window calls a suspected announcement rather than a missing chapter.
+/// </summary>
+public sealed record UnmatchedChapter(string Title, string? Volume, bool HasChapterNumber)
+{
+    /// <summary>Volume-qualified title, as the reference printed it.</summary>
+    public string Display => Volume is { Length: > 0 } volume ? $"{volume} · {Title}" : Title;
+}
 
 /// <summary>
 /// One category of change, summarised. A repair touches hundreds of chapters and listing each one is
@@ -55,9 +76,34 @@ public sealed record AutoRepairOutcome(
 {
     public IReadOnlyList<int> RemovedSourceLines { get; init; } = [];
     public IReadOnlyList<string> MissingTitles { get; init; } = [];
+    /// <summary>
+    /// Every reference entry that was not located, split by whether the directory numbered it. The
+    /// window reads the four figures it shows straight from these instead of parsing the verdict
+    /// sentence, so the headline can never disagree with the detail underneath it.
+    /// </summary>
+    public IReadOnlyList<UnmatchedChapter> Unmatched { get; init; } = [];
+    public int AlignedCount => Math.Max(0, ReferenceChapters - Unmatched.Count);
+    /// <summary>Not located and numbered: the entries a reader actually has to check by hand.</summary>
+    public int UnmatchedWithNumber => Unmatched.Count(item => item.HasChapterNumber);
+    /// <summary>Not located and unnumbered: leave notices and similar, usually no action needed.</summary>
+    public int UnmatchedNoNumber => Unmatched.Count(item => !item.HasChapterNumber);
     public int NeedsReview { get; init; }
     public string? CatalogSource { get; init; }
     public ReferenceCatalog? Catalog { get; init; }
+    /// <summary>
+    /// The plan the report was built from. The confirmation window needs the actions themselves, not
+    /// just their descriptions: applying a per-item selection means handing the chosen actions back to
+    /// <see cref="ReferencePlanner.Apply"/>, and <see cref="ReferencePlan.DefaultSelection"/> is what
+    /// preselects the checkboxes.
+    /// </summary>
+    public ReferencePlan? Plan { get; init; }
+    /// <summary>
+    /// Indexes into the local chapter list where numbering restarts at 1. Carried so
+    /// <see cref="ChapterAutoRepair.RebuildWithSelection"/> can repeat the volume-inference pass the
+    /// preview ran; recomputing it from the rebuilt tree would answer a different question. Distinct
+    /// from <see cref="VolumeRestarts"/>, which is how many restarts there were.
+    /// </summary>
+    public IReadOnlyList<int> VolumeRestartIndexes { get; init; } = [];
     /// <summary>Categorised account of what the repair changed, ready to display.</summary>
     public IReadOnlyList<RepairReportGroup> Report { get; init; } = [];
     /// <summary>Measured cost of each stage of this pass.</summary>
@@ -194,13 +240,19 @@ public static class ChapterAutoRepair
         // Count by distinct located source line, not a set of title strings: repeated titles in other
         // volumes cannot make an absent chapter appear present.
         var foundLines=chapters.Where(e=>e.TitleLineNumber is not null).Select(e=>e.TitleLineNumber!.Value).ToHashSet();
-        var missing=plan.Location.Chapters.Where(c=>c.Line is null || !foundLines.Remove(c.Line.Value))
-            .Select(c=>(c.Volume is null ? "" : c.Volume+" · ")+c.Reference.Title).ToArray();
+        // Whether the reference numbered an entry is what separates a chapter somebody has to look for
+        // from a leave notice the site collected by mistake. Numbered entries keep the volume-qualified
+        // title the report already printed; unnumbered ones need no prefix, they have no volume.
+        var unmatched = plan.Location.Chapters.Where(c=>c.Line is null || !foundLines.Remove(c.Line.Value))
+            .Select(c=>new UnmatchedChapter(c.Reference.Title,c.Volume,
+                ReferenceOutline.ParseKey(c.Reference.Title).Number.Length>0)).ToArray();
+        var missing=unmatched.Select(c=>c.Display).ToArray();
         var volumes=rebuilt.Count(e=>e.RecognitionSource is "reference-volume" or "inferred-volume");
         var review=plan.Actions.Count(a=>a.Kind==ReferenceActionKind.RemoveDuplicate && !a.Recommended);
-        var verdict=$"已对齐 {catalog.Titles.Count-missing.Length}/{catalog.Titles.Count} 章；未定位 {missing.Length} 章；保留目录外 {foundLines.Count} 章；待核对重复 {review} 项"+
+        var aligned=catalog.Titles.Count-missing.Length;
+        var verdict=$"已对齐 {aligned}/{catalog.Titles.Count} 章；未定位 {missing.Length} 章；保留目录外 {foundLines.Count} 章；待核对重复 {review} 项"+
             (inferred ? $"；{volumes} 卷为章号重启推断，请核对" : $"；{volumes} 卷");
-        var report = BuildReport(plan, rebuilt, missing, foundLines);
+        var report = BuildReport(plan, rebuilt, unmatched, foundLines);
         // Shown first, because it changes what every other line means.
         if (DescribeCatalogMismatch(catalog, localEntries) is { } mismatch)
             report = new[] { new RepairReportGroup("来源与文件对不上", 1, "项", mismatch, []) }
@@ -208,7 +260,7 @@ public static class ChapterAutoRepair
         return new(document.SourcePath,ExtractBookName(document.SourcePath),true,catalog.VolumeTitles.Count,catalog.Titles.Count,
             volumes,chapters.Length,missing.Length,foundLines.Count,restarts.Count,inferred,verdict,
             RemovedLines:dropped.Count,Entries:rebuilt)
-        { RemovedSourceLines=dropped,MissingTitles=missing,NeedsReview=review,CatalogSource=catalog.Source,Report=report,
+        { RemovedSourceLines=dropped,MissingTitles=missing,Unmatched=unmatched,NeedsReview=review,CatalogSource=catalog.Source,Report=report,Plan=plan,VolumeRestartIndexes=restarts,
           Timing=Finish(catalogMs, planMs, applyMs, plan.Location) };
     }
 
@@ -228,22 +280,63 @@ public static class ChapterAutoRepair
     /// carries the one example — or the volume ranges — that make it concrete. The per-item list stays
     /// available underneath for anyone who wants to check a specific line.
     /// </summary>
+    /// <summary>
+    /// Rebuilds the tree from a selection the user made by hand in the confirmation window.
+    ///
+    /// The preview already applied <see cref="ReferencePlan.DefaultSelection"/> once — that is where
+    /// the report's counts and "what actually changed" come from — so applying that default again and
+    /// then the user's own choice would verify the same tree against itself. This is the one place that
+    /// knows both the selection and the volume-inference pass, so the window asks for it rather than
+    /// reaching for <see cref="ReferencePlanner.Apply"/> directly; the checks it runs are the same, so
+    /// nothing is applied that the preview would have refused.
+    /// </summary>
+    public static IReadOnlyList<ChapterTreeEntry> RebuildWithSelection(ChapterTreeDocument document,
+        AutoRepairOutcome outcome, IReadOnlyCollection<ReferenceAction> selected, CancellationToken token = default)
+    {
+        if (outcome.Entries is not { } preview || outcome.Plan is not { } plan) return [];
+        token.ThrowIfCancellationRequested();
+        var dropped = new List<int>();
+        var rebuilt = ReferencePlanner.Apply(document, document.Entries, plan, selected, true,
+            outcome.Catalog?.VolumeTitles.Count > 0, dropped);
+        // Same condition the preview used: volumes only get inferred when the reference did not carry
+        // them and the numbering really does restart.
+        if (outcome.VolumeRestarts > 0 && outcome.VolumeRestartIndexes.Count > 0
+            && outcome.Catalog?.VolumeTitles.Count == 0
+            && !document.Entries.Any(entry => entry.RecognitionSource == "manual"))
+            rebuilt = WithInferredVolumes(document, rebuilt, outcome.VolumeRestartIndexes);
+        RepairIntegrity.Verify(document.Entries, rebuilt, dropped);
+        return rebuilt;
+    }
+
     private static IReadOnlyList<RepairReportGroup> BuildReport(
-        ReferencePlan plan, IReadOnlyList<ChapterTreeEntry> rebuilt, IReadOnlyList<string> missing,
+        ReferencePlan plan, IReadOnlyList<ChapterTreeEntry> rebuilt, IReadOnlyList<UnmatchedChapter> unmatched,
         IReadOnlyCollection<int> extraLines)
     {
         var groups = new List<RepairReportGroup>();
         void Add(string label, ReferenceActionKind kind, string unit, Func<ReferenceAction[], string> summary)
         {
-            var items = plan.OfKind(kind).Where(action => action.Line > 0 && action.Recommended)
+            // Every planned action is listed, not only the preselected ones. A row the user cannot see
+            // is a row the user cannot cancel, and the window's whole promise is that each change can be
+            // struck out; Recommended carries the default state instead of the filter.
+            var items = plan.OfKind(kind).Where(action => action.Line > 0)
                 .Where(action => kind != ReferenceActionKind.Retitle || rebuilt.Any(e => e.Id == action.EntryId && e.Title == action.Title))
                 .Where(action => kind != ReferenceActionKind.AddChapter || rebuilt.Any(e => e.TitleLineNumber == action.Line))
                 .Where(action => kind != ReferenceActionKind.DemoteExtra || !rebuilt.Any(e => e.Id == action.EntryId))
                 .OrderBy(action => action.Line).ToArray();
             if (items.Length == 0) return;
-            groups.Add(new(label, items.Length, unit, summary(items),
-                items.Select(action => new RepairReportItem(action.Line, action.Title, action.Detail)).ToArray()));
+            // The example has to be one the window will actually tick: now that unselectable-by-default
+            // rows are listed too, items[0] can be the one action that will not run.
+            var shown = items.FirstOrDefault(action => action.Recommended) ?? items[0];
+            groups.Add(new(label, items.Length, unit, summary([shown]),
+                items.Select(action => new RepairReportItem(action.Line, action.Title, action.Detail, kind, action.Recommended)).ToArray()));
         }
+
+        // The extras group below has to name the action each heading actually carries, and the plan is
+        // the only place that knows: a heading with no chapter number is demoted by default, one that
+        // is merely absent from the directory is kept until the user says otherwise.
+        var kindOfLine = new Dictionary<int, ReferenceActionKind>();
+        foreach (var action in plan.Actions.Where(action => action.Line > 0))
+            kindOfLine.TryAdd(action.Line, action.Kind);
 
         Add("补齐漏识别", ReferenceActionKind.AddChapter, "章",
             items => $"已在原文中定位并收录；例：第 {items[0].Line} 行「{items[0].Title}」");
@@ -256,12 +349,24 @@ public static class ChapterAutoRepair
         // Counted from the rebuilt tree, not from the plan's actions: the plan sees the tree as it was
         // before headings without a chapter number were folded back into the body, so it reports more
         // extras than the user will actually find. One number, one source — the tree they get.
-        var extras = rebuilt
+        var ordered = rebuilt
             .Where(entry => !entry.IsFrontMatter && entry.TitleLineNumber is int line && extraLines.Contains(line)
                 && entry.RecognitionSource != "manual")
-            .Select(entry => new RepairReportItem(entry.TitleLineNumber!.Value, entry.Title,
-                "参考目录未列出；确认不需要可在方案里勾选，内容会并回上一章。"))
+            .Select(entry =>
+            {
+                // This group mixes two actions: a heading that does not look like a title at all is
+                // demoted by default, while one that merely is not listed keeps its chapter status
+                // until the user says otherwise. Read the kind from the plan rather than re-deciding it.
+                var kind = kindOfLine.TryGetValue(entry.TitleLineNumber!.Value, out var found)
+                    ? found : ReferenceActionKind.KeepExtra;
+                return new RepairReportItem(entry.TitleLineNumber!.Value, entry.Title,
+                    "参考目录未列出；确认不需要可在方案里勾选，内容会并回上一章。", kind,
+                    kind == ReferenceActionKind.DemoteExtra
+                        && plan.Actions.Any(a => a.Kind == kind && a.Line == entry.TitleLineNumber!.Value && a.Recommended));
+            })
+            .OrderBy(item => item.Line)
             .ToArray();
+        var extras = ordered;
         if (extras.Length > 0)
             groups.Add(new("目录外章节（需你决定）", extras.Length, "处",
                 $"参考目录未列出，已按原位置保留；例：第 {extras[0].Line} 行「{Truncate(extras[0].Title)}」", extras));
@@ -271,10 +376,21 @@ public static class ChapterAutoRepair
             groups.Add(new("建立卷层级", spans.Count, "卷",
                 string.Join(" · ", spans.Select(span => $"{span.Title} {span.First}–{span.Last}")), []));
 
-        if (missing.Count > 0)
-            groups.Add(new("参考目录未匹配", missing.Count, "章",
-                "未定位到可用标题，也可能是版本或写法差异。请先核对来源与原文；软件不会补造正文。",
-                missing.Select(title => new RepairReportItem(0, title, "")).ToArray()));
+        // Two groups, not one. An entry the directory numbered but the text does not show is a chapter
+        // worth looking for; an entry it never numbered is usually a leave notice the aggregator
+        // collected, and mixing 13 of the first with 251 of the second is what buried the 13. The
+        // numbered ones come first for the same reason: they are the only ones the user has to check.
+        var numbered = unmatched.Where(item => item.HasChapterNumber).ToArray();
+        if (numbered.Length > 0)
+            groups.Add(new("参考目录未匹配", numbered.Length, "章",
+                "目录里有章号、原文中未定位到。也可能是版本或写法差异，请先核对来源与原文；软件不会补造正文。",
+                numbered.Select(item => new RepairReportItem(0, item.Display, "")).ToArray()));
+
+        var unnumbered = unmatched.Where(item => !item.HasChapterNumber).ToArray();
+        if (unnumbered.Length > 0)
+            groups.Add(new("疑似公告", unnumbered.Length, "章",
+                "参考目录里这些条目没有章号，多为请假、休更一类公告，通常无需处理。",
+                unnumbered.Select(item => new RepairReportItem(0, item.Display, "")).ToArray()));
 
         return groups;
     }
