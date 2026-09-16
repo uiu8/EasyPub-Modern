@@ -40,6 +40,9 @@ public sealed record EasyPubAppSettings(
     public bool AutoOpenTaskCenter { get; init; }
     public AutomaticCheckOptions AutomaticChecks { get; init; } = new();
     public bool AutoOpenOutputDirectory { get; init; }
+
+    /// <summary>启动时后台检查新版本。只提示，不自动下载，默认开启。</summary>
+    public bool AutoCheckUpdate { get; init; } = true;
     public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
     public string KindlePreviewDeviceId { get; init; } = "kpw6";
     public int CustomKindleWidth { get; init; } = 1264;
