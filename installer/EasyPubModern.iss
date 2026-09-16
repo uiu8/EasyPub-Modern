@@ -1,8 +1,8 @@
 #define AppName "EasyPub Modern"
-#define AppVersion "1.56.3"
+#define AppVersion "1.57.0"
 #define AppPublisher "uiu8"
 #define AppExeName "EasyPub.Desktop.exe"
-#define PublishDir "..\outputs\EasyPubModern-v1.56.3-sidebar-overflow-win-x64"
+#define PublishDir "..\outputs\EasyPubModern-v1.57.0-in-app-update-win-x64"
 
 [Setup]
 AppId={{8F564AA1-31F4-4EA5-BFF7-BBD76C35B5F4}
