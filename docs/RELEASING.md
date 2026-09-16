@@ -31,6 +31,33 @@ pwsh tools/publish-github.ps1  -Version 1.57.3 -Codename some-change
 - `publish-github.ps1`：推送 → 创建 Release → 上传资产 → **回校验远端资产大小与本地一致**
   （上传中断会留下截断的资产）。
 
+## 3.5 同步到 AtomGit 镜像（可选，给国内用户）
+
+```powershell
+pwsh tools/publish-atomgit.ps1 -Version 1.57.3 -Codename some-change
+```
+
+客户端的更新检查按 `GitHub → AtomGit` 的顺序尝试，**第一个应答正常的源胜出**。
+所以同步到 AtomGit 之后，国内直连 GitHub 失败的用户仍能检查到新版本并下载。
+
+前提：仓库里放一份 AtomGit 访问令牌文件 `.atomgit-token`（已在 `.gitignore` 里，
+**绝不提交**）。没有这个文件脚本会直接报错退出。
+
+### 三个实测出来的坑
+
+1. **AtomGit 上的 release 删不掉。** `DELETE /releases/{tag}` 返回 405，响应里也没有文档声称的
+   `id` 字段。也就是说发出去就收不回来——**发之前务必确认版本号**，别指望像 GitHub 那样
+   发错了删掉重发。脚本因此会在创建前先查一次，重复版本直接拒绝。
+2. **附件上传是两步**：先 `GET .../releases/{tag}/upload_url?file_name=...` 拿到预签名地址和
+   一组必需请求头，再用 `PUT` 传文件（实际落在 `file.gitcode.com`）。
+3. **assets 里混着四个平台自动生成的源码包**（`type=source`），必须靠 `type` 过滤，
+   否则回校验会数错附件个数。
+
+### 两边不一致会怎样
+
+客户端不做"跨源比版本取最高"，主源能通时它就是权威。所以**忘了同步 AtomGit** 的后果是：
+国内用户看到的是旧版本，而 GitHub 用户正常。发完版顺手跑一下同步脚本就行。
+
 ## 网络
 
 本机直连 `github.com:443` 不通，但仓库级代理已配置（`git config http.proxy`，只对这个仓库生效）；
