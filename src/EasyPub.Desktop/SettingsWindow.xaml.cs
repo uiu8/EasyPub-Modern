@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
+using EasyPub.Core;
 using Microsoft.Win32;
 
 namespace EasyPub.Desktop;
@@ -10,7 +12,14 @@ namespace EasyPub.Desktop;
 public partial class SettingsWindow : Window
 {
     private readonly Action _manageFavorites;
+    private readonly PendingUpdateStore _pendingUpdates = PendingUpdateStore.CreateDefault();
     private IReadOnlyDictionary<string, string> _shortcutBindings;
+    private UpdateRelease? _availableRelease;
+    private bool _updateReadyToApply;
+    private CancellationTokenSource? _updateCancellation;
+
+    /// <summary>当前可执行文件的版本，取自程序集而不是写死的字符串。</summary>
+    private static Version CurrentVersion => typeof(SettingsWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
 
     public SettingsWindow(
         string theme,
@@ -26,6 +35,7 @@ public partial class SettingsWindow : Window
         int reportRetention,
         bool autoOpenTaskCenter,
         bool autoOpenOutputDirectory,
+        bool autoCheckUpdate,
         IReadOnlyDictionary<string, string> shortcutBindings,
         int favoriteFolderCount,
         Action manageFavorites)
@@ -50,6 +60,21 @@ public partial class SettingsWindow : Window
         AutoOpenTaskCenterSettingsCheck.IsChecked = autoOpenTaskCenter;
         AutoOpenOutputSettingsCheck.IsChecked = autoOpenOutputDirectory;
         FavoriteCountText.Text = $"已收藏 {favoriteFolderCount} 个常用目录；可从“添加书稿”菜单直接进入。";
+        AutoCheckUpdateCheck.IsChecked = autoCheckUpdate;
+        VersionText.Text = $"版本 {AppVersion.Display(CurrentVersion)} · TXT / EPUB 到 Kindle";
+        ShowAlreadyDownloadedUpdate();
+    }
+
+    /// <summary>上一次运行已经下载好但没来得及安装的更新，进设置页时直接显示出来，不必重新下载。</summary>
+    private void ShowAlreadyDownloadedUpdate()
+    {
+        if (_pendingUpdates.LoadReady() is not { } pending) return;
+        _updateReadyToApply = true;
+        UpdateCard.Visibility = Visibility.Visible;
+        UpdateTitleText.Text = $"新版本 {pending.Version} 已下载";
+        UpdateNotesText.Text = "更新包已准备就绪，重启软件即可完成更新。";
+        InstallUpdateButton.Content = "立即重启更新";
+        UpdateHintText.Text = "也可以直接关闭软件，退出时会自动完成更新。";
     }
 
     public string Theme => SelectedTag(ThemeCombo, ThemeManager.LightTheme);
@@ -65,6 +90,7 @@ public partial class SettingsWindow : Window
     public int ReportRetention => int.Parse(SelectedTag(RetentionSettingsCombo, "10"), CultureInfo.InvariantCulture);
     public bool AutoOpenTaskCenter => AutoOpenTaskCenterSettingsCheck.IsChecked == true;
     public bool AutoOpenOutputDirectory => AutoOpenOutputSettingsCheck.IsChecked == true;
+    public bool AutoCheckUpdate => AutoCheckUpdateCheck.IsChecked == true;
     public IReadOnlyDictionary<string, string> ShortcutBindings => _shortcutBindings;
     public int SelectedSection
     {
@@ -162,12 +188,127 @@ public partial class SettingsWindow : Window
         RetentionSettingsCombo.IsEnabled = false;
         AutoOpenTaskCenterSettingsCheck.IsChecked = false;
         AutoOpenOutputSettingsCheck.IsChecked = false;
+        AutoCheckUpdateCheck.IsChecked = true;
         TextEditorPathText.Text = "notepad.exe";
         _shortcutBindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         SaveHintText.Text = "已恢复默认值；点击“保存并返回工作区”后生效";
     }
 
     private void OpenGitHub_Click(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://github.com/uiu8/EasyPub-Modern") { UseShellExecute = true });
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e) => await CheckForUpdateAsync();
+
+    private async Task CheckForUpdateAsync()
+    {
+        CheckUpdateButton.IsEnabled = false;
+        UpdateStatusText.Text = "正在检查更新…";
+        try
+        {
+            var result = await UpdateChecker.CheckAsync(CurrentVersion);
+            UpdateStatusText.Text = result.Message;
+            if (result is { Status: UpdateCheckStatus.Available, Release: { } release }) ShowAvailableRelease(release);
+            else if (!_updateReadyToApply) UpdateCard.Visibility = Visibility.Collapsed;
+        }
+        finally
+        {
+            CheckUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowAvailableRelease(UpdateRelease release)
+    {
+        _availableRelease = release;
+        UpdateCard.Visibility = Visibility.Visible;
+        UpdateTitleText.Text = $"新版本 {AppVersion.Display(release.Version)}（当前 {AppVersion.Display(CurrentVersion)}）";
+        UpdateNotesText.Text = string.IsNullOrWhiteSpace(release.Notes) ? "该版本没有提供更新说明。" : Summarize(release.Notes);
+        InstallUpdateButton.IsEnabled = release.PortablePackage is not null;
+        if (release.PortablePackage is null)
+            UpdateHintText.Text = "该版本没有可自动安装的便携包，请到项目主页手动下载。";
+        else if (!_updateReadyToApply)
+            InstallUpdateButton.Content = "下载并更新";
+    }
+
+    private static string Summarize(string notes)
+    {
+        var text = notes.Replace("\r\n", "\n").Trim();
+        return text.Length <= 1200 ? text : text[..1200] + "…";
+    }
+
+    private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        // 已经下载好了：这一下就是「立即重启更新」。
+        if (_updateReadyToApply)
+        {
+            ApplyDownloadedUpdate();
+            return;
+        }
+
+        if (_availableRelease?.PortablePackage is not { } package) return;
+        InstallUpdateButton.IsEnabled = false;
+        UpdateProgressBar.Visibility = Visibility.Visible;
+        UpdateProgressBar.Value = 0;
+        _updateCancellation = new CancellationTokenSource();
+        try
+        {
+            UpdateInstaller.CleanUp(UpdateInstaller.StagingRoot);
+            var packagePath = UpdateInstaller.PackagePath(UpdateInstaller.StagingRoot);
+            var progress = new Progress<UpdateDownloadProgress>(value =>
+            {
+                UpdateProgressBar.Value = value.Fraction * 100;
+                UpdateHintText.Text = $"正在下载 {value.Describe()}";
+            });
+            await UpdateInstaller.DownloadAsync(package, packagePath, progress, _updateCancellation.Token);
+
+            UpdateHintText.Text = "正在解压并校验…";
+            var staging = UpdateInstaller.ExtractPackage(packagePath, UpdateInstaller.StagingDirectory);
+            if (!UpdateInstaller.StagingLooksComplete(staging))
+                throw new IOException("更新包内容不完整，已放弃这次更新。");
+
+            // 记下来：即使这次不重启，下次退出时也会自动完成更新。
+            _pendingUpdates.Save(new PendingUpdate(
+                AppVersion.Display(_availableRelease.Version),
+                staging,
+                AppContext.BaseDirectory,
+                DateTimeOffset.Now));
+
+            _updateReadyToApply = true;
+            UpdateProgressBar.Value = 100;
+            InstallUpdateButton.Content = "立即重启更新";
+            InstallUpdateButton.IsEnabled = true;
+            UpdateHintText.Text = "已准备就绪。点这里重启完成更新，或稍后关闭软件时自动更新。";
+            SaveHintText.Text = "新版本已下载，重启后生效";
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateHintText.Text = "已取消下载。";
+            InstallUpdateButton.IsEnabled = true;
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException or UnauthorizedAccessException)
+        {
+            UpdateHintText.Text = "下载失败：" + exception.Message;
+            InstallUpdateButton.IsEnabled = true;
+        }
+        finally
+        {
+            _updateCancellation?.Dispose();
+            _updateCancellation = null;
+        }
+    }
+
+    private void ApplyDownloadedUpdate()
+    {
+        if (_pendingUpdates.LoadReady() is not { } pending) return;
+        try
+        {
+            UpdateExitHook.Apply(pending, _pendingUpdates);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            InkDialog.Show(this, "无法启动更新程序：" + exception.Message, "更新");
+            return;
+        }
+        Application.Current.Shutdown();
+    }
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {

@@ -1135,7 +1135,7 @@ public sealed class MainWindowLayoutTests
             var captureTheme = Environment.GetEnvironmentVariable("EASYPUB_SETTINGS_CAPTURE_THEME") ?? "Light";
             var settingsWindow = new SettingsWindow(
                 captureTheme, "Comfortable", 100, true, false,
-                Path.GetTempPath(), string.Empty, "notepad.exe", 1, false, 10, false, false,
+                Path.GetTempPath(), string.Empty, "notepad.exe", 1, false, 10, false, false, true,
                 new Dictionary<string, string>(), 0, () => { });
             settingsWindow.Show();
             settingsWindow.UpdateLayout();

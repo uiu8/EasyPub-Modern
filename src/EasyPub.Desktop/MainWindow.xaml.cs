@@ -100,6 +100,8 @@ public partial class MainWindow : Window
     private string? _profileAuthor;
     private PublicationMetadata _profileMetadata = new();
     private IReadOnlyDictionary<string, string> _shortcutBindings = new Dictionary<string, string>();
+    private readonly PendingUpdateStore _pendingUpdates = PendingUpdateStore.CreateDefault();
+    private bool _autoCheckUpdate = true;
     private BatchExecutionControl? _batchExecutionControl;
     private bool _brushSelecting;
     private bool _brushSelectValue;
@@ -549,6 +551,7 @@ public partial class MainWindow : Window
             int.Parse(((ComboBoxItem)ValidationRetentionCombo.SelectedItem).Tag!.ToString()!, CultureInfo.InvariantCulture),
             AutoOpenTaskCenterCheck.IsChecked == true,
             AutoOpenOutputDirectoryCheck.IsChecked == true,
+            _autoCheckUpdate,
             _shortcutBindings,
             FavoriteFolders.Count,
             () => ManageFavoriteFoldersWindow(settingsWindow!))
@@ -572,6 +575,7 @@ public partial class MainWindow : Window
         ValidationRetentionCombo.IsEnabled = settingsWindow.ValidationEnabled;
         AutoOpenTaskCenterCheck.IsChecked = settingsWindow.AutoOpenTaskCenter;
         AutoOpenOutputDirectoryCheck.IsChecked = settingsWindow.AutoOpenOutputDirectory;
+        _autoCheckUpdate = settingsWindow.AutoCheckUpdate;
         _shortcutBindings = settingsWindow.ShortcutBindings;
         ApplyAppearanceSettings();
         await _appSettingsStore.SaveAsync(CaptureAppSettings());
@@ -631,6 +635,27 @@ public partial class MainWindow : Window
             UpdateConversionSummary();
             _ = RefreshKindleGenSummaryAsync();
             ScheduleAutomaticAnalysis();
+            if (_autoCheckUpdate) _ = CheckForUpdatesInBackgroundAsync();
+        }
+    }
+
+    /// <summary>
+    /// 启动时安静地查一次新版本。查到只在状态栏留一句话，不弹窗、不下载、不打断任何操作；
+    /// 查不到（离线、限流、超时）也什么都不做——更新检查永远不该成为启动的阻碍。
+    /// </summary>
+    private async Task CheckForUpdatesInBackgroundAsync()
+    {
+        try
+        {
+            var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
+            var result = await UpdateChecker.CheckAsync(current);
+            if (result is not { Status: UpdateCheckStatus.Available, Release: { } release }) return;
+            if (_pendingUpdates.LoadReady() is not null) return;   // 已经下载好就等重启，不必重复提示
+            StatusText.Text = $"发现新版本 {EasyPub.Core.AppVersion.Display(release.Version)}；打开「设置 → 更新与关于」可立即更新。";
+        }
+        catch (Exception)
+        {
+            // 后台检查失败不影响使用，也不打扰用户。
         }
     }
 
@@ -678,6 +703,9 @@ public partial class MainWindow : Window
             _closeSaveInProgress = false;
             if (closeApproved)
             {
+                // 工作已经保存完毕，这才轮到更新：把覆盖与重启交给独立脚本，
+                // 它会等本进程退出后再动程序文件。
+                UpdateExitHook.TryApplyOnExit(_pendingUpdates);
                 _allowClose = true;
                 _ = Dispatcher.BeginInvoke(new Action(Close));
             }
@@ -859,6 +887,7 @@ public partial class MainWindow : Window
             AppContext.BaseDirectory) ?? string.Empty;
         AutoOpenTaskCenterCheck.IsChecked = settings.AutoOpenTaskCenter;
         AutoOpenOutputDirectoryCheck.IsChecked = settings.AutoOpenOutputDirectory;
+        _autoCheckUpdate = settings.AutoCheckUpdate;
         SelectComboItemByTag(OutputCollisionCombo, settings.OutputCollisionPolicy.ToString());
         _shortcutBindings = settings.ShortcutBindings ?? new Dictionary<string, string>();
         CustomKindleWidthText.Text = settings.CustomKindleWidth.ToString(CultureInfo.InvariantCulture);
@@ -1054,6 +1083,7 @@ public partial class MainWindow : Window
             NumericHeadingPresets = _numericPresets,
             AutoOpenTaskCenter = AutoOpenTaskCenterCheck.IsChecked == true,
             AutoOpenOutputDirectory = AutoOpenOutputDirectoryCheck.IsChecked == true,
+            AutoCheckUpdate = _autoCheckUpdate,
             OutputCollisionPolicy = Enum.TryParse<OutputCollisionPolicy>((OutputCollisionCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out var collisionPolicy) ? collisionPolicy : OutputCollisionPolicy.AutoRename,
             KindlePreviewDeviceId = (KindleModelCombo.SelectedItem as KindleDeviceProfile)?.Id ?? "kpw6",
             CustomKindleWidth = int.TryParse(CustomKindleWidthText.Text, out var customWidth) ? customWidth : 1264,
