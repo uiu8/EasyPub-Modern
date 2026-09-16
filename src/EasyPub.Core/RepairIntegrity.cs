@@ -1,31 +1,151 @@
 namespace EasyPub.Core;
 
+/// <summary>What kind of change one entry of the report describes.</summary>
+public enum RepairChangeKind
+{
+    /// <summary>A volume level was built or rebuilt above the chapters.</summary>
+    RebuiltVolume,
+    /// <summary>A chapter the directory lists was located in the text and recorded.</summary>
+    AddedChapter,
+    /// <summary>An existing chapter took the directory's wording for its title.</summary>
+    RetitledChapter,
+    /// <summary>A heading was folded back into the body; every line of it is kept.</summary>
+    FoldedIntoBody,
+    /// <summary>One of two identical occurrences was dropped from the finished book.</summary>
+    RemovedDuplicate,
+    /// <summary>An entry that is in the tree before but not after, and is not any of the above.</summary>
+    RemovedEntry,
+    /// <summary>Text coverage moved without the entry itself changing.</summary>
+    ReassignedBody,
+    /// <summary>Where the entry sits in the tree moved.</summary>
+    Reordered,
+    /// <summary>Source lines left the finished book; the receipt lists them.</summary>
+    RemovedLines,
+}
+
+/// <summary>
+/// One change to the chapter tree, kept as data rather than a sentence so the confirmation window can
+/// group it. <paramref name="Line"/> is the source line the change is anchored to, and <paramref name="Title"/>
+/// is the entry it names.
+/// </summary>
+public sealed record RepairChange(RepairChangeKind Kind, int Line, string Title, string Detail = "");
+
 /// <summary>Source-line accounting shared by previews, automatic repair and removal receipts.</summary>
 public static class RepairIntegrity
 {
-    public static IReadOnlyList<string> DescribeChanges(IReadOnlyList<ChapterTreeEntry> before, IReadOnlyList<ChapterTreeEntry> after)
+    /// <summary>
+    /// Reads the difference between two trees as structured changes.
+    ///
+    /// Arguments are <b>(after, before)</b> — the new tree first, matching "what changed, against what".
+    /// Getting this the wrong way round reports an addition as a removal, which is exactly the
+    /// confusion this method exists to remove, so the order is stated here on purpose.
+    ///
+    /// Entries are matched by their <c>Id</c> first — the tree keeps an entry's id when an action only
+    /// retitles or moves it. Only when that fails is a structural identity used: a volume by its title,
+    /// anything else by the source line it sits on. That second pass is what the old string-based
+    /// version lacked. Rebuilding a volume level mints a fresh <c>Guid</c> for every volume, so matching
+    /// by id alone reported one volume twice — once as removed, once as added — and on a real
+    /// 385-chapter book that filled most of a 286-line list with six volumes counted twice, under the
+    /// words "移除章节项", which reads as "your text was deleted".
+    /// </summary>
+    public static IReadOnlyList<RepairChange> Describe(
+        IReadOnlyList<ChapterTreeEntry> after, IReadOnlyList<ChapterTreeEntry> before)
     {
-        var changes = new List<string>();
-        var old = before.Select((entry, index) => (entry, index)).ToDictionary(p => p.entry.Id);
-        var remaining = after.Select(e => e.Id).ToHashSet();
-        foreach (var entry in before.Where(e => !remaining.Contains(e.Id))) changes.Add($"移除章节项：{entry.Title}（原文行 {entry.TitleLineNumber}；正文是否移除见下方逐行清单）");
+        var changes = new List<RepairChange>();
+        var old = new Dictionary<string, (ChapterTreeEntry Entry, int Index)>(StringComparer.Ordinal);
+        for (var index = 0; index < before.Count; index++) old[before[index].Id] = (before[index], index);
+        var remaining = new HashSet<string>(after.Select(entry => entry.Id), StringComparer.Ordinal);
+
+        // Structural identity for the entries whose id did not survive, so a rebuilt volume is
+        // recognised as the same volume instead of as a brand new one.
+        var byVolumeTitle = new Dictionary<string, ChapterTreeEntry>(StringComparer.Ordinal);
+        var byLine = new Dictionary<int, ChapterTreeEntry>();
+        foreach (var entry in before)
+        {
+            if (IsVolumeLike(entry.Title)) byVolumeTitle.TryAdd(entry.Title, entry);
+            if (entry.TitleLineNumber is int line && !byLine.ContainsKey(line)) byLine[line] = entry;
+        }
+        var consumed = new HashSet<string>(StringComparer.Ordinal);
+
         for (var index = 0; index < after.Count; index++)
         {
             var entry = after[index];
-            if (!old.TryGetValue(entry.Id, out var prior)) { changes.Add($"新增：{entry.Title}（原文行 {entry.TitleLineNumber}，层级 {entry.Level}）"); continue; }
-            var detail = new List<string>();
-            if (entry.Title != prior.entry.Title) detail.Add($"标题「{prior.entry.Title}」→「{entry.Title}」");
-            if (entry.Level != prior.entry.Level) detail.Add($"层级 {prior.entry.Level}→{entry.Level}");
-            if (index != prior.index) detail.Add($"位置 {prior.index + 1}→{index + 1}");
-            if (!entry.ContentRanges.SequenceEqual(prior.entry.ContentRanges))
-                detail.Add("正文范围 " + string.Join(",", prior.entry.ContentRanges.Select(r => $"{r.StartLine}-{r.EndLine}"))
-                    + " → " + string.Join(",", entry.ContentRanges.Select(r => $"{r.StartLine}-{r.EndLine}")));
-            if (detail.Count > 0) changes.Add(entry.Title + "：" + string.Join("；", detail));
+            if (old.TryGetValue(entry.Id, out var prior))
+            {
+                consumed.Add(prior.Entry.Id);
+                var line = entry.TitleLineNumber ?? prior.Entry.TitleLineNumber ?? 0;
+                if (entry.Title != prior.Entry.Title)
+                    changes.Add(new(RepairChangeKind.RetitledChapter, line, entry.Title, $"原标题「{prior.Entry.Title}」"));
+                else if (entry.Level != prior.Entry.Level)
+                    changes.Add(new(RepairChangeKind.RebuiltVolume, line, entry.Title, $"层级 {prior.Entry.Level}→{entry.Level}"));
+                else
+                {
+                    if (prior.Index != index)
+                        changes.Add(new(RepairChangeKind.Reordered, line, entry.Title, $"位置 {prior.Index + 1}→{index + 1}"));
+                    if (!entry.ContentRanges.SequenceEqual(prior.Entry.ContentRanges))
+                        changes.Add(new(RepairChangeKind.ReassignedBody, line, entry.Title,
+                            "正文范围 " + string.Join(",", prior.Entry.ContentRanges.Select(range => $"{range.StartLine}-{range.EndLine}"))
+                            + " → " + string.Join(",", entry.ContentRanges.Select(range => $"{range.StartLine}-{range.EndLine}"))));
+                }
+                continue;
+            }
+            // The id is gone. A volume keeps its identity by title; anything else by the source line
+            // it sits on, which is what a rebuild preserves even when it renames the entry.
+            if (IsVolumeLike(entry.Title) && byVolumeTitle.TryGetValue(entry.Title, out var rebuilt))
+            {
+                consumed.Add(rebuilt.Id);
+                changes.Add(new(RepairChangeKind.RebuiltVolume, rebuilt.TitleLineNumber ?? 0, entry.Title, "建立卷层级"));
+                continue;
+            }
+            if (entry.TitleLineNumber is int sourceLine && byLine.TryGetValue(sourceLine, out var sameLine)
+                && consumed.Add(sameLine.Id))
+            {
+                changes.Add(sameLine.Title == entry.Title
+                    ? new(RepairChangeKind.ReassignedBody, sourceLine, entry.Title, "同一处标题，章节项已重建")
+                    : new(RepairChangeKind.RetitledChapter, sourceLine, entry.Title, $"原标题「{sameLine.Title}」"));
+                continue;
+            }
+            changes.Add(IsVolumeLike(entry.Title)
+                ? new(RepairChangeKind.RebuiltVolume, entry.TitleLineNumber ?? 0, entry.Title, "建立卷层级")
+                : new(RepairChangeKind.AddedChapter, entry.TitleLineNumber ?? 0, entry.Title, "收录为章节"));
         }
+
+        foreach (var entry in before.Where(entry => !remaining.Contains(entry.Id) && !consumed.Contains(entry.Id)))
+            changes.Add(new(RepairChangeKind.RemovedEntry, entry.TitleLineNumber ?? 0, entry.Title, "从章节树移除"));
+
         var removed = Coverage(before); removed.ExceptWith(Coverage(after));
-        changes.Add($"从成品移除原文 {removed.Count} 行：" + string.Join(",", Ranges(removed).Select(r => $"{r.StartLine}-{r.EndLine}")));
+        if (removed.Count > 0)
+            changes.Add(new(RepairChangeKind.RemovedLines, 0, $"{removed.Count} 行",
+                string.Join(",", Ranges(removed).Select(range => $"{range.StartLine}-{range.EndLine}"))));
         return changes;
     }
+
+    /// <summary>
+    /// A heading that names a volume or a part rather than a chapter. Volume entries are the ones a
+    /// rebuild recreates with new ids, so they need a title-based identity.
+    /// </summary>
+    private static bool IsVolumeLike(string title) =>
+        title.Contains('卷') || title.Contains('部') || title.Contains('篇') || title.Contains('册');
+
+    /// <summary>Legacy sentence-per-change view, kept for the callers that still print a plain list.</summary>
+    public static IReadOnlyList<string> DescribeChanges(
+        IReadOnlyList<ChapterTreeEntry> before, IReadOnlyList<ChapterTreeEntry> after) =>
+        Describe(after, before).Select(change => change.Kind switch
+        {
+            RepairChangeKind.RebuiltVolume when change.Detail.StartsWith("层级", StringComparison.Ordinal) =>
+                $"{change.Title}：{change.Detail}",
+            RepairChangeKind.RebuiltVolume => $"建立卷层级：{change.Title}（原文行 {change.Line}；正文未改动）",
+            RepairChangeKind.AddedChapter => $"新增：{change.Title}（原文行 {change.Line}）",
+            RepairChangeKind.RetitledChapter => $"{change.Title}：{change.Detail}（原文行 {change.Line}）",
+            RepairChangeKind.FoldedIntoBody => $"{change.Title}：并回正文（原文行 {change.Line}；文字全部保留）",
+            RepairChangeKind.RemovedDuplicate => $"移除重复正文：{change.Title}（原文行 {change.Line}；逐行清单见下）",
+            RepairChangeKind.RemovedEntry => $"移除章节项：{change.Title}（原文行 {change.Line}；正文是否移除见下方逐行清单）",
+            RepairChangeKind.ReassignedBody => $"{change.Title}：{change.Detail}",
+            RepairChangeKind.Reordered => $"{change.Title}：{change.Detail}",
+            RepairChangeKind.RemovedLines => $"从成品移除原文 {change.Title}：{change.Detail}",
+            _ => change.Title,
+        }).ToArray();
+
     public static HashSet<int> Coverage(IEnumerable<ChapterTreeEntry> entries)
     {
         var lines = new HashSet<int>();
