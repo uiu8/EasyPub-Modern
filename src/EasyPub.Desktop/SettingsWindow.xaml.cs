@@ -13,6 +13,7 @@ public partial class SettingsWindow : Window
 {
     private readonly Action _manageFavorites;
     private readonly PendingUpdateStore _pendingUpdates = PendingUpdateStore.CreateDefault();
+    private readonly UpdateCheckCacheStore _updateCheckCache = UpdateCheckCacheStore.CreateDefault();
     private IReadOnlyDictionary<string, string> _shortcutBindings;
     private UpdateRelease? _availableRelease;
     private bool _updateReadyToApply;
@@ -205,6 +206,9 @@ public partial class SettingsWindow : Window
         try
         {
             var result = await UpdateChecker.CheckAsync(CurrentVersion);
+            // 手动检查不受节流限制，但结果照样记下来，省掉紧接着的下一次启动请求。
+            if (result.Status is UpdateCheckStatus.UpToDate or UpdateCheckStatus.Available)
+                _updateCheckCache.Save(new UpdateCheckCache(DateTimeOffset.Now, result.Release?.Tag ?? string.Empty));
             UpdateStatusText.Text = result.Message;
             if (result is { Status: UpdateCheckStatus.Available, Release: { } release }) ShowAvailableRelease(release);
             else if (!_updateReadyToApply) UpdateCard.Visibility = Visibility.Collapsed;

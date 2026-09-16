@@ -101,6 +101,7 @@ public partial class MainWindow : Window
     private PublicationMetadata _profileMetadata = new();
     private IReadOnlyDictionary<string, string> _shortcutBindings = new Dictionary<string, string>();
     private readonly PendingUpdateStore _pendingUpdates = PendingUpdateStore.CreateDefault();
+    private readonly UpdateCheckCacheStore _updateCheckCache = UpdateCheckCacheStore.CreateDefault();
     private bool _autoCheckUpdate = true;
     private BatchExecutionControl? _batchExecutionControl;
     private bool _brushSelecting;
@@ -648,16 +649,38 @@ public partial class MainWindow : Window
         try
         {
             var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 0, 0);
-            var result = await UpdateChecker.CheckAsync(current);
-            if (result is not { Status: UpdateCheckStatus.Available, Release: { } release }) return;
             if (_pendingUpdates.LoadReady() is not null) return;   // 已经下载好就等重启，不必重复提示
-            StatusText.Text = $"发现新版本 {EasyPub.Core.AppVersion.Display(release.Version)}；打开「设置 → 更新与关于」可立即更新。";
+
+            // 刚查过就用上次的结果，不再占用那约 60 次/小时的匿名配额。
+            var cached = _updateCheckCache.Load();
+            if (UpdateCheckCacheStore.IsFresh(cached, DateTimeOffset.Now, UpdateCheckCacheStore.DefaultInterval))
+            {
+                AnnounceAvailableUpdate(cached!.LatestTag, current);
+                return;
+            }
+
+            var result = await UpdateChecker.CheckAsync(current);
+            if (result.Status is UpdateCheckStatus.UpToDate or UpdateCheckStatus.Available)
+                _updateCheckCache.Save(new UpdateCheckCache(DateTimeOffset.Now, result.Release?.Tag ?? string.Empty));
+            if (result is { Status: UpdateCheckStatus.Available, Release: { } release })
+                StatusText.Text = DescribeAvailableUpdate(release.Version);
         }
         catch (Exception)
         {
             // 后台检查失败不影响使用，也不打扰用户。
         }
     }
+
+    /// <summary>用缓存里的 tag 提示。解析不出来、或者那个版本并不比当前新，就什么都不说。</summary>
+    private void AnnounceAvailableUpdate(string? tag, Version current)
+    {
+        if (string.IsNullOrWhiteSpace(tag) || !EasyPub.Core.AppVersion.TryParse(tag, out var version)) return;
+        if (version <= EasyPub.Core.AppVersion.Normalize(current)) return;
+        StatusText.Text = DescribeAvailableUpdate(version);
+    }
+
+    private static string DescribeAvailableUpdate(Version version) =>
+        $"发现新版本 {EasyPub.Core.AppVersion.Display(version)}；打开「设置 → 更新与关于」可立即更新。";
 
     private async void MainWindow_Activated(object? sender, EventArgs e) => await RefreshPendingSourceEditsAsync();
 
