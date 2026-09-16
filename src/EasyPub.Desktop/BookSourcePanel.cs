@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -15,6 +16,56 @@ namespace EasyPub.Desktop;
 /// </summary>
 public partial class ChapterEditorWindow
 {
+    /// <summary>
+    /// Shows what one source actually returned, so "this source is usable" can be checked against the
+    /// only thing that matters: the directory it would contribute.
+    /// </summary>
+    private void ShowCatalogPreview(BookSource source, ReferenceCatalog catalog)
+    {
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = $"{source.Name} · 目录预览",
+            Width = 720,
+            Height = 560,
+            MinWidth = 560,
+            MinHeight = 420,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        dialog.SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+        dialog.SetResourceReference(ForegroundProperty, "PrimaryTextBrush");
+        var stack = new StackPanel { Margin = new Thickness(20) };
+        var heading = new TextBlock { FontSize = 16, FontWeight = FontWeights.SemiBold };
+        heading.Text = $"{catalog.Titles.Count} 条目录 · 页面「{catalog.PageTitle}」";
+        stack.Children.Add(heading);
+        var note = new TextBlock
+        {
+            Text = "这是这个源此刻返回的内容，只读公开目录、不下载正文。要看原页面或完成登录，用「浏览器打开」。",
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 12),
+        };
+        note.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+        stack.Children.Add(note);
+        var list = new TextBox
+        {
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Height = 400,
+            // Volumes and chapters in catalog order, exactly as the alignment would read them.
+            Text = string.Join(Environment.NewLine, catalog.Nodes.Select(node => node.Title)),
+        };
+        stack.Children.Add(list);
+        var close = new Button { Content = "关闭", HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0), IsCancel = true, MinWidth = 96 };
+        close.Click += (_, _) => dialog.Close();
+        stack.Children.Add(close);
+        dialog.Content = stack;
+        dialog.ShowDialog();
+    }
+
     private sealed class SourceRow : INotifyPropertyChanged
     {
         private bool _enabled;
@@ -141,10 +192,14 @@ public partial class ChapterEditorWindow
         var up = new Button { Content = "上移" };
         var down = new Button { Content = "下移" };
         var probe = new Button { Content = "检测可用性" };
+        var preview = new Button { Content = "预览目录", ToolTip = "用「检测用书名」在这个源上搜一次，把取到的目录标题列出来。只读公开目录，不下载正文。" };
+        var openSource = new Button { Content = "浏览器打开", ToolTip = "在系统浏览器里打开这个源的搜索页，方便自己核对或完成登录。" };
         var remove = new Button { Content = "删除书源" };
         actions.Children.Add(up);
         actions.Children.Add(down);
         actions.Children.Add(probe);
+        actions.Children.Add(preview);
+        actions.Children.Add(openSource);
         actions.Children.Add(remove);
         actions.Children.Add(new TextBlock { Text = "检测用书名：", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) });
         var sample = new TextBox
@@ -291,6 +346,51 @@ public partial class ChapterEditorWindow
                 status.Text = $"检测完成：{usable}/{rows.Count} 个书源此刻可用。标「受限」的站点能打开但没搜到这本书，不代表站点坏了。";
             }
             finally { probe.IsEnabled = true; }
+        };
+        openSource.Click += (_, _) =>
+        {
+            grid.CommitEdit();
+            if (grid.SelectedItem is not SourceRow row) { status.Text = "请先在列表里选中一个书源。"; return; }
+            var source = row.Source;
+            if (!source.Searchable)
+            {
+                // Fanqie-style sources have no keyword search, only an address template.
+                status.Text = source.Direct
+                    ? $"{source.Name} 不支持按书名搜索，只能直接读取书籍网址或编号：请把网址粘到「目录辅助修复」的「书籍网址」。"
+                    : $"{source.Name} 还没有填写搜索地址，无法打开。";
+                return;
+            }
+            try
+            {
+                var target = ReferenceCatalogClient.BuildSearchUri(source, sample.Text.Trim());
+                Process.Start(new ProcessStartInfo(target.AbsoluteUri) { UseShellExecute = true });
+                status.Text = $"已在浏览器打开 {source.Name} 的搜索页。用它核对这本书是否真的在这个站上；登录也在这里完成。";
+            }
+            catch (Exception ex) { status.Text = "打不开搜索页：" + ex.Message; }
+        };
+        preview.Click += async (_, _) =>
+        {
+            grid.CommitEdit();
+            if (grid.SelectedItem is not SourceRow row) { status.Text = "请先在列表里选中一个书源。"; return; }
+            preview.IsEnabled = false;
+            var name = sample.Text.Trim();
+            status.Text = $"正在用「{name}」在 {row.Source.Name} 上取一次目录…";
+            using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+            try
+            {
+                // The directory itself, not just "reachable": this is the answer to "what would this
+                // source actually give me", which the usability probe never showed.
+                var catalog = await new ReferenceCatalogClient().FetchFromSourceAsync(row.Source, name, lifetime.Token);
+                if (catalog is null)
+                {
+                    status.Text = $"{row.Source.Name} 没有返回可用于这本书的目录。可能是书名不同、站点改版，或该站确实没有这本书。";
+                    return;
+                }
+                status.Text = $"已预览 {row.Source.Name}：{catalog.Titles.Count} 条目录，页面「{catalog.PageTitle}」。";
+                ShowCatalogPreview(row.Source, catalog);
+            }
+            catch (Exception ex) { status.Text = "预览失败：" + ex.Message; }
+            finally { preview.IsEnabled = true; }
         };
         save.Click += async (_, _) =>
         {

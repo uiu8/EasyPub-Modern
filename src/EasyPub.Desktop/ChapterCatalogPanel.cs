@@ -183,7 +183,17 @@ public partial class ChapterEditorWindow
             url.Text = catalog.Source; catalogText.Text = string.Join(Environment.NewLine, catalog.Nodes.Select(n => n.Title));
             var keys = catalog.Titles.Select(UnnumberedHeadings.Key).ToHashSet();
             var matches = Flatten().Count(n => keys.Contains(UnnumberedHeadings.Key(n.Title)));
-            sourceNote.Text = $"来源：{catalog.Source}\n页面：{catalog.PageTitle} · {catalog.Titles.Count} 条目录 · 当前已有标题匹配 {matches} 项。仅供参考，不代表全文完整。";
+            // Naming the sources that were NOT taken. Several sites usually answer, and the repair
+            // silently keeps the largest directory of those within 10% of it
+            // (ReferenceCatalogInput.Pick); without this line "3 sites matched" looked like
+            // "only one site was asked".
+            var others = (sources.ItemsSource as IEnumerable<ReferenceCatalog> ?? [])
+                .Where(candidate => !ReferenceEquals(candidate, catalog)).ToArray();
+            var comparison = others.Length == 0 ? ""
+                : $"\n另有 {others.Length} 份目录未采用（本次只用一份）："
+                  + string.Join("、", others.Take(3).Select(other => $"{HostOf(other.Source)} {other.Titles.Count} 章"))
+                  + (others.Length > 3 ? $" 等 {others.Length} 个" : "") + "。";
+            sourceNote.Text = $"来源：{catalog.Source}\n页面：{catalog.PageTitle} · {catalog.Titles.Count} 条目录 · 当前已有标题匹配 {matches} 项。仅供参考，不代表全文完整。" + comparison;
             try { Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { status.Text = "目录已读取，但未保存：" + ex.Message; }
         };
         auto.Click += async (_, _) => await Network(true); fetch.Click += async (_, _) => await Network(false);
@@ -241,4 +251,8 @@ public partial class ChapterEditorWindow
         dialog.Closed += (_, _) => { lifetime.Cancel(); request?.Cancel(); };
         dialog.ShowDialog(); request?.Dispose();
     }
+
+    /// <summary>Host of a catalog's address, for naming a source the user recognises.</summary>
+    private static string HostOf(string source) =>
+        Uri.TryCreate(source, UriKind.Absolute, out var uri) ? uri.Host : source;
 }

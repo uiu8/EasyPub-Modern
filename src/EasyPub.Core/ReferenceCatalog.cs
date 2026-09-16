@@ -578,6 +578,37 @@ private static readonly Regex QidianVolume = new(
     }
 
     /// <summary>
+    /// One source's directory for one book, for looking at rather than for aligning.
+    ///
+    /// <see cref="DiscoverAsync"/> asks every enabled source and hands back all the candidates, which
+    /// is right for a repair but useless for answering "what does THIS site have?" — the question a
+    /// user asks when a source shows as usable and they want to know what it would actually give them.
+    /// Returns null when the source has nothing for that book; never throws for a single source.
+    /// </summary>
+    public async Task<ReferenceCatalog?> FetchFromSourceAsync(BookSource source, string book, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (string.IsNullOrWhiteSpace(book)) return null;
+        IReadOnlyList<string> candidates;
+        try { candidates = await LocateAsync(source, book.Trim(), token).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or UriFormatException
+            && !token.IsCancellationRequested) { return null; }
+        ReferenceCatalog? best = null;
+        foreach (var url in candidates)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                var catalog = await FetchAsync(url, token, source.Cookie).ConfigureAwait(false);
+                if (best is null || catalog.Titles.Count > best.Titles.Count) best = catalog;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException
+                && !token.IsCancellationRequested) { }
+        }
+        return best;
+    }
+
+    /// <summary>
     /// Candidate book pages for one source: the search hits, or the direct address when the source has
     /// no keyword search but does accept an id (Fanqie).
     /// </summary>
