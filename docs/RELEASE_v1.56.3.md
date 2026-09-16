@@ -77,3 +77,15 @@
 原版本保留。KindleGen 从实际存在的 v1.56.2 产物复制并比对哈希；便携包校验文件条目，不能只凭压缩包体积判断完整性。
 
 证据：`outputs/sidebar-before-v1.56.3.log`、`outputs/desktop-v1.56.3.log`、`outputs/validation-v1.56.3/`。
+
+## 下载
+
+- **便携版（推荐）**：`EasyPubModern-v1.56.3-sidebar-overflow-win-x64.zip`
+  解压到任意目录，运行 `EasyPub.Desktop.exe`，无需安装。
+- **安装版**：`EasyPubModern-Setup-v1.56.3-x64.exe`
+
+从 v1.56.0 或更早版本升级：直接解压覆盖便携版目录，或运行新版安装包即可。
+
+**升级不会丢失已有内容**：设置（`app-settings.json`）、恢复快照（`recovery.easypubproj`）
+和目录缓存都在 `%LOCALAPPDATA%\EasyPub Modern`，与程序目录分离，覆盖程序文件不影响它们。
+从设置页的「打开数据目录」可以直接定位该文件夹。
