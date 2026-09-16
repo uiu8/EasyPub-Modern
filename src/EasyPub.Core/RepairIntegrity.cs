@@ -30,7 +30,29 @@ public enum RepairChangeKind
 /// group it. <paramref name="Line"/> is the source line the change is anchored to, and <paramref name="Title"/>
 /// is the entry it names.
 /// </summary>
-public sealed record RepairChange(RepairChangeKind Kind, int Line, string Title, string Detail = "");
+public sealed record RepairChange(
+    RepairChangeKind Kind, int Line, string Title, string Detail = "", string? ActionKey = null)
+{
+    /// <summary>
+    /// The planned action that caused this change, or null when none did.
+    ///
+    /// Null is not "unknown": a change without an action is one the alignment does by itself, such as
+    /// building a volume level from a numbering restart, and there is nothing to tick or untick for it.
+    /// Which is why the confirmation window can group the changes by the action behind them instead of
+    /// guessing from line numbers — a guess that was wrong exactly where it mattered, on the rows the
+    /// user was being asked to decide about.
+    /// </summary>
+    public string? ActionKey { get; init; } = ActionKey;
+
+    /// <summary>
+    /// The kind of planned action behind this change, or null when the change is one the alignment makes
+    /// by itself. <see cref="Kind"/> alone cannot answer this: an entry leaving the tree is a
+    /// <see cref="RepairChangeKind.RemovedEntry"/> whether the action was "fold this heading back into
+    /// the body" or "drop this duplicate", and the two belong under different headings in the change
+    /// list. The side that knows the action says so here rather than leaving the window to guess.
+    /// </summary>
+    public ReferenceActionKind? ActionKind { get; init; }
+}
 
 /// <summary>Source-line accounting shared by previews, automatic repair and removal receipts.</summary>
 public static class RepairIntegrity
@@ -138,6 +160,74 @@ public static class RepairIntegrity
             changes.Add(new(RepairChangeKind.RemovedLines, 0, $"{removed.Count} 行",
                 string.Join(",", Ranges(removed).Select(range => $"{range.StartLine}-{range.EndLine}"))));
         return changes;
+    }
+
+    /// <summary>
+    /// <see cref="Describe"/> with every change attributed to the planned action that caused it.
+    ///
+    /// The window needs this to be a list of changes the user decides about: a change knows which
+    /// checkbox governs it, and a checkbox knows which changes it would bring about. Working it out in
+    /// the view meant matching changes back to actions by line number, which silently failed — an entry
+    /// the tree folds back into the body is reported on the heading's line while the action that folded
+    /// it sits on the same line under a different title, so rows that should have carried a checkbox
+    /// had none, and ticking the list could not reach them.
+    ///
+    /// Only the kinds an action can actually bring about are attributed. A rebuilt volume, a level
+    /// change or a heading folded back by the alignment itself keeps a null key on purpose: those
+    /// happen whatever the user ticks, and showing them as choices would be a lie.
+    /// </summary>
+    public static IReadOnlyList<RepairChange> DescribeWithActions(
+        ReferencePlan plan, IReadOnlyList<ChapterTreeEntry> after, IReadOnlyList<ChapterTreeEntry> before)
+    {
+        var byLine = plan.Actions.GroupBy(action => action.Line).ToDictionary(group => group.Key, group => group.ToArray());
+        var byTitle = plan.Actions.GroupBy(action => action.Title, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var byKey = plan.Actions.ToDictionary(action => action.Key, StringComparer.Ordinal);
+        return Describe(after, before).Select(change =>
+        {
+            var key = ActionKeyFor(change, byLine, byTitle) ?? change.ActionKey;
+            return change with
+            {
+                ActionKey = key,
+                ActionKind = key is not null && byKey.TryGetValue(key, out var action) ? action.Kind : null,
+            };
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// The action behind one change. Additions and retitles are looked up by title first, because a
+    /// title is what the user reads in both lists; the entry-level kinds are looked up by line, because
+    /// that is the only thing the two views of a rebuilt entry still share. Each lookup demands an
+    /// unambiguous answer — with two candidates claiming a change, no key is better than the wrong one.
+    /// </summary>
+    private static string? ActionKeyFor(RepairChange change,
+        IReadOnlyDictionary<int, ReferenceAction[]> byLine,
+        IReadOnlyDictionary<string, ReferenceAction[]> byTitle)
+    {
+        var kinds = change.Kind switch
+        {
+            RepairChangeKind.AddedChapter => new[] { ReferenceActionKind.AddChapter },
+            RepairChangeKind.RetitledChapter => new[] { ReferenceActionKind.Retitle },
+            // An entry that leaves the tree leaves it for one of three reasons: the directory does not
+            // list it and it was folded back into the body, it is a second copy the directory lists once,
+            // or it was simply dropped. Each of those is an action, and naming the wrong one would tick
+            // the wrong box.
+            RepairChangeKind.FoldedIntoBody or RepairChangeKind.RemovedEntry => new[]
+            {
+                ReferenceActionKind.DemoteExtra, ReferenceActionKind.KeepExtra, ReferenceActionKind.RemoveDuplicate,
+            },
+            RepairChangeKind.RemovedDuplicate => new[] { ReferenceActionKind.RemoveDuplicate },
+            _ => [],
+        };
+        if (kinds.Length == 0) return null;
+        return Single(byTitle.GetValueOrDefault(change.Title), kinds)
+            ?? Single(byLine.GetValueOrDefault(change.Line), kinds);
+    }
+
+    private static string? Single(ReferenceAction[]? candidates, ReferenceActionKind[] kinds)
+    {
+        var matches = candidates?.Where(action => kinds.Contains(action.Kind)).ToArray() ?? [];
+        return matches.Length == 1 ? matches[0].Key : null;
     }
 
     /// <summary>

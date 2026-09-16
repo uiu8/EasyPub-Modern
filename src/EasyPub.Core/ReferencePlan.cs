@@ -23,7 +23,18 @@ public sealed record ReferenceAction(
     string Detail,
     string? EntryId,
     ReferenceNode? Reference,
-    bool Recommended);
+    bool Recommended)
+{
+    /// <summary>
+    /// Stable identity of one planned action, so that a change in the finished tree can say which
+    /// action produced it. The three parts are what the report and the action list already agree on:
+    /// the kind of action, the source line it is anchored to, and the title it names.
+    /// </summary>
+    public string Key => ReferenceAction.KeyOf(Kind, Line, Title);
+
+    public static string KeyOf(ReferenceActionKind kind, int line, string title) =>
+        string.Join('|', kind, line.ToString(System.Globalization.CultureInfo.InvariantCulture), title);
+}
 
 public sealed record ReferencePlan(
     ReferenceCatalog Catalog,

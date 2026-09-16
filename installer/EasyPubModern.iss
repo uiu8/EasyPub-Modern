@@ -1,8 +1,8 @@
 #define AppName "EasyPub Modern"
-#define AppVersion "1.57.3"
+#define AppVersion "1.57.4"
 #define AppPublisher "uiu8"
 #define AppExeName "EasyPub.Desktop.exe"
-#define PublishDir "..\outputs\EasyPubModern-v1.57.3-repair-review-win-x64"
+#define PublishDir "..\outputs\EasyPubModern-v1.57.4-review-fixes-win-x64"
 
 [Setup]
 AppId={{8F564AA1-31F4-4EA5-BFF7-BBD76C35B5F4}

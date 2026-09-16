@@ -68,6 +68,8 @@ public class RepairReviewWindowTests
 
                 var plan = subject.Outcome.Plan!;
                 var boxes = Descendants<CheckBox>(window).ToArray();
+                // Every change the plan can bring about is on screen, with the action behind it, so the
+                // change list itself is what the user decides from — no category has to be opened first.
                 var expectedTotal = subject.Outcome.Report.SelectMany(group => group.Items).Count(item => item.Kind is not null);
                 Assert.Equal(expectedTotal, boxes.Length);
                 Assert.Equal(plan.DefaultSelection.Count(), boxes.Count(box => box.IsChecked == true));
@@ -140,14 +142,20 @@ public class RepairReviewWindowTests
                 var outcome = subject.Outcome;
                 var selection = window.SelectedActions();
                 Assert.Contains($"已对齐 {outcome.AlignedCount} 章", text);
-                Assert.Contains($"{selection.Count(a => a.Kind == ReferenceActionKind.AddChapter)}\n补齐", text);
-                Assert.Contains($"{selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra)}\n处并回", text);
-                Assert.Contains($"{outcome.UnmatchedWithNumber}\n章需你核对", text);
-                Assert.Contains($"{outcome.UnmatchedNoNumber}\n章疑似公告", text);
+                // Read by name: the figure and its caption are separate elements, so pairing them by
+                // string concatenation was only ever a coincidence of how the layout stacked them.
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.AddChapter).ToString(), Stat(window, "补齐"));
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra).ToString(), Stat(window, "处并回"));
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra).ToString(), Stat(window, "处并回"));
+                Assert.Equal(outcome.UnmatchedWithNumber.ToString(), Stat(window, "章需你核对"));
+                Assert.Equal(outcome.UnmatchedNoNumber.ToString(), Stat(window, "章疑似公告"));
 
-                // A category's own rows are drawn, so the wall of titles is behind a click rather than
-                // in front of the numbers.
-                Assert.Contains("标题并回正文", text);
+                // The change list is on the left, in full: every kind of change the repair can make is
+                // named there, so the reader does not have to open categories to find out what changed.
+                var labels = window.CategoryLabels();
+                Assert.Contains("建立卷层级", labels);
+                Assert.Contains("收录章节", labels);
+                Assert.Contains("标题改按目录写法", labels);
 
                 var footer = Named<Panel>(window, "RepairFooterPanel");
                 var footerText = string.Concat(Descendants<TextBlock>(footer).Select(block => block.Text));
@@ -158,12 +166,14 @@ public class RepairReviewWindowTests
                 foreach (var box in Descendants<CheckBox>(window).Where(box => box.IsChecked == true).ToArray())
                     box.IsChecked = false;
                 window.UpdateLayout();
-                var cleared = string.Concat(Descendants<TextBlock>(window).Select(block => block.Text + "\n"));
-                Assert.Contains("0\n补齐", cleared);
-                Assert.Contains("0\n处并回", cleared);
+                Assert.Equal("0", Stat(window, "补齐"));
+                Assert.Equal("0", Stat(window, "处并回"));
                 // The two directory facts are not choices and must survive clearing everything.
-                Assert.Contains($"{outcome.UnmatchedWithNumber}\n章需你核对", cleared);
-                Assert.Contains($"{outcome.UnmatchedNoNumber}\n章疑似公告", cleared);
+                Assert.Equal(outcome.UnmatchedWithNumber.ToString(), Stat(window, "章需你核对"));
+                Assert.Equal(outcome.UnmatchedNoNumber.ToString(), Stat(window, "章疑似公告"));
+                // And the change list says so too, rather than keeping its opening figures.
+                var cleared = string.Concat(Descendants<TextBlock>(window).Select(block => block.Text + "\n"));
+                Assert.Contains("未选任何修改", cleared);
 
                 window.Close();
             }
@@ -214,6 +224,58 @@ public class RepairReviewWindowTests
         if (failure is not null) throw failure;
     }
 
+    /// <summary>
+    /// One figure from the header, found by the name of its block. The number and its caption are
+    /// separate elements, so this reads the number rather than pattern-matching two texts together.
+    /// </summary>
+    private static string Stat(DependencyObject window, string label)
+    {
+        var block = Named<Panel>(window, "Stat_" + label);
+        return Descendants<TextBlock>(block).First().Text;
+    }
+
+    [Fact]
+    public async Task A_group_the_alignment_does_by_itself_shows_a_count_not_a_fraction()
+    {
+        var subject = await RepairOutcomeAsync();
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = Build(subject);
+                window.ShowInTaskbar = false;
+                window.WindowStyle = WindowStyle.None;
+                window.Opacity = 0;
+                window.Show();
+                window.UpdateLayout();
+
+                var list = Named<Panel>(window, "RepairCategoryList");
+                var examined = 0;
+                foreach (var group in list.Children.OfType<Panel>())
+                {
+                    if (group.Children.Count < 2 || group.Children[0] is not Border header || group.Children[1] is not Panel body) continue;
+                    var texts = Descendants<TextBlock>((Grid)header.Child).Select(block => block.Text).ToArray();
+                    var count = texts.LastOrDefault() ?? "";
+                    var tickable = Descendants<CheckBox>(body).Any();
+                    if (tickable || count.Length == 0 || count == "0") continue;
+                    examined++;
+                    // "0/2" beside the automatic volume level reads as "none of these will happen", when
+                    // in fact both of them will: there is no box to tick, so there is no fraction to show.
+                    Assert.DoesNotContain("/", count);
+                }
+                Assert.True(examined > 0, "没有检查到任何「自动」类分组，测试没有实际断言");
+
+                window.Close();
+            }
+            catch (Exception ex) { failure = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "窗口线程没有在 30 秒内结束");
+        if (failure is not null) throw failure;
+    }
+
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         var count = VisualTreeHelper.GetChildrenCount(root);
@@ -222,6 +284,21 @@ public class RepairReviewWindowTests
             var child = VisualTreeHelper.GetChild(root, index);
             if (child is T match) yield return match;
             foreach (var nested in Descendants<T>(child)) yield return nested;
+        }
+    }
+
+    /// <summary>
+    /// The same walk over the logical tree. The list of changes is deep — a group inside a scroller
+    /// inside a grid — and whether WPF has realised every nested panel in the visual tree at the moment
+    /// a test looks is not what these tests are about; the content is.
+    /// </summary>
+    private static IEnumerable<T> LogicalDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is not DependencyObject node) continue;
+            if (node is T match) yield return match;
+            foreach (var nested in LogicalDescendants<T>(node)) yield return nested;
         }
     }
 }
