@@ -59,21 +59,36 @@ function Invoke-AtomGit([string]$Uri, [string]$Method = 'Get', $Body = $null) {
     catch { throw (Hide-Token $_.Exception.Message) }
 }
 
-# ---- 1) 仓库可达性与重复发布检查 --------------------------------------------
+# ---- 1) 仓库可达性与续做检查 ------------------------------------------------
+# AtomGit 的 release 删不掉（DELETE 返回 405），所以这里既不能盲目重发，也不能因为
+# "已经存在"就整体退出：创建和上传是两步，中间断掉会留下一个没有附件的 release，
+# 而那个 release 又永远删不掉。缺哪个补哪个。
 Write-Host "目标：AtomGit $Owner/$Repository  版本 $tag"
 $existing = $null
 try { $existing = Invoke-AtomGit "$api/releases/tags/$tag" } catch { $existing = $null }
-if ($existing) { throw "$tag 在 AtomGit 上已经存在，不重复发布。" }
 
-# ---- 2) 创建 Release --------------------------------------------------------
-$payload = @{
-    tag_name       = $tag
-    name           = "EasyPub Modern $Version"
-    body           = (Get-Content $notes -Raw)
-    release_status = 'latest'
-} | ConvertTo-Json -Depth 3
-$release = Invoke-AtomGit "$api/releases" 'Post' $payload
-Write-Host "Release 已创建：$tag（release_status=$($release.release_status)）"
+if ($existing) {
+    Write-Host "$tag 已存在，改为续做：只补传缺少的附件。"
+    $present = @($existing.assets | Where-Object { $_.type -eq 'attach' } | ForEach-Object { $_.name })
+    $files = @($files | Where-Object { $present -notcontains (Split-Path $_ -Leaf) })
+    if ($files.Count -eq 0) {
+        Write-Host "两个附件都已存在，无需上传。"
+        Write-Host "远端地址：$api/releases/tag/$tag"
+        exit 0
+    }
+    Write-Host "待补传：$($files -join '、')"
+}
+else {
+    # ---- 2) 创建 Release ----------------------------------------------------
+    $payload = @{
+        tag_name       = $tag
+        name           = "EasyPub Modern $Version"
+        body           = (Get-Content $notes -Raw)
+        release_status = 'latest'
+    } | ConvertTo-Json -Depth 3
+    $release = Invoke-AtomGit "$api/releases" 'Post' $payload
+    Write-Host "Release 已创建：$tag（release_status=$($release.release_status)）"
+}
 
 # ---- 3) 逐个上传附件 --------------------------------------------------------
 foreach ($file in $files) {

@@ -47,16 +47,49 @@ pwsh tools/publish-atomgit.ps1 -Version 1.57.3 -Codename some-change
 
 1. **AtomGit 上的 release 删不掉。** `DELETE /releases/{tag}` 返回 405，响应里也没有文档声称的
    `id` 字段。也就是说发出去就收不回来——**发之前务必确认版本号**，别指望像 GitHub 那样
-   发错了删掉重发。脚本因此会在创建前先查一次，重复版本直接拒绝。
+   发错了删掉重发。
+
+   既然删不掉，脚本就不能"发现已存在就整体退出"：创建与上传是两步，中间断掉会留下一个
+   **没有附件、又永远删不掉**的 release。所以 `publish-atomgit.ps1` 是**幂等**的——查到版本号
+   已存在时转入续做，只补传缺失的附件，已存在的不重传。这样「首次发布」和「中断后补传」
+   是同一段代码，v1.57.3 的发布实测了这两条路。
 2. **附件上传是两步**：先 `GET .../releases/{tag}/upload_url?file_name=...` 拿到预签名地址和
    一组必需请求头，再用 `PUT` 传文件（实际落在 `file.gitcode.com`）。
 3. **assets 里混着四个平台自动生成的源码包**（`type=source`），必须靠 `type` 过滤，
-   否则回校验会数错附件个数。
+   否则回校验会数错附件个数。这四个源码包的 `browser_download_url` 指向
+   `refs/heads/<tag>`，看着像分支归档，不要当成发布包。
+
+### 镜像仓库期间不能建 release（暂时性的，会自己恢复）
+
+若看到：
+
+```
+400 {"error_code_name":"UN_KNOW",
+     "error_message":"gitcode: this operation is not allowed because the repository is an image repository."}
+```
+
+含义是**这个仓库当时被平台当作镜像仓库**（多半是仓库设置里配了 Pull 镜像，见
+[仓库镜像](https://docs.gitcode.com/docs/help/home/org_project/project_manage/project_settings/repository_mirroring/)；
+Pull 镜像会把 GitHub 的分支/标签同步过来，并覆盖本地代码）。
+
+**关键：这个限制是暂时性的，不要据此判定"AtomGit 发不了"。** v1.57.3 实测的经过是：
+
+1. 首次 `publish-atomgit.ps1` → 上述 400。当时最小 payload（仅 `tag_name`）也是 400，
+   但同一令牌 `GET /releases/latest` 返回 200，说明不是凭据、不是请求体、不是脚本。
+2. 期间仓库**没有任何配置改动**。
+3. 约 20 分钟后重试 → `HTTP 200` 创建成功，随后续做上传与回校验全部通过。
+
+所以更可能是镜像同步任务执行期间对仓库加了临时写锁。**遇到 400 先等一会儿重试**，
+再去翻仓库的镜像设置。判断依据可以看 AtomGit 上的 tag 是否落后于 GitHub：
+落后说明同步在跑，符合这个场景。
 
 ### 两边不一致会怎样
 
 客户端不做"跨源比版本取最高"，主源能通时它就是权威。所以**忘了同步 AtomGit** 的后果是：
 国内用户看到的是旧版本，而 GitHub 用户正常。发完版顺手跑一下同步脚本就行。
+
+AtomGit 的附件**不提供 size 字段**，客户端读到的资产大小是 0，因此这条路上无法比对字节数
+（GitHub 那条有 size，但也只比字节数、没比 SHA-256）。
 
 ## 网络
 
