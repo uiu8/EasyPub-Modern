@@ -8,7 +8,16 @@ namespace EasyPub.Core;
 /// was never located, or a volume that was only described.
 /// </summary>
 public sealed record RepairReportItem(int Line, string Title, string Detail,
-    ReferenceActionKind? Kind = null, bool Recommended = false);
+    ReferenceActionKind? Kind = null, bool Recommended = false)
+{
+    /// <summary>
+    /// True for a row the repair performs as part of aligning, rather than one the user picks: the
+    /// volume level is built from the reference structure inside the alignment pass itself, so there
+    /// is nothing to tick — but leaving it out of the account entirely made "what will happen" and
+    /// "what changed" disagree, which is how a reader ends up staring at 286 unexplained changes.
+    /// </summary>
+    public bool Automatic { get; init; }
+}
 
 /// <summary>
 /// One reference entry the repair did not locate in the text, carried with the reason it is worth a
@@ -374,7 +383,12 @@ public static class ChapterAutoRepair
         var spans = VolumeSpans(rebuilt);
         if (spans.Count > 0)
             groups.Add(new("建立卷层级", spans.Count, "卷",
-                string.Join(" · ", spans.Select(span => $"{span.Title} {span.First}–{span.Last}")), []));
+                string.Join(" · ", spans.Select(span => $"{span.Title} {span.First}–{span.Last}")),
+                // Listed one by one so the account of "what will happen" matches the account of
+                // "what changed". They carry no checkbox: the volume level is built inside the
+                // alignment pass, so Automatic marks them as done-with-this-repair rather than chosen.
+                spans.Select(span => new RepairReportItem(span.First, span.Title,
+                    $"{span.First}–{span.Last}　随对齐自动建立") { Automatic = true }).ToArray()));
 
         // Two groups, not one. An entry the directory numbered but the text does not show is a chapter
         // worth looking for; an entry it never numbered is usually a leave notice the aggregator

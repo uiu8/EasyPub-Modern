@@ -5,6 +5,8 @@ public enum RepairChangeKind
 {
     /// <summary>A volume level was built or rebuilt above the chapters.</summary>
     RebuiltVolume,
+    /// <summary>A chapter moved under a volume, or back out of one.</summary>
+    ChangedLevel,
     /// <summary>A chapter the directory lists was located in the text and recorded.</summary>
     AddedChapter,
     /// <summary>An existing chapter took the directory's wording for its title.</summary>
@@ -89,7 +91,7 @@ public static class RepairIntegrity
                 if (entry.Title != prior.Entry.Title)
                     changes.Add(new(RepairChangeKind.RetitledChapter, line, entry.Title, $"原标题「{prior.Entry.Title}」"));
                 else if (entry.Level != prior.Entry.Level)
-                    changes.Add(new(RepairChangeKind.RebuiltVolume, line, entry.Title, $"层级 {prior.Entry.Level}→{entry.Level}"));
+                    changes.Add(new(RepairChangeKind.ChangedLevel, line, entry.Title, $"层级 {prior.Entry.Level}→{entry.Level}"));
                 else
                 {
                     if (prior.Index != index)
@@ -106,7 +108,12 @@ public static class RepairIntegrity
             if (IsVolumeLike(entry.Title) && byVolumeTitle.TryGetValue(entry.Title, out var rebuilt))
             {
                 consumed.Add(rebuilt.Id);
-                changes.Add(new(RepairChangeKind.RebuiltVolume, rebuilt.TitleLineNumber ?? 0, entry.Title, "建立卷层级"));
+                // A volume whose level moved is a re-level, not a new volume: keeping the two apart is
+                // what lets the summary say "建立卷层级 2 个" instead of counting every chapter that
+                // merely moved under one.
+                changes.Add(rebuilt.Level == entry.Level
+                    ? new(RepairChangeKind.RebuiltVolume, rebuilt.TitleLineNumber ?? 0, entry.Title, "建立卷层级")
+                    : new(RepairChangeKind.ChangedLevel, rebuilt.TitleLineNumber ?? 0, entry.Title, $"层级 {rebuilt.Level}→{entry.Level}"));
                 continue;
             }
             if (entry.TitleLineNumber is int sourceLine && byLine.TryGetValue(sourceLine, out var sameLine)
@@ -148,6 +155,7 @@ public static class RepairIntegrity
             RepairChangeKind.RebuiltVolume when change.Detail.StartsWith("层级", StringComparison.Ordinal) =>
                 $"{change.Title}：{change.Detail}",
             RepairChangeKind.RebuiltVolume => $"建立卷层级：{change.Title}（原文行 {change.Line}；正文未改动）",
+            RepairChangeKind.ChangedLevel => $"{change.Title}：{change.Detail}（原文行 {change.Line}）",
             RepairChangeKind.AddedChapter => $"新增：{change.Title}（原文行 {change.Line}）",
             RepairChangeKind.RetitledChapter => $"{change.Title}：{change.Detail}（原文行 {change.Line}）",
             RepairChangeKind.FoldedIntoBody => $"{change.Title}：并回正文（原文行 {change.Line}；文字全部保留）",

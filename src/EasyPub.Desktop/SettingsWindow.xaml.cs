@@ -43,6 +43,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         Loaded += (_, _) => ThemeManager.Apply(theme, this);
+        MakeUpdateSectionScrollable();
         _manageFavorites = manageFavorites;
         _shortcutBindings = new Dictionary<string, string>(shortcutBindings, StringComparer.OrdinalIgnoreCase);
         SelectByTag(ThemeCombo, theme);
@@ -93,6 +94,30 @@ public partial class SettingsWindow : Window
     public bool AutoOpenOutputDirectory => AutoOpenOutputSettingsCheck.IsChecked == true;
     public bool AutoCheckUpdate => AutoCheckUpdateCheck.IsChecked == true;
     public IReadOnlyDictionary<string, string> ShortcutBindings => _shortcutBindings;
+    /// <summary>
+    /// Lets the update page scroll. The window is a fixed 780 high with no scrolling anywhere, and
+    /// <c>UpdateCard</c> expands only once a release is found — release notes, a progress bar and the
+    /// install button all appear at that moment, pushing the button past the bottom edge where the
+    /// TabControl clips it and nothing can scroll it back.
+    ///
+    /// Wrapped here rather than in XAML because only this page is known to fit its own height; the
+    /// others lay themselves out with star-sized rows, which a ScrollViewer would squash.
+    /// </summary>
+    private void MakeUpdateSectionScrollable()
+    {
+        if (UpdateSectionPanel.Parent is not Panel host) return;
+        var index = host.Children.IndexOf(UpdateSectionPanel);
+        if (index < 0) return;
+        host.Children.RemoveAt(index);
+        host.Children.Insert(index, new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Focusable = false,
+            Content = UpdateSectionPanel,
+        });
+    }
+
     public int SelectedSection
     {
         get => SettingsTabs.SelectedIndex;

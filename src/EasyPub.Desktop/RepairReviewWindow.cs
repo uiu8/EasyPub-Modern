@@ -397,6 +397,7 @@ public sealed class RepairReviewWindow : Window
         return kind switch
         {
             RepairChangeKind.RebuiltVolume => $"建立卷层级{many} 个{example}",
+            RepairChangeKind.ChangedLevel => $"章节归入卷层级{many} 章{example}",
             RepairChangeKind.AddedChapter => $"收录章节{many} 章{example}",
             RepairChangeKind.RetitledChapter => $"标题改按目录写法{many} 章{example}",
             RepairChangeKind.FoldedIntoBody => $"标题并回正文{many} 处（文字全部保留）{example}",
@@ -414,6 +415,7 @@ public sealed class RepairReviewWindow : Window
     private static string DescribeOne(RepairChange change) => change.Kind switch
     {
         RepairChangeKind.RebuiltVolume => $"{change.Title}　{change.Detail}" + (change.Line > 0 ? $"（原文行 {change.Line}）" : ""),
+        RepairChangeKind.ChangedLevel => $"{change.Title}　{change.Detail}" + (change.Line > 0 ? $"（原文行 {change.Line}）" : ""),
         RepairChangeKind.AddedChapter => $"{change.Title}（原文行 {change.Line}）",
         RepairChangeKind.RetitledChapter => $"{change.Title}　{change.Detail}（原文行 {change.Line}）",
         RepairChangeKind.RemovedLines => $"移除原文 {change.Title}：{change.Detail}",
@@ -491,7 +493,24 @@ public sealed class RepairReviewWindow : Window
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        if (selectable && row.Action is not null)
+        if (row.Item.Automatic)
+        {
+            // Done as part of the alignment, so there is nothing to tick. Saying so is the point:
+            // this row used to be missing altogether, which is how the volumes the repair built ended
+            // up in the change list with no matching entry here.
+            var marker = new TextBlock
+            {
+                Text = "自动",
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0),
+                Opacity = 0.8,
+            };
+            marker.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+            Grid.SetColumn(marker, 0);
+            grid.Children.Add(marker);
+        }
+        else if (selectable && row.Action is not null)
         {
             var box = new CheckBox
             {

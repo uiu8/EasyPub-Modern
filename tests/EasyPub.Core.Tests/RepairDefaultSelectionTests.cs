@@ -45,6 +45,23 @@ public class RepairDefaultSelectionTests
     }
 
     [Fact]
+    public async Task A_safe_duplicate_is_preselected_because_its_text_is_identical()
+    {
+        // The other half of "select everything safe": a duplicate whose body matches word for word is
+        // something the software can decide, unlike the differing-body case below.
+        var document = await DocumentAsync(
+            "第一章 开始\n这是第一章的正文。\n\n第二章 继续\n完全相同的正文\n\n第二章 继续\n完全相同的正文\n\n第三章 结束\n尾声\n");
+        var plan = ReferencePlanner.Build(document, document.Entries,
+            ReferenceCatalogInput.ParseText("第一章 开始\n第二章 继续\n第三章 结束")!);
+
+        var duplicates = plan.Actions.Where(action => action.Kind == ReferenceActionKind.RemoveDuplicate).ToArray();
+        Assert.NotEmpty(duplicates);
+        var safe = duplicates.Where(action => action.Recommended).ToArray();
+        Assert.NotEmpty(safe);
+        Assert.All(safe, action => Assert.Contains(action, plan.DefaultSelection));
+    }
+
+    [Fact]
     public async Task A_chapter_the_user_edited_by_hand_is_never_preselected()
     {
         var document = await DocumentAsync("第一章 起点\n这是第一章的正文。\n第二章 继续\n这是第二章的正文。\n");

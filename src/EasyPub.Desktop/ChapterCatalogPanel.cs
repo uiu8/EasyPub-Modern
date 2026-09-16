@@ -124,7 +124,16 @@ public partial class ChapterEditorWindow
         try
         {
             if (ReferenceCatalogInput.Load(_document.SourceSha256) is { } saved)
-            { query.Text = saved.Query; url.Text = saved.Url; catalogText.Text = saved.Text; minimum.Text = saved.MinimumLines.ToString(); }
+            {
+                // A saved record is allowed to carry an empty query: SaveCatalog's parameter defaults
+                // to "" and two callers (the one-click repair, and applying from the reference panel)
+                // do not pass one. Assigning it unconditionally wiped the book name the box was seeded
+                // with, so it came up blank for anyone who had ever saved a directory.
+                query.Text = string.IsNullOrWhiteSpace(saved.Query)
+                    ? ChapterAutoRepair.ExtractBookName(_document.SourcePath)
+                    : saved.Query;
+                url.Text = saved.Url; catalogText.Text = saved.Text; minimum.Text = saved.MinimumLines.ToString();
+            }
         }
         catch (Exception ex) when (ex is IOException or JsonException) { status.Text = "已保存目录无法读取，可重新获取或导入。"; }
         using var lifetime = new CancellationTokenSource();
