@@ -583,7 +583,7 @@ public partial class MainWindow : Window
         ThemeManager.Apply(_theme, this);
         ApplyMotionSettings();
         var compact = string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase);
-        SidebarColumn.Width = new GridLength(ActualWidth < 1280 ? 132 : compact ? 166 : 184);
+        SidebarColumn.Width = new GridLength(ActualWidth < 1280 ? 132 : compact ? 176 : 184);
         foreach (var button in new[] { LibraryNavigationButton, ChaptersNavigationButton, CoverNavigationButton, LayoutNavigationButton, ConvertNavigationButton, TasksNavigationButton })
             button.Height = compact ? 42 : 48;
         FontSize = Math.Clamp(12d * _uiScalePercent / 100d, 10.5, 15);
@@ -4292,7 +4292,7 @@ public partial class MainWindow : Window
         PreviewBookButton.Content = compact ? "预览" : "近似预览";
         TaskCenterButton.Content = compact ? "任务" : "任务中心";
         SettingsButton.Content = compact ? string.Empty : "设置";
-        SidebarColumn.Width = new GridLength(compact ? 132 : string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase) ? 166 : 184);
+        SidebarColumn.Width = new GridLength(compact ? 132 : string.Equals(_uiDensity, "Compact", StringComparison.OrdinalIgnoreCase) ? 176 : 184);
         SidebarPanel.Padding = compact ? new Thickness(7) : new Thickness(10);
         LibraryNavigationButton.Content = compact ? "1 导入" : "1  导入书稿";
         ReviewNavigationButton.Content = compact ? "2 检查" : "2  检查与修复";

@@ -17,6 +17,33 @@ namespace EasyPub.Desktop.Tests;
 
 public sealed class MainWindowLayoutTests
 {
+    [Theory]
+    [InlineData(1040, "Comfortable")]
+    [InlineData(1280, "Compact")]
+    [InlineData(1440, "Comfortable")]
+    public void Sidebar_navigation_text_fits_inside_its_button(double width, string density)
+    {
+        RunInWindow(window =>
+        {
+            window.Width = width;
+            typeof(MainWindow).GetField("_uiDensity", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, density);
+            typeof(MainWindow).GetMethod("ApplyAppearanceSettings", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
+            window.UpdateLayout();
+            var capture = Environment.GetEnvironmentVariable("EASYPUB_WORKFLOW_CAPTURE_PATH");
+            if (!string.IsNullOrWhiteSpace(capture))
+                CaptureWindowVisual(window, Path.Combine(Path.GetDirectoryName(capture)!, $"sidebar-{width}-{density}.png"));
+            foreach (var name in new[] { "LibraryNavigationButton", "ReviewNavigationButton", "LayoutNavigationButton", "ConvertNavigationButton", "TasksNavigationButton" })
+            {
+                var button = (RadioButton)window.FindName(name);
+                var label = FindVisualDescendants<TextBlock>(button).Single(t => t.Text == (string)button.Content);
+                var bounds = label.TransformToAncestor(button).TransformBounds(new Rect(label.RenderSize));
+                Assert.True(bounds.Right <= button.ActualWidth - button.Padding.Right + 0.5,
+                    $"{name}: text right={bounds.Right:F1}, available={button.ActualWidth - button.Padding.Right:F1}, width={width}, density={density}");
+                Assert.True(bounds.Top >= 0 && bounds.Bottom <= button.ActualHeight + 0.5, $"{name}: vertical clipping");
+            }
+        });
+    }
+
     private readonly ITestOutputHelper _output;
 
     public MainWindowLayoutTests(ITestOutputHelper output) => _output = output;
