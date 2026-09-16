@@ -48,6 +48,26 @@
   裁切原图与取色后确认是缩放错觉，不是缺陷。
 - 复现：`work/settings-scroll/`（Git 忽略）离线渲染探针，参数为「输出目录 宽 高 主题」。
 
+### 这条验收已固化成断言
+
+`Unified_conversion_settings_exposes_five_categories_without_advanced_expanders` 现在还会把
+「基本输出」滚到底，断言最后一行下方留白 ≥ 32px，并断言底栏与内容区不重叠。
+
+断言**有效性已验证**：把底部留白临时改回 16px 时它失败（实测 26.0px），恢复 40px 后通过——
+不是一条永远通过的断言。
+
+> 只测默认选中的那一栏。逐栏切换会多出约 700ms 负载，把下面那条 16ms 性能断言挤出预算。
+
+### 一处既有的不稳定（不是本次引入）
+
+`ChapterBatchTests.Filter_switch_is_responsive_for_a_large_chapter_tree` 的
+「待核对点击处理耗时 < 16ms」在 123 项并行时**偶发失败**，实测 16–21ms。
+
+- 含本次改动的 4 次运行：2 次失败；**不含本次改动的基线连跑 3 次也有 2 次失败**（一次是 2 项失败）。
+- 单独重跑通过（916ms）；失败值卡在 16ms 整数边界，属于测量边缘。
+- 这是**既有问题，不是回归**。也**不要**为了让套件变绿放宽 16ms 预算——那是用户点击的响应要求。
+  复核布局/性能时以单测重跑为准，和 Core 侧 `LongTextPerformanceTests`（400ms 预算）同类。
+
 ## 交付
 
 - `outputs/EasyPubModern-v1.56.3-sidebar-overflow-win-x64/EasyPub.Desktop.exe`

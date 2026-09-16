@@ -1408,6 +1408,30 @@ public sealed class MainWindowLayoutTests
                     CaptureWindowVisual(window, tabCapturePath);
                 }
             }
+
+            // 滚到底：最后一行必须完整落在视口内，底部留白不得退回到紧贴底栏。
+            // 只测默认选中的「基本输出」——它正是需要滚动、也最常被看的一栏；各分类的
+            // ScrollViewer 结构相同，逐栏切换会把并行的性能断言挤出 16ms 预算。
+            tabs.SelectedIndex = 0;
+            window.UpdateLayout();
+            var scroll = FindVisualDescendants<ScrollViewer>(tabs).FirstOrDefault(view => view.Content is Panel);
+            Assert.True(scroll is not null, "转换设置面板找不到分类内容的 ScrollViewer");
+            scroll!.ScrollToEnd();
+            window.UpdateLayout();
+            var rows = (Panel)scroll.Content;
+            var last = (FrameworkElement)rows.Children[rows.Children.Count - 1];
+            var bounds = last.TransformToAncestor(scroll).TransformBounds(new Rect(last.RenderSize));
+            var gap = scroll.ViewportHeight - bounds.Bottom;
+            Assert.True(gap >= 32,
+                $"滚到底后最后一行下方只剩 {gap:F1}px（内容高 {scroll.ExtentHeight:F1}，视口 {scroll.ViewportHeight:F1}）");
+
+            // 底栏在独立 Grid 行，任何情况下都不能与内容区重叠。
+            var footer = FindVisualDescendants<Border>(settings)
+                .First(border => VisualTreeHelper.GetParent(border) is Grid grid && Grid.GetRow(border) == 2);
+            var tabArea = tabs.TransformToAncestor(settings).TransformBounds(new Rect(tabs.RenderSize));
+            var footerArea = footer.TransformToAncestor(settings).TransformBounds(new Rect(footer.RenderSize));
+            Assert.True(tabArea.Bottom <= footerArea.Top + 0.5,
+                $"转换设置底栏与内容区重叠：内容区底 {tabArea.Bottom:F1}，底栏顶 {footerArea.Top:F1}");
         });
     }
 
