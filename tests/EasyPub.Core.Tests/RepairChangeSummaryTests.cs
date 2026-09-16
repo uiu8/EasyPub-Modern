@@ -94,6 +94,22 @@ public class RepairChangeSummaryTests
         Assert.Contains(lines, line => line.StartsWith("新增：第3章 收网", StringComparison.Ordinal));
     }
     [Fact]
+    public async Task Rebuilt_front_matter_is_not_reported_as_a_deleted_preface()
+    {
+        // The preface also gets a fresh id whenever the tree is rebuilt, so a naive diff announces
+        // "移除章节项：序" — which reads as the preface having been deleted, when only its body range
+        // was reassigned.
+        var document = await DocumentAsync("序\n这是前言。\n第1章 开始\n这是第一章的正文内容。\n第2章 继续\n这是第二章的正文内容。\n");
+        var outcome = ChapterAutoRepair.Prepare(document, ReferenceCatalogInput.ParseText("第1章 开始\n第2章 继续")!);
+        Assert.NotNull(outcome.Entries);
+        Assert.Contains(document.Entries, entry => entry.IsFrontMatter);
+
+        var changes = RepairIntegrity.Describe(outcome.Entries!, document.Entries);
+        Assert.DoesNotContain(changes, change => change.Kind == RepairChangeKind.RemovedEntry);
+        Assert.DoesNotContain(changes, change => change.Kind == RepairChangeKind.AddedChapter && change.Title == "序");
+    }
+
+    [Fact]
     public async Task The_change_list_never_claims_a_number_it_cannot_back_up()
     {
         var document = await DocumentAsync(

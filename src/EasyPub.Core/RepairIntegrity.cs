@@ -67,9 +67,21 @@ public static class RepairIntegrity
         }
         var consumed = new HashSet<string>(StringComparer.Ordinal);
 
+        // Front matter is rebuilt with a fresh id on every pass too (ReferencePlan.cs:207), and it is
+        // not something the user chose to remove — its body is simply reassigned. Reporting it as a
+        // removed entry would read as "your preface was deleted", so it is claimed up front.
+        var frontBefore = before.FirstOrDefault(entry => entry.IsFrontMatter);
+        var frontAfter = after.FirstOrDefault(entry => entry.IsFrontMatter);
+        if (frontBefore is not null && frontAfter is not null)
+        {
+            consumed.Add(frontBefore.Id);
+            remaining.Remove(frontAfter.Id);
+        }
+
         for (var index = 0; index < after.Count; index++)
         {
             var entry = after[index];
+            if (entry.IsFrontMatter) continue;
             if (old.TryGetValue(entry.Id, out var prior))
             {
                 consumed.Add(prior.Entry.Id);
@@ -110,7 +122,8 @@ public static class RepairIntegrity
                 : new(RepairChangeKind.AddedChapter, entry.TitleLineNumber ?? 0, entry.Title, "收录为章节"));
         }
 
-        foreach (var entry in before.Where(entry => !remaining.Contains(entry.Id) && !consumed.Contains(entry.Id)))
+        foreach (var entry in before.Where(entry => !entry.IsFrontMatter
+                     && !remaining.Contains(entry.Id) && !consumed.Contains(entry.Id)))
             changes.Add(new(RepairChangeKind.RemovedEntry, entry.TitleLineNumber ?? 0, entry.Title, "从章节树移除"));
 
         var removed = Coverage(before); removed.ExceptWith(Coverage(after));

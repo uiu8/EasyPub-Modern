@@ -26,11 +26,13 @@ public sealed class RepairReviewWindow : Window
 
     private readonly AutoRepairOutcome _outcome;
     private readonly IReadOnlyList<ChapterTreeEntry> _before;
+    private readonly ChapterTreeDocument? _previewDocument;
     private readonly Action<IReadOnlyCollection<ReferenceAction>> _apply;
     private readonly List<CategoryView> _categories = [];
     private readonly List<StatView> _stats = [];
     private readonly TextBlock _summaryTitle = new() { FontSize = 17, FontWeight = FontWeights.SemiBold };
     private readonly TextBlock _summaryDetail = new() { FontSize = 12.5, Margin = new Thickness(0, 6, 0, 0) };
+    private Panel _changePanel = null!;
 
     private Panel _categoryList = null!;
     private ScrollViewer _detail = null!;
@@ -42,11 +44,12 @@ public sealed class RepairReviewWindow : Window
     private int _selectedCategory;
 
     public RepairReviewWindow(AutoRepairOutcome outcome, IReadOnlyList<ChapterTreeEntry> before,
-        Action<IReadOnlyCollection<ReferenceAction>> apply)
+        Action<IReadOnlyCollection<ReferenceAction>> apply, ChapterTreeDocument? previewDocument = null)
     {
         _outcome = outcome;
         _before = before;
         _apply = apply;
+        _previewDocument = previewDocument;
         Title = "目录修复 · 核对后应用";
         Name = "RepairReviewWindow";
         Width = 980;
@@ -153,6 +156,7 @@ public sealed class RepairReviewWindow : Window
     private UIElement BuildPanes()
     {
         _categoryList = BuildCategoryList();
+        _changePanel = new StackPanel { Margin = new Thickness(0, 18, 0, 0), Name = "RepairChangeList" };
         _detail = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -298,7 +302,7 @@ public sealed class RepairReviewWindow : Window
         stack.Children.Add(blurb);
         _detailItems = new StackPanel();
         stack.Children.Add(_detailItems);
-        stack.Children.Add(BuildChangeList());
+        stack.Children.Add(_changePanel);
         return stack;
     }
 
@@ -317,36 +321,125 @@ public sealed class RepairReviewWindow : Window
     }
 
     /// <summary>
-    /// The plain account of what the tree becomes, item by item. The old window appended this after
-    /// every chapter title it had, which is exactly why nobody reached it; it is now a section of its
-    /// own at the end of the detail pane, so it scrolls with the category it belongs to.
+    /// What the tree becomes, grouped by the kind of change and summed up.
+    ///
+    /// The old window printed one line per entry and appended it after every chapter title it had,
+    /// which is how a real book reached 286 lines — most of them the same six volumes reported as a
+    /// removal and an addition each. Counting by kind turns that into a handful of rows a reader can
+    /// take in at once, with the full list one click away for anyone who wants to check a line.
     /// </summary>
-    private UIElement BuildChangeList()
+    private void BuildChangeList()
     {
-        var changes = RepairIntegrity.DescribeChanges(_before, _outcome.Entries ?? _before);
-        var stack = new StackPanel { Margin = new Thickness(0, 16, 0, 0), Name = "RepairChangeList" };
+        if (_changePanel is null) return;
+        _changePanel.Children.Clear();
+        var changes = PreviewChanges();
+
         var heading = new TextBlock
         {
-            Text = $"实际变化　{changes.Count} 项",
             FontSize = 13.5,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 2),
         };
         heading.SetResourceReference(TextBlock.ForegroundProperty, "PrimaryTextBrush");
-        stack.Children.Add(heading);
-        foreach (var change in changes)
+        heading.Text = changes.Count == 0 ? "实际变化　无" : $"实际变化　{changes.Count} 项，共 {changes.Select(c => c.Kind).Distinct().Count()} 类";
+        _changePanel.Children.Add(heading);
+
+        if (changes.Count == 0)
         {
-            var line = new TextBlock
-            {
-                Text = "· " + change,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 4),
-            };
-            line.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
-            stack.Children.Add(line);
+            var none = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+            none.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+            none.Text = "按当前勾选，章节树不会改变。";
+            _changePanel.Children.Add(none);
+            return;
         }
-        return stack;
+
+        // One row per kind, each naming its own count and one concrete example, so "建立卷层级 2 个"
+        // says what happened without listing every volume.
+        foreach (var group in changes.GroupBy(change => change.Kind).OrderByDescending(group => group.Count()))
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+            var summary = new TextBlock { FontSize = 12.5, TextWrapping = TextWrapping.Wrap };
+            summary.SetResourceReference(TextBlock.ForegroundProperty, "PrimaryTextBrush");
+            summary.Text = DescribeChangeGroup(group.Key, group.ToArray());
+            row.Children.Add(summary);
+
+            var detail = new Expander
+            {
+                Header = $"展开 {group.Count()} 条明细",
+                FontSize = 11.5,
+                Margin = new Thickness(0, 2, 0, 0),
+                Content = new StackPanel { Margin = new Thickness(12, 4, 0, 4) },
+            };
+            if (detail.Content is StackPanel detailList)
+                foreach (var change in group)
+                {
+                    var line = new TextBlock
+                    {
+                        FontSize = 11.5,
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 0, 0, 2),
+                    };
+                    line.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+                    line.Text = "· " + DescribeOne(change);
+                    detailList.Children.Add(line);
+                }
+            row.Children.Add(detail);
+            _changePanel.Children.Add(row);
+        }
+    }
+
+    /// <summary>The one-line summary of a whole kind of change, with one concrete example.</summary>
+    private static string DescribeChangeGroup(RepairChangeKind kind, IReadOnlyList<RepairChange> changes)
+    {
+        var count = changes.Count;
+        var many = count > 1 ? $" {count}" : "";
+        var example = count > 0 && changes[0].Title.Length > 0 ? $"（例：{changes[0].Title}）" : "";
+        return kind switch
+        {
+            RepairChangeKind.RebuiltVolume => $"建立卷层级{many} 个{example}",
+            RepairChangeKind.AddedChapter => $"收录章节{many} 章{example}",
+            RepairChangeKind.RetitledChapter => $"标题改按目录写法{many} 章{example}",
+            RepairChangeKind.FoldedIntoBody => $"标题并回正文{many} 处（文字全部保留）{example}",
+            RepairChangeKind.RemovedDuplicate => $"移除重复正文{many} 处{example}",
+            RepairChangeKind.RemovedEntry => $"移除章节项{many} 个{example}",
+            RepairChangeKind.ReassignedBody => $"正文重新分配{many} 处{example}",
+            RepairChangeKind.Reordered => $"位置调整{many} 处{example}",
+            // This one already carries its own count in Title ("12 行").
+            RepairChangeKind.RemovedLines => count == 0 ? "未移除任何原文" : $"从成品移除原文 {changes[0].Title}",
+            _ => $"{kind}{many}{example}",
+        };
+    }
+
+    /// <summary>One change, as a sentence, for the expanded list.</summary>
+    private static string DescribeOne(RepairChange change) => change.Kind switch
+    {
+        RepairChangeKind.RebuiltVolume => $"{change.Title}　{change.Detail}" + (change.Line > 0 ? $"（原文行 {change.Line}）" : ""),
+        RepairChangeKind.AddedChapter => $"{change.Title}（原文行 {change.Line}）",
+        RepairChangeKind.RetitledChapter => $"{change.Title}　{change.Detail}（原文行 {change.Line}）",
+        RepairChangeKind.RemovedLines => $"移除原文 {change.Title}：{change.Detail}",
+        _ => change.Line > 0 ? $"{change.Title}　{change.Detail}（原文行 {change.Line}）" : $"{change.Title}　{change.Detail}",
+    };
+
+    /// <summary>
+    /// The tree as the current selection would build it. Recomputed on every tick so the list always
+    /// describes what pressing the button would actually do — the earlier version froze it at window
+    /// construction and silently went stale the moment a checkbox moved.
+    /// </summary>
+    private IReadOnlyList<RepairChange> PreviewChanges()
+    {
+        var after = _outcome.Entries ?? _before;
+        if (_previewDocument is not null && _outcome.Plan is not null)
+        {
+            var chosen = SelectedActions();
+            // Rebuilding verifies the tree again, which is wasted work while the selection still
+            // matches the preview that already produced it.
+            var unchanged = chosen.Count == _outcome.Plan.DefaultSelection.Count()
+                && chosen.ToHashSet().SetEquals(_outcome.Plan.DefaultSelection);
+            after = unchanged ? _outcome.Entries ?? _before
+                : chosen.Count == 0 ? _before
+                : ChapterAutoRepair.RebuildWithSelection(_previewDocument, _outcome, chosen);
+        }
+        return RepairIntegrity.Describe(after, _before);
     }
 
     /// <summary>
@@ -374,6 +467,8 @@ public sealed class RepairReviewWindow : Window
             $"保留目录外 {_outcome.Extra} 章 · 未匹配 {_outcome.Missing} 章";
 
         UpdateDetailHeading(chosen, total);
+        // The change list follows the selection, so it always says what the button would do.
+        BuildChangeList();
         _selectionText.Text = chosen == 0
             ? (total == 0 ? "本次没有需要应用的改动" : "未选任何修改 · 全部保持不变")
             : $"已选 {chosen} 项 · 取消勾选的不会执行";

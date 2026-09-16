@@ -57,7 +57,7 @@ public partial class ChapterEditorWindow
             // half is kept here unchanged, so the backup, the removal receipt and the undo hint still
             // happen exactly where they did before. Only the selection comes from the user now.
             IReadOnlyCollection<ReferenceAction>? chosen = null;
-            var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions) { Owner = _rulesDialog ?? this };
+            var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions, snapshot) { Owner = _rulesDialog ?? this };
             if (dialog.ShowDialog()!=true || chosen is null)
             { SetReviewResult("未应用修复方案，当前章节树保持不变。"); return; }
             IsEnabled = false;
