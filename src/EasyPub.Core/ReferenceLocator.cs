@@ -139,6 +139,13 @@ public static class ReferenceLocator
             var known = knownHeadings is not null && knownHeadings.ContainsKey(index + 1);
             var text = known ? knownHeadings![index + 1] : lines[index].Trim();
             if (text.Length is 0 or > MaximumTitleLength) continue;
+            // A volume heading is not a chapter candidate. "第一卷 初入江湖" parses as number 1 plus title
+            // words, which collides with the directory's chapter 1 of the same volume and shows up as a
+            // duplicate of it; the line is a boundary, and the volume level is built from the directory
+            // rather than from matching text. A line the tree already holds as a chapter is left alone:
+            // IsVolume also accepts "第一卷 第十章"-style lines when they carry no chapter marker the
+            // tree recognised.
+            if (!known && HeadingSyntax.IsVolume(text)) continue;
             var isolated = index == 0 || string.IsNullOrWhiteSpace(lines[index - 1])
                 || index == lines.Count - 1 || string.IsNullOrWhiteSpace(lines[index + 1]);
             if (!isolated && !known) continue;

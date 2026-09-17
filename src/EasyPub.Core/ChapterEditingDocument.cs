@@ -99,9 +99,23 @@ public sealed class ChapterEditingDocument
             var rawLine = lines[index];
             var title = rawLine.Trim();
             if (title.Length == 0) continue;
+            // A heading line printed twice in a row — "第一章 归来" then the identical line again — is
+            // how some releases mark a chapter start. Taken literally it becomes two chapters with the
+            // same name, the first holding no text at all, and every count downstream inherits the
+            // error. Only an exact repeat of the line immediately above is dropped, so a title that
+            // legitimately resembles its neighbour is untouched.
+            if (index > 0 && string.Equals(lines[index - 1].Trim(), title, StringComparison.Ordinal)
+                && chapterRegex.IsMatch(rawLine)) continue;
 
             if (chapterRegex.IsMatch(rawLine))
             {
+                // A chapter heading is not a sentence. The pattern allows a heading to drop its 「第」
+                // ("八百三十章 赌徒"), which is what makes prose that merely begins with a chapter
+                // number look like a heading too: "第二章的内容他记不清了。" matches, and turning it into
+                // a chapter cuts the chapter it sits inside in half. Ending punctuation is what tells
+                // them apart, and it has to come with enough length to be prose: a bare "第三章？" is a
+                // heading with a question mark in it.
+                if (LooksLikeProseSentence(title)) continue;
                 candidates.Add(new ChapterCandidate(index + 1, title, title, ChapterCandidateKind.Recognized));
             }
             else if (ChapterTitleNormalizer.TryNormalizeNumericTitle(rawLine, out var normalized))
@@ -113,6 +127,17 @@ public sealed class ChapterEditingDocument
         return new ChapterEditingDocument(
             Path.GetFullPath(sourcePath), lines, newLine, decoded.Encoding, decoded.Preamble, candidates);
     }
+
+    /// <summary>
+    /// True for a line that reads as a sentence rather than a heading: it ends a clause and runs long
+    /// enough that no release would print it as a title. Both conditions are required, because either
+    /// one alone misfires — "第三章 谁在那里？" is a title with punctuation, and "第二章" is short but a
+    /// heading, while "第二章的内容他记不清了。" is neither. Ten characters is where the two stop
+    /// overlapping: real headings in this corpus run to about ten, and sentences that merely start
+    /// with a chapter number run longer.
+    /// </summary>
+    internal static bool LooksLikeProseSentence(string title) =>
+        title.Length > 10 && title.IndexOfAny(['。', '！', '？', '；']) >= 0;
 
     public string Render(IEnumerable<ChapterTitleEdit> edits)
     {
