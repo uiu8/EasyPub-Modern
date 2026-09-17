@@ -1,0 +1,20 @@
+# 行尾策略。
+#
+# 这两个文件的**字节**是测试断言的一部分：SampleBookRegressionTests 校验
+# samples/六卷缺陷样书/缺陷样书.txt 的 SHA-256，而 core.autocrlf=true 会在 checkout 时
+# 把 LF 转成 CRLF —— 于是同一份仓库在任何一台新机器上 clone 出来，那条断言必然失败，
+# 而且失败信息看起来像"样书内容不对"，不像是行尾问题。
+#
+# -text 关掉这两个文件的全部行尾转换：仓库里是什么字节，工作区就是什么字节。
+samples/** -text
+
+# 其余文本文件沿用 Windows 上的惯例（工作区 CRLF、仓库 LF）。
+# 它们的字节不参与任何断言，所以转换是安全的。
+*.cs   text
+*.xaml text
+*.md   text
+*.ps1  text
+*.json text
+*.iss  text
+*.csproj text
+*.slnx text
