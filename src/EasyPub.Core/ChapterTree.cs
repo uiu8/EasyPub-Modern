@@ -16,6 +16,22 @@ public sealed record ChapterTreeEntry(
     public bool IsFrontMatter { get; init; }
     public int HeadingLevel { get; init; }
     public string? RecognitionSource { get; init; }
+
+    /// <summary>
+    /// An identity that survives a rebuild.
+    ///
+    /// <para><see cref="Id"/> does not: every rebuild from the same input mints new GUIDs, so anything that
+    /// matches entries across two builds by id finds nothing — which is how a plan compiled twice from the
+    /// same decisions first failed to compile to the same products at all.</para>
+    ///
+    /// <para>A chapter is identified by the line its heading sits on, and by its title only when there is
+    /// no heading line to point at (a volume the directory implies, the front matter, a chapter whose
+    /// heading this repair has yet to insert). Line-plus-title is what the directory, the locator and the
+    /// rebuilt tree already agree on.</para>
+    /// </summary>
+    public string StableKey => TitleLineNumber is { } line
+        ? "L" + line.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        : "T" + (Title ?? "");
 }
 
 public sealed record ChapterTreePlan(
