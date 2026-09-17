@@ -43,6 +43,18 @@ public sealed record EasyPubAppSettings(
 
     /// <summary>启动时后台检查新版本。只提示，不自动下载，默认开启。</summary>
     public bool AutoCheckUpdate { get; init; } = true;
+
+    /// <summary>
+    /// Where原文备份 live. null means the default: a folder under local app data selected by
+    /// <see cref="SourceBackupLayout.DefaultRoot"/>. A reader who points this at their own folder is
+    /// telling us where they will look for backups, so the UI must show the resolved path rather than
+    /// assume it.
+    /// </summary>
+    public string? SourceBackupRoot { get; init; }
+
+    /// <summary>Repair-time snapshots kept per book. The first-seen original is never counted.</summary>
+    public int SourceBackupRetentionLimit { get; init; } = SourceBackupRetention.DefaultSnapshotLimit;
+
     public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
     public string KindlePreviewDeviceId { get; init; } = "kpw6";
     public int CustomKindleWidth { get; init; } = 1264;
@@ -85,6 +97,26 @@ public sealed class AppSettingsStore
                 "EasyPub Modern",
                 "app-settings.json")
             : overridePath);
+    }
+
+    /// <summary>
+    /// Synchronous read, for the few places that need settings before an await is possible — backup
+    /// paths in particular, which are resolved inside synchronous Core code. The file is small and
+    /// these calls are rare, so this is a plain read rather than a cache; a reader who changes the
+    /// backup folder expects the next write to use it immediately.
+    /// </summary>
+    public EasyPubAppSettings Load()
+    {
+        if (!File.Exists(StoragePath)) return EasyPubAppSettings.Default;
+        try
+        {
+            return JsonSerializer.Deserialize<EasyPubAppSettings>(File.ReadAllText(StoragePath), JsonOptions)
+                ?? EasyPubAppSettings.Default;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return EasyPubAppSettings.Default;
+        }
     }
 
     public async Task<EasyPubAppSettings> LoadAsync(CancellationToken cancellationToken = default)

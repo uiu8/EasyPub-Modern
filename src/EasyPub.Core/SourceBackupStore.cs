@@ -8,6 +8,15 @@ public sealed class SourceBackupStore(string directory)
 {
     public string DirectoryPath { get; } = Path.GetFullPath(directory);
 
+    /// <summary>
+    /// How many repair-time snapshots to keep per book. The baseline is never counted or removed.
+    /// Set from settings so the retention pass and the settings page cannot disagree.
+    /// </summary>
+    public int SnapshotRetentionLimit { get; init; } = SourceBackupRetention.DefaultSnapshotLimit;
+
+    /// <summary>Browse and prune this root, carrying this store's retention limit.</summary>
+    public SourceBackupInventory Inventory() => new(DirectoryPath) { RetentionLimit = SnapshotRetentionLimit };
+
     public string CreateWorkingCopy(string sourcePath)
     {
         EnsureBackup(sourcePath);
@@ -18,30 +27,61 @@ public sealed class SourceBackupStore(string directory)
         return copy;
     }
 
-    public static SourceBackupStore CreateDefault() => new(
-        Environment.GetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH") ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EasyPub Modern", "SourceBackups"));
+    /// <summary>
+    /// The store the app uses: the configured root when the reader has set one, else the default.
+    /// Retention comes from the same settings object, so the prune pass and the settings page read the
+    /// same number. A settings file that cannot be read falls back to the defaults rather than failing
+    /// — being unable to read a preference must never stop a backup from being taken.
+    /// </summary>
+    public static SourceBackupStore CreateDefault()
+    {
+        var settings = AppSettingsStore.CreateDefault().Load();
+        var root = string.IsNullOrWhiteSpace(settings.SourceBackupRoot)
+            ? SourceBackupLayout.DefaultRoot()
+            : settings.SourceBackupRoot!;
+        return new SourceBackupStore(root)
+        {
+            SnapshotRetentionLimit = SourceBackupRetention.Clamp(settings.SourceBackupRetentionLimit),
+        };
+    }
 
+    /// <summary>
+    /// The legacy single-file location. Kept because receipts already written name it, and because
+    /// backups made by earlier versions live there and must stay findable.
+    /// </summary>
     public string BackupPath(string sourcePath)
     {
         var full = Path.GetFullPath(sourcePath);
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(full.ToUpperInvariant())));
-        return Path.Combine(DirectoryPath, hash, Path.GetFileName(full) + ".bak");
+        return Path.Combine(DirectoryPath, SourceBackupLayout.FolderNameFor(full),
+            Path.GetFileName(full) + ".bak");
     }
+
+    /// <summary>The current location of a book's first-seen original.</summary>
+    public string BaselinePath(string sourcePath) =>
+        SourceBackupLayout.BaselinePath(Folder(sourcePath));
+
+    /// <summary>This book's backup folder. One folder per source path, named by a hash of it.</summary>
+    public string Folder(string sourcePath) => SourceBackupLayout.FolderFor(DirectoryPath, sourcePath);
 
     public string EnsureBackup(string sourcePath)
     {
         var full = Path.GetFullPath(sourcePath);
-        var backup = BackupPath(full);
-        Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
-        if (File.Exists(backup)) return backup;
-        var temporary = backup + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var baseline = BaselinePath(full);
+        var legacy = BackupPath(full);
+        // An original captured by an earlier version is adopted rather than copied again: copying would
+        // either duplicate it or, worse, overwrite a true first-seen original with a later state.
+        if (File.Exists(baseline)) { EnsureManifest(full); return baseline; }
+        if (File.Exists(legacy)) { EnsureManifest(full); return legacy; }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(baseline)!);
+        var temporary = baseline + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.Copy(full, temporary, overwrite: false);
-            try { File.Move(temporary, backup, overwrite: false); }
-            catch (IOException) when (File.Exists(backup)) { /* Another editor already saved the original. */ }
-            return backup;
+            try { File.Move(temporary, baseline, overwrite: false); }
+            catch (IOException) when (File.Exists(baseline)) { /* Another editor already saved the original. */ }
+            EnsureManifest(full);
+            return File.Exists(baseline) ? baseline : legacy;
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
@@ -49,14 +89,21 @@ public sealed class SourceBackupStore(string directory)
     public IReadOnlyList<string> FindBackups(string sourcePath)
     {
         var full = Path.GetFullPath(sourcePath);
+        var folder = Folder(full);
         var files = new List<string>();
+
+        var baseline = SourceBackupLayout.BaselinePath(folder);
+        if (File.Exists(baseline)) files.Add(baseline);
         if (File.Exists(BackupPath(full))) files.Add(BackupPath(full));
-        var snapshots = Path.Combine(Path.GetDirectoryName(BackupPath(full))!, "Snapshots");
+
+        var snapshots = Path.Combine(folder, SourceBackupLayout.SnapshotsFolder);
         if (Directory.Exists(snapshots)) files.AddRange(Directory.EnumerateFiles(snapshots, "*.bak"));
+
+        // Copies left beside the book by earlier versions, matched by their exact generated name so an
+        // unrelated .bak a reader keeps there is never claimed as ours.
         var parent = Path.GetDirectoryName(full)!;
         if (Directory.Exists(parent))
         {
-            // Only list the exact legacy naming scheme generated by this application.
             var prefix = Path.GetFileName(full) + ".";
             foreach (var path in Directory.EnumerateFiles(parent, "*.bak"))
             {
@@ -65,7 +112,8 @@ public sealed class SourceBackupStore(string directory)
                     && Guid.TryParseExact(name[prefix.Length..^4], "N", out _)) files.Add(path);
             }
         }
-        return files.OrderByDescending(File.GetLastWriteTimeUtc).ToArray();
+        return files.Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(File.GetLastWriteTimeUtc).ToArray();
     }
 
     public string EnsureSnapshot(ChapterTreeDocument document)
@@ -75,7 +123,8 @@ public sealed class SourceBackupStore(string directory)
         if (!string.Equals(hash, document.SourceSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("原始 TXT 已在外部修改，请关闭章节工作台并重新打开后再修复。");
         EnsureBackup(document.SourcePath);
-        var directory = Path.Combine(Path.GetDirectoryName(BackupPath(document.SourcePath))!, "Snapshots");
+        var folder = Folder(document.SourcePath);
+        var directory = Path.Combine(folder, SourceBackupLayout.SnapshotsFolder);
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, hash + ".bak");
         try
@@ -87,6 +136,18 @@ public sealed class SourceBackupStore(string directory)
         {
             if (!SHA256.HashData(File.ReadAllBytes(path)).SequenceEqual(SHA256.HashData(bytes))) throw;
         }
+        EnsureManifest(document.SourcePath);
+        // Retention runs after the new snapshot is safely in place, so a failure here can only ever
+        // leave too many backups — never too few. It carries this store's limit, not the default:
+        // reading the default here silently ignored the configured number.
+        Inventory().Prune(document.SourcePath, SnapshotRetentionLimit);
         return path;
+    }
+
+    /// <summary>Writes the folder's index from what is on disk. Never throws into a backup path.</summary>
+    private void EnsureManifest(string sourcePath)
+    {
+        try { Inventory().WriteManifest(Folder(sourcePath), sourcePath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 }
