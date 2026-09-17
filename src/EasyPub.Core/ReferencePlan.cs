@@ -122,19 +122,45 @@ public static class ReferencePlanner
                 var gap = NeighbourGapOf(location, chapter);
                 var heading = FindHeadingCandidate(document, entries, gap);
                 var occupied = GapHasOccupiedLines(entries, gap);
-                actions.Add(heading is { } found
-                    ? new(ReferenceActionKind.AdoptHeading, found.Line, chapter.Reference.Title,
+                // The directory knows what this chapter is called, so the search can look for *that*
+                // instead of for "a line shaped like a heading". A heading that lost its separator, its
+                // number, or a character is invisible to the shape test and obvious to a title-word
+                // search — which is the difference between "your file has no heading here" and "your
+                // file has the heading, written wrong".
+                var titleWord = FindTitleWordLine(document, chapter.Reference.Title, gap);
+                if (titleWord is { } byTitle)
+                {
+                    // A line whose words equal the directory's own title words is not a guess: the
+                    // heading is in the file, the directory confirms what it should say, and only the
+                    // locator's own ordering rule failed to reach it (its window closes when a
+                    // neighbouring chapter had to be placed out of order). Offering that as "maybe this
+                    // is the title" would be asking the user to confirm something already known, so it
+                    // is planned as a chapter to include. A partial match keeps the cautious treatment.
+                    var exact = string.Equals(ReferenceOutline.ParseKey(byTitle.Text).Words,
+                        ReferenceOutline.ParseKey(chapter.Reference.Title).Words, StringComparison.Ordinal);
+                    actions.Add(new(exact ? ReferenceActionKind.AddChapter : ReferenceActionKind.AdoptHeading,
+                        byTitle.Line, chapter.Reference.Title,
+                        exact
+                            ? $"{volume}第 {byTitle.Line} 行「{TruncateTitle(byTitle.Text)}」与参考目录标题一致，但定位时没被收录；勾选后按目录收录该章。"
+                            : $"{volume}这一段里第 {byTitle.Line} 行「{TruncateTitle(byTitle.Text)}」与目录标题「{chapter.Reference.Title}」相符，"
+                              + "但它没被识别成标题（多半是写法坏了或少了「第」）。勾选后以该行为本章标题，正文保持原样。",
+                        null, chapter.Reference, exact));
+                }
+                else if (heading is { } found)
+                    actions.Add(new(ReferenceActionKind.AdoptHeading, found.Line, chapter.Reference.Title,
                         $"{volume}这一段原文没有标题行；第 {found.Line} 行「{TruncateTitle(found.Text)}」最像标题。" +
                         "勾选后以该行为章节标题，正文保持原样、一行不动；不勾选则原文保持不动。",
-                        null, chapter.Reference, false)
-                    : occupied
-                        ? new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
-                            $"{volume}参考目录有此章，但它该在的位置被别的内容占着（原文这一段已归属其他章节）。" +
-                            "多半是源文件重复拼接或版本差异，需要人工核对哪一份才是这一章；软件不会自动挪动正文。",
-                            null, chapter.Reference, false)
-                        : new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
-                            $"{volume}参考目录有此章，但原文这一段里既没有标题行、也没有对应正文。软件不会补造正文，请核对来源与文件完整性。",
-                            null, chapter.Reference, false));
+                        null, chapter.Reference, false));
+                else if (occupied)
+                    actions.Add(new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
+                        $"{volume}参考目录有此章，但这一段里找不到它的标题，也没有与「{chapter.Reference.Title}」相符的文字；"
+                        + $"该位置的内容（原文第 {gap.Lower + 1}–{Math.Min(gap.Upper, document.LineCount)} 行）目前计入其他章节。"
+                        + "若这一段确实是本章正文，需要人工切分；软件不会替你猜章节边界。",
+                        null, chapter.Reference, false));
+                else
+                    actions.Add(new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
+                        $"{volume}参考目录有此章，但原文这一段里既没有标题行、也没有对应正文。软件不会补造正文，请核对来源与文件完整性。",
+                        null, chapter.Reference, false));
                 continue;
             }
             var line = chapter.Line.Value;
@@ -260,6 +286,39 @@ public static class ReferencePlanner
             // of an announcement. A number, or a 章/回 marker, is what a real heading has.
             if (!text.Any(char.IsDigit) && text.IndexOfAny(['章', '回', '节']) < 0) continue;
             return (line, text);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Looks for the directory's own title words inside the gap, which is a sharper test than "does this
+    /// line look like a heading": the directory says the chapter is called 「归途」, so a line reading
+    /// 「归途」 or 「第二章归途」 is this chapter however badly it was printed. Two conditions keep it
+    /// honest. The line must sit inside the gap, so a title word appearing in another volume cannot
+    /// answer for a chapter that is genuinely absent; and the line must still read like a title rather
+    /// than a sentence, or prose that happens to mention the word would be adopted as the heading and
+    /// the chapter would be cut in the wrong place.
+    /// </summary>
+    private static (int Line, string Text)? FindTitleWordLine(ChapterTreeDocument document, string title,
+        (int Lower, int Upper) gap)
+    {
+        var words = ReferenceOutline.ParseKey(title).Words;
+        if (words.Length < 2) return null;
+        var from = Math.Max(1, gap.Lower + 1);
+        var to = Math.Min(document.LineCount, gap.Upper - 1);
+        for (var line = from; line <= to; line++)
+        {
+            var text = document.SourceLine(line)?.Text.Trim() ?? "";
+            if (text.Length is < 2 or > 30) continue;
+            if (text.IndexOfAny(['。', '！', '？', '；']) >= 0) continue;
+            // Either side may carry the extra: the line may be the full title the directory printed
+            // ("第二章 归途的开始") while the directory's words are a prefix, or the line may be only
+            // the tail of it ("归途的开始" when the numbering went missing). A prefix that is long enough
+            // to be a title on its own is accepted too, because that is what a truncated heading is.
+            if (text.Contains(words, StringComparison.Ordinal)) return (line, text);
+            var lineWords = ReferenceOutline.ParseKey(text).Words;
+            if (lineWords.Length >= 2 && words.Contains(lineWords, StringComparison.Ordinal)) return (line, text);
+            if (lineWords.Length >= 3 && words.StartsWith(lineWords, StringComparison.Ordinal)) return (line, text);
         }
         return null;
     }
