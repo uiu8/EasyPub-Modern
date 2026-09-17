@@ -242,4 +242,24 @@ public static class SourceFileHasher
         await using var stream = File.OpenRead(path);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
     }
+
+    /// <summary>
+    /// The bytes a rendered document will occupy on disk, and their hash.
+    ///
+    /// <para>The preamble comes from the document's own encoding, which is the same source the transaction
+    /// writes from. Hashing the text alone gives a different answer for a file that has a byte-order mark,
+    /// and the difference only shows up as a mismatch <b>after</b> the source has been replaced — the worst
+    /// possible moment to discover it.</para>
+    /// </summary>
+    public static byte[] BytesOf(SourceTextDocument document, string renderedText)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(renderedText);
+        return document.Encoding.GetPreamble()
+            .Concat(document.Encoding.GetBytes(renderedText))
+            .ToArray();
+    }
+
+    public static string HashOfRendered(SourceTextDocument document, string renderedText) =>
+        Convert.ToHexString(SHA256.HashData(BytesOf(document, renderedText)));
 }

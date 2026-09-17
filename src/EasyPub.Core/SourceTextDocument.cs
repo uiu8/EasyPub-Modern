@@ -82,6 +82,27 @@ public sealed record SourceTextDocument(
     private static string DetermineDefaultNewLine(IReadOnlyList<SourceTextLine> lines) =>
         lines.Select(line => line.Terminator).FirstOrDefault(terminator => terminator is not null) ?? "\r\n";
 
+    /// <summary>
+    /// Reads a file the same way the chapter tree reads it.
+    ///
+    /// <para>There used to be two readers: the tree went through <see cref="TextFileDecoder"/> — BOM
+    /// detection, strict UTF-8, GBK fallback — and this document came from <c>File.ReadAllText</c>, which
+    /// always assumes UTF-8. On a GBK book the two disagreed about the characters, and therefore about
+    /// where the lines are, which is exactly the disagreement a coordinate map cannot survive.</para>
+    /// </summary>
+    public static SourceTextDocument Decode(byte[] bytes, TextEncodingMode mode = TextEncodingMode.Auto)
+    {
+        var decoded = TextFileDecoder.Decode(bytes, mode);
+        return Parse(decoded.Text, decoded.Encoding, decoded.Preamble);
+    }
+
+    public static SourceTextDocument Load(string path, TextEncodingMode mode = TextEncodingMode.Auto) =>
+        Decode(File.ReadAllBytes(path), mode);
+
+    public static async Task<SourceTextDocument> LoadAsync(string path, TextEncodingMode mode = TextEncodingMode.Auto,
+        CancellationToken token = default) =>
+        Decode(await File.ReadAllBytesAsync(path, token).ConfigureAwait(false), mode);
+
     /// <summary>Rebuilds the text exactly as it was parsed. The identity check relies on this.</summary>
     public string Render()
     {

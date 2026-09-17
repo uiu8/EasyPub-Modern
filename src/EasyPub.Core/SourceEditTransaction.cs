@@ -94,7 +94,7 @@ public sealed class SourceEditTransaction
 
         // The replacement would be a no-op. A journal for it would make recovery unable to tell the two
         // states apart, because both hashes would be the same value.
-        var newSha = HashOfText(renderedText);
+        var newSha = SourceFileHasher.HashOfRendered(document, renderedText);
         if (string.Equals(newSha, manifest.BaseVersion.BaseSourceSha256, StringComparison.OrdinalIgnoreCase))
             return Refused("这次修改不会改变原文的任何字节，因此没有创建事务。");
 
@@ -116,9 +116,9 @@ public sealed class SourceEditTransaction
             }
 
             // 3. Render beside the source, preserving the file's own encoding and BOM.
-            var bytes = document.Encoding.GetPreamble()
-                .Concat(document.Encoding.GetBytes(renderedText))
-                .ToArray();
+            //    The bytes come from the same helper the hash is computed with, so "the hash of what we
+            //    wrote" and "what we wrote" cannot drift apart.
+            var bytes = SourceFileHasher.BytesOf(document, renderedText);
             await File.WriteAllBytesAsync(_siblingTempPath, bytes, token).ConfigureAwait(false);
             journal = journal.WithState(RepairJournalState.TempWritten);
             _journals.Save(journal);
@@ -232,9 +232,6 @@ public sealed class SourceEditTransaction
         try { if (File.Exists(_siblingTempPath)) File.Delete(_siblingTempPath); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
-
-    private static string HashOfText(string text) =>
-        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 }
 
 /// <summary>
