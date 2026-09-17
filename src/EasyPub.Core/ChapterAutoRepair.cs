@@ -271,6 +271,17 @@ public static class ChapterAutoRepair
             (inferred ? $"；{volumes} 卷为章号重启推断，请核对" : $"；{volumes} 卷");
         var report = BuildReport(document, plan, rebuilt, unmatched, foundLines);
         // Shown first, because it changes what every other line means.
+        if (plan.OutOfOrder.Count > 0)
+            report = new[]
+            {
+                new RepairReportGroup("顺序异常（需人工核对）", plan.OutOfOrder.Count, "处",
+                    "这些章在原文里的位置与目录顺序相反——多半是源文件重复拼接或缺了一整段，"
+                    + $"使它们只能落在后一章之后。成品会按原文位置排列，因此顺序与目录不一致。例："
+                    + $"「{plan.OutOfOrder[0].Title}」排到了「{plan.OutOfOrder[0].PreviousTitle}」之前。",
+                    plan.OutOfOrder.Select(item => new RepairReportItem(0, item.Title,
+                        $"目录顺序上它应在「{item.PreviousTitle}」之后，但原文中它的位置更靠前。")
+                        { Selectable = false }).ToArray()),
+            }.Concat(report).ToArray();
         if (DescribeCatalogMismatch(catalog, localEntries) is { } mismatch)
             report = new[] { new RepairReportGroup("来源与文件对不上", 1, "项", mismatch, []) }
                 .Concat(report).ToArray();

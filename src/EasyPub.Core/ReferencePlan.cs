@@ -52,6 +52,16 @@ public sealed record ReferencePlan(
     ReferenceLocation Location,
     IReadOnlyList<ReferenceAction> Actions)
 {
+    /// <summary>
+    /// Chapters whose located line sits before the chapter preceding them. The locator guarantees every
+    /// chapter a line, not that the lines ascend — and when a book repeats or loses a block, they do
+    /// not: the branch below can only be placed after a copy that belongs later in the file. Rebuilding
+    /// sorts by line, so the finished tree comes out in an order the reader does not recognise, and
+    /// without this list nothing on screen would say why. Each entry is the title that moved backwards
+    /// and the one it moved in front of.
+    /// </summary>
+    public IReadOnlyList<(string Title, string PreviousTitle)> OutOfOrder { get; init; } = [];
+
     public IReadOnlyList<ReferenceAction> OfKind(ReferenceActionKind kind) => Actions.Where(a => a.Kind == kind).ToArray();
     public int AddCount => OfKind(ReferenceActionKind.AddChapter).Count;
     public int RetitleCount => OfKind(ReferenceActionKind.Retitle).Count;
@@ -184,7 +194,20 @@ public static class ReferencePlanner
             .Select(action => action.Title).ToHashSet(StringComparer.Ordinal);
         if (located.Count > 0)
             actions.RemoveAll(action => action.Kind == ReferenceActionKind.AdoptHeading && located.Contains(action.Title));
-        return new(catalog, location, actions);
+        // Chapters that ended up pointing backwards. Rebuilding sorts by line, so their order in the
+        // finished tree differs from the directory's — a real consequence of a repeated or missing
+        // block, and one the user has to be told about rather than discover afterwards.
+        var outOfOrder = new List<(string Title, string PreviousTitle)>();
+        var placed = location.Chapters.Where(chapter => chapter.Line is not null).ToArray();
+        var highest = 0;
+        string? highestTitle = null;
+        foreach (var chapter in placed)
+        {
+            if (chapter.Line!.Value < highest && highestTitle is not null)
+                outOfOrder.Add((chapter.Reference.Title, highestTitle));
+            else { highest = chapter.Line!.Value; highestTitle = chapter.Reference.Title; }
+        }
+        return new(catalog, location, actions) { OutOfOrder = outOfOrder };
     }
 
     /// <summary>
