@@ -52,6 +52,22 @@ public partial class ChapterEditorWindow
     }
 
     /// <summary>
+    /// The document the workbench should carry on with after the TXT was rewritten.
+    ///
+    /// <para>The plan comes from the migration — it is the tree the user arranged, moved onto the new line
+    /// numbers — and the source lines come from a fresh parse of the file the transaction just wrote. Both
+    /// halves are needed: the plan has no line text, and a re-recognition would not have the user's
+    /// arrangements.</para>
+    /// </summary>
+    private static ChapterTreeDocument ReloadAfterEdit(RepairApplicationResult result, ChapterTreeDocument before)
+    {
+        var plan = result.State?.Plan;
+        if (plan is null) throw new InvalidDataException("原文已替换，但没有得到迁移后的章节树。");
+        return ChapterTreeDocument.Load(before.SourcePath, File.ReadAllBytes(before.SourcePath),
+            chapterPattern: null, hierarchy: before.RecognitionOptions, existingPlan: plan);
+    }
+
+    /// <summary>
     /// The one repair entry every button goes through: take the current tree, build the proposal, show it
     /// in <see cref="RepairReviewWindow"/>, and only then hand the selection to the applier.
     ///
@@ -119,11 +135,23 @@ public partial class ChapterEditorWindow
                 return;
             }
 
-            // The window states what will change and lets every change be struck out; the applying
-            // half stays here, so the backup, the removal receipt and the undo hint still happen
-            // exactly where they did before. Only the selection comes from the user now.
+            // The window states what will change and lets every change be struck out; the applying half
+            // stays here. What changed with the landing mode is that "applying" can now mean writing the
+            // TXT, and that decision is made in the window and carried out by the same applier the tests
+            // drive — there is no second path that only the button can reach.
             IReadOnlyCollection<ReferenceAction>? chosen = null;
-            var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions, snapshot)
+            var store = SourceBackupStore.CreateDefault();
+            var volumeLevels = outcome.Catalog?.VolumeTitles.Count > 0;
+            var applier = new ChapterRepairApplier(store.DirectoryPath,
+                backupPathFor: (_, _) => Task.FromResult<string?>(store.EnsureSnapshot(snapshot)));
+            var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions, snapshot,
+                // Read from settings rather than fixed here: which mode the window opens on is a preference
+                // about how much the program may do on its own, and the window still shows both options and
+                // still says what the chosen one will change.
+                defaultMode: AppSettingsStore.CreateDefault().Load().DefaultRepairLandingMode,
+                previewMode: (mode, actions) => applier.Preview(outcome, snapshot, mode, actions, volumeLevels),
+                decisionsFor: (mode, actions) => ChapterRepairApplier.DecisionsFor(
+                    ChapterRepairApplier.ProposalFor(outcome, snapshot)!, mode, actions))
             { Owner = _rulesDialog ?? this };
             if (dialog.ShowDialog() != true || chosen is null)
             { SetReviewResult("未应用修复方案，当前章节树保持不变。"); return; }
@@ -131,14 +159,37 @@ public partial class ChapterEditorWindow
             IsEnabled = false;
             // Rebuilt before anything is written: a plan that cannot be applied must fail here, where
             // the tree and the source are still untouched, not after a backup has been taken.
+            var decisions = dialog.SelectedDecisions();
             var applied = ChapterAutoRepair.RebuildWithSelection(snapshot, outcome, chosen);
             if (applied.Count == 0) throw new InvalidDataException("修复方案没有章节树。");
-            var backup = SourceBackupStore.CreateDefault().EnsureSnapshot(snapshot);
-            var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
-            if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
-            ApplyRepairEntries(applied);
-            SetReviewResult(outcome.Verdict + "。可撤销。备份：" + backup
-                + (receipt is null ? "" : "；移除清单：" + receipt));
+
+            if (dialog.LandingMode == RepairLandingMode.TreeOnly)
+            {
+                // The mode that has always existed: change the tree, leave the file alone. No transaction is
+                // created for it, and by the design's invariant none ever should be.
+                var backup = store.EnsureSnapshot(snapshot);
+                var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
+                if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
+                ApplyRepairEntries(applied);
+                SetReviewResult(outcome.Verdict + "。可撤销。备份：" + backup
+                    + (receipt is null ? "" : "；移除清单：" + receipt));
+                return;
+            }
+
+            // Writing the book: the applier compiles the decisions, takes the backup, renders beside the
+            // source, freezes the manifest, replaces atomically and then moves the tree onto the new text.
+            var result = await applier.ApplyAsync(outcome, snapshot, RepairLandingMode.EditSource, chosen,
+                buildVolumeLevels: volumeLevels);
+            if (!result.Changed)
+            {
+                SetReviewResult("未改动原文：" + result.Message);
+                return;
+            }
+            var movedDocument = ReloadAfterEdit(result, snapshot);
+            if (outcome.Catalog is { } usedCatalog)
+                ReferenceCatalogInput.SaveCatalog(movedDocument.SourceSha256, usedCatalog);
+            ApplyRepairEntries(movedDocument.Entries);
+            SetReviewResult(outcome.Verdict + "。" + result.Message);
         }
         catch (OperationCanceledException) { SetReviewResult("目录修复已取消，当前章节树保持不变。"); }
         catch (Exception ex) { SetReviewResult("未应用修复：" + ex.Message); }

@@ -87,14 +87,34 @@ public sealed class RepairReviewWindow : Window
     private CheckBox? _verified;
     private ReviewRow? _focused;
     private bool _building;
+    private RepairLandingMode _mode;
+    private readonly Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, RepairApplicationPreview>? _previewMode;
+    private readonly Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, IReadOnlyList<RepairDecision>>? _decisionsFor;
+    private readonly HashSet<string> _duplicateOptIn = new(StringComparer.Ordinal);
+    private TextBlock _landingDetail = null!;
+    private TextBlock _safetyText = null!;
+    private RadioButton _treeOnlyOption = null!;
+    private RadioButton _editSourceOption = null!;
 
+    /// <summary>
+    /// <paramref name="defaultMode"/> defaults to <see cref="RepairLandingMode.TreeOnly"/> — what this window
+    /// did before the mode existed. The entry point that can actually write the TXT passes
+    /// <see cref="RepairLandingMode.EditSource"/> explicitly, together with a preview callback; a caller that
+    /// supplies neither keeps the old behaviour rather than promising an edit nothing can carry out.
+    /// </summary>
     public RepairReviewWindow(AutoRepairOutcome outcome, IReadOnlyList<ChapterTreeEntry> before,
-        Action<IReadOnlyCollection<ReferenceAction>> apply, ChapterTreeDocument? previewDocument = null)
+        Action<IReadOnlyCollection<ReferenceAction>> apply, ChapterTreeDocument? previewDocument = null,
+        RepairLandingMode defaultMode = RepairLandingMode.TreeOnly,
+        Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, RepairApplicationPreview>? previewMode = null,
+        Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, IReadOnlyList<RepairDecision>>? decisionsFor = null)
     {
         _outcome = outcome;
         _before = before;
         _apply = apply;
         _previewDocument = previewDocument;
+        _mode = defaultMode;
+        _previewMode = previewMode;
+        _decisionsFor = decisionsFor;
         if (outcome.Plan is not null)
             foreach (var action in outcome.Plan.Actions) _actionByKey[action.Key] = action;
         Title = "目录修复 · 核对后应用";
@@ -138,6 +158,40 @@ public sealed class RepairReviewWindow : Window
     /// </summary>
     public IReadOnlyCollection<ReferenceAction> SelectedActions() =>
         _rows.Where(row => row.Checkbox?.IsChecked == true).Select(row => row.Action!).ToArray();
+
+    /// <summary>Where the user chose the repair to land: the tree alone, or the tree and the TXT.</summary>
+    public RepairLandingMode LandingMode => _mode;
+
+    /// <summary>
+    /// The user's ticks turned into decisions, which is what the applier takes.
+    ///
+    /// <para>The second question — whether a duplicate copy should also leave the TXT — is answered per row
+    /// by checking the row's switch, and it can only make the effect stronger. A row that does not offer the
+    /// switch is decided by its kind's policy, so the window and the compiler cannot disagree about what a
+    /// tick means.</para>
+    /// </summary>
+    public IReadOnlyList<RepairDecision> SelectedDecisions()
+    {
+        var chosen = SelectedActions();
+        // The caller supplied the same factory the applier uses, so the decisions the button hands over are
+        // the ones the preview counted.
+        if (_decisionsFor is not null) return _decisionsFor(_mode, chosen);
+
+        var selected = chosen.Select(action => action.Key).ToHashSet(StringComparer.Ordinal);
+        return _outcome.Plan is null
+            ? []
+            : _outcome.Plan.Actions.Select(action => new RepairDecision(
+                RepairActionIdentity.Compute(action),
+                selected.Contains(action.Key),
+                SourceEffectPolicies.Decide(action.Kind, _mode,
+                    deleteDuplicateFromSource: _duplicateOptIn.Contains(action.Key)))).ToArray();
+    }
+
+    /// <summary>The last preview the window computed for the current selection, or null when it cannot provide one.</summary>
+    public RepairApplicationPreview? CurrentPreview { get; private set; }
+
+    /// <summary>What the window says about the chosen landing mode, for tests and for screenshots.</summary>
+    public string LandingModeDescription => _landingDetail.Text;
 
     /// <summary>The groups of the change list, top to bottom. Stable for tests.</summary>
     public IReadOnlyList<string> CategoryLabels() =>
@@ -466,6 +520,35 @@ public sealed class RepairReviewWindow : Window
         what.SetResourceReference(TextBlock.ForegroundProperty, "PrimaryTextBrush");
         head.Children.Add(what);
         text.Children.Add(head);
+
+        // The second question, asked only where it is a real choice. "Remove the duplicate copy from the
+        // finished book" and "also delete those lines from the TXT" are two different answers, and the
+        // default is the first one: dropping a copy from the product is undoable, deleting the reader's text
+        // is not. Only the kinds whose policy is ExplicitOptIn get this switch — offering it elsewhere would
+        // be offering something the compiler cannot honour.
+        if (row.Action is { } switchAction && _mode == RepairLandingMode.EditSource
+            && SourceEffectPolicies.NeedsExplicitOptIn(switchAction.Kind))
+        {
+            var deleteFromSource = new CheckBox
+            {
+                Content = "并从原文删除这一份",
+                FontSize = 11.5,
+                Margin = new Thickness(0, 5, 0, 0),
+                IsChecked = _duplicateOptIn.Contains(switchAction.Key),
+            };
+            deleteFromSource.Checked += (_, _) =>
+            {
+                _duplicateOptIn.Add(switchAction.Key);
+                if (!_building) Refresh();
+            };
+            deleteFromSource.Unchecked += (_, _) =>
+            {
+                _duplicateOptIn.Remove(switchAction.Key);
+                if (!_building) Refresh();
+            };
+            text.Children.Add(deleteFromSource);
+        }
+
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);
 
@@ -801,7 +884,11 @@ public sealed class RepairReviewWindow : Window
         _selectionText.Text = chosen.Count == 0
             ? (total == 0 ? "本次没有需要应用的改动" : "未选任何修改 · 全部保持不变")
             : $"已选 {chosen.Count} 项 · 取消勾选的不会执行";
-        _applyButton.IsEnabled = chosen.Count > 0 && (_verified?.IsChecked ?? true);
+        // The landing mode decides what the button does, so it is recomputed here too: switching to a mode
+        // whose plan cannot be compiled has to disable the button rather than fail after it is pressed.
+        RefreshLandingDetail();
+        _applyButton.IsEnabled = chosen.Count > 0 && CurrentPreview?.CanApply != false
+            && (_verified?.IsChecked ?? true);
     }
 
     private UIElement BuildFooter()
@@ -841,29 +928,128 @@ public sealed class RepairReviewWindow : Window
         return panel;
     }
 
+    /// <summary>
+    /// Where the user chooses what this repair lands on, and what the window promises about it.
+    ///
+    /// <para>The two options are genuinely different products, not two ways of doing one thing: one changes
+    /// the chapter tree and leaves the file alone, the other rewrites the TXT. The sentence under them is
+    /// computed from the same preview the applier will use, so "12 行会被改写" is a count of the operations
+    /// that are about to run rather than a description of the category.</para>
+    ///
+    /// <para>It replaced a fixed line that read "原始 TXT 不变 · 应用前自动备份 · 应用后可以撤销" — which
+    /// was true of the only mode that existed, and would have become a lie the moment a second one did.</para>
+    /// </summary>
     private UIElement BuildSafetyBar()
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        var glyph = new TextBlock { Text = "\u2713", FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
-        glyph.SetResourceReference(TextBlock.ForegroundProperty, "SuccessBrush");
-        row.Children.Add(glyph);
-        row.Children.Add(new TextBlock
+        var stack = new StackPanel();
+        var choices = new StackPanel { Orientation = Orientation.Horizontal };
+        _treeOnlyOption = new RadioButton
         {
-            Text = "原始 TXT 不变 · 应用前自动备份 · 应用后可以撤销",
-            FontSize = 13,
+            Content = "只改章节树",
+            GroupName = "LandingMode",
+            IsChecked = _mode == RepairLandingMode.TreeOnly,
+            Margin = new Thickness(0, 0, 22, 0),
             VerticalAlignment = VerticalAlignment.Center,
-        });
+        };
+        _editSourceOption = new RadioButton
+        {
+            Content = "同时改原文",
+            GroupName = "LandingMode",
+            IsChecked = _mode == RepairLandingMode.EditSource,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _treeOnlyOption.Checked += (_, _) => SetMode(RepairLandingMode.TreeOnly);
+        _editSourceOption.Checked += (_, _) => SetMode(RepairLandingMode.EditSource);
+        choices.Children.Add(_treeOnlyOption);
+        choices.Children.Add(_editSourceOption);
+        stack.Children.Add(choices);
+
+        _landingDetail = new TextBlock
+        {
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 10, 0, 0),
+        };
+        stack.Children.Add(_landingDetail);
+
+        _safetyText = new TextBlock
+        {
+            FontSize = 12.5,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        _safetyText.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+        stack.Children.Add(_safetyText);
+
         var card = new Border
         {
             Padding = new Thickness(18, 12, 18, 12),
             Margin = new Thickness(0, 12, 0, 0),
             CornerRadius = new CornerRadius(11),
             BorderThickness = new Thickness(1),
-            Child = row,
+            Child = stack,
         };
         card.SetResourceReference(Border.BackgroundProperty, "SubtleSurfaceBrush");
         card.SetResourceReference(Border.BorderBrushProperty, "BorderBrush");
+
+        // The initial text is written here rather than left to the first Refresh, so a window that is shown
+        // and read without any interaction still says what the default choice means.
+        RefreshLandingDetail();
         return card;
+    }
+
+    private void SetMode(RepairLandingMode mode)
+    {
+        if (_mode == mode)
+        {
+            RefreshLandingDetail();
+            return;
+        }
+        _mode = mode;
+        if (!_building)
+        {
+            // The ticks are kept: the user chose which chapters to change, and that choice does not depend
+            // on whether the TXT is rewritten. Only what the repair lands on changed.
+            RefreshLandingDetail();
+            Refresh();
+        }
+    }
+
+    /// <summary>
+    /// What the chosen mode will do, from the applier's own preview.
+    ///
+    /// <para>When no preview callback was supplied the sentence stays a description rather than a count. That
+    /// is deliberate: inventing a number here would be the window guessing at something the applier decides.
+    /// </para>
+    /// </summary>
+    private void RefreshLandingDetail()
+    {
+        // Called from Refresh, which can run before the bar exists during construction.
+        if (_landingDetail is null || _safetyText is null) return;
+
+        var chosen = SelectedActions();
+        CurrentPreview = _previewMode?.Invoke(_mode, chosen);
+
+        if (_mode == RepairLandingMode.TreeOnly)
+        {
+            _landingDetail.Text = "只改章节树：原文一个字节都不会改动。";
+            _safetyText.Text = "应用前自动备份 · 应用后可以撤销";
+            return;
+        }
+
+        if (CurrentPreview is { CanApply: false } blocked)
+        {
+            _landingDetail.Text = "同时改原文：" + blocked.Message;
+            _safetyText.Text = "应用不可用。";
+            return;
+        }
+
+        var lines = CurrentPreview?.AffectedLines.Count ?? 0;
+        var operations = CurrentPreview?.SourceOperations ?? 0;
+        _landingDetail.Text = operations == 0
+            ? "同时改原文：这次所选的动作都不需要改动正文，原文不会有变化。"
+            : $"同时改原文：将改动原文的 {lines} 行（{operations} 个操作）。";
+        _safetyText.Text = "应用前自动备份原文 · 应用后可以撤销 · 改动只落在本书";
     }
 
     private sealed class StatView(TextBlock number, Func<IReadOnlyCollection<ReferenceAction>, string> value)

@@ -55,6 +55,16 @@ public sealed record EasyPubAppSettings(
     /// <summary>Repair-time snapshots kept per book. The first-seen original is never counted.</summary>
     public int SourceBackupRetentionLimit { get; init; } = SourceBackupRetention.DefaultSnapshotLimit;
 
+    /// <summary>
+    /// Which landing mode the repair confirmation window opens on.
+    ///
+    /// <para>A setting rather than a constant because it is a preference about how much the program may do
+    /// on its own, and reasonable readers differ: one wants the TXT fixed in the same pass, another wants
+    /// every write to the file to be asked for. The window still shows both options and still says what the
+    /// chosen one will change, so this only decides where the cursor starts.</para>
+    /// </summary>
+    public RepairLandingMode DefaultRepairLandingMode { get; init; } = RepairLandingMode.EditSource;
+
     public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
     public string KindlePreviewDeviceId { get; init; } = "kpw6";
     public int CustomKindleWidth { get; init; } = 1264;

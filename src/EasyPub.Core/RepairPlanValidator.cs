@@ -162,23 +162,53 @@ public static class RepairDecisionCompiler
     }
 
     /// <summary>
-    /// The outcome to record for each decision once the plan is compiled.
+    /// The outcome to record for each decision <b>before</b> a plan exists.
     ///
-    /// <para>An <see cref="SourceEffectDecision.ApplyIfAvailable"/> action with no source operation becomes
-    /// <see cref="SourceEffectOutcome.Downgraded"/> — recorded, so the receipt can say that this particular
-    /// row did not change the TXT while the ones beside it did.</para>
+    /// <para>Without a patch there is nothing to look up, so a conditional request is reported as
+    /// <see cref="SourceEffectOutcome.Downgraded"/>: "asked for the source to change, no operation carries
+    /// it". That is the honest answer at this point and it is what the confirmation window shows before the
+    /// plan is compiled.</para>
+    ///
+    /// <para>Once a plan exists, use <see cref="OutcomesFor"/>. Asking the compiled patch is the only way the
+    /// recorded outcome can match what actually happened; a predicate overload invited call sites to answer
+    /// from something other than the patch they were about to apply.</para>
     /// </summary>
-    public static IReadOnlyList<SourceEffectOutcome> Outcomes(IReadOnlyList<RepairDecision> decisions,
-        Func<ReferenceAction, bool>? hasSourceOperation = null)
+    public static IReadOnlyList<SourceEffectOutcome> Outcomes(IReadOnlyList<RepairDecision> decisions)
     {
-        _ = hasSourceOperation;
+        ArgumentNullException.ThrowIfNull(decisions);
         return decisions.Select(decision => decision.SourceEffect switch
         {
             SourceEffectDecision.None => SourceEffectOutcome.NotRequested,
             SourceEffectDecision.ApplyRequired => SourceEffectOutcome.Applied,
-            // Nothing can produce a source operation yet, so every conditional request is downgraded.
-            // When SourcePatch arrives this becomes a lookup instead of a constant.
             _ => SourceEffectOutcome.Downgraded,
+        }).ToArray();
+    }
+
+    /// <summary>
+    /// The outcomes for a compiled plan, keyed by action id.
+    ///
+    /// <para>Takes the patch rather than a predicate so the call site cannot pass a different answer than
+    /// the one the patch was built from.</para>
+    /// </summary>
+    public static IReadOnlyList<SourceEffectOutcome> OutcomesFor(RepairProposal proposal,
+        IReadOnlyList<RepairDecision> decisions, SourcePatch? patch)
+    {
+        ArgumentNullException.ThrowIfNull(proposal);
+        ArgumentNullException.ThrowIfNull(decisions);
+
+        var actionsWithOperations = (patch?.Operations ?? [])
+            .Select(operation => operation.ActionId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        return decisions.Select(decision => decision.SourceEffect switch
+        {
+            SourceEffectDecision.None => SourceEffectOutcome.NotRequested,
+            // A required edit that compiled is applied; one that did not compile would have failed the
+            // decision check before this point, so reaching here with no operation means the check was
+            // skipped — reporting Applied would be a lie, so it is reported as downgraded.
+            _ => actionsWithOperations.Contains(decision.ActionId)
+                ? SourceEffectOutcome.Applied
+                : SourceEffectOutcome.Downgraded,
         }).ToArray();
     }
 }
