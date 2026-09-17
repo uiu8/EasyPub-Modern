@@ -721,7 +721,11 @@ public partial class ChapterEditorWindow : Window
     {
         var selected = ChapterSuggestionsCombo.SelectedItem as ConversionPreflightIssue;
         var oldIndex = ChapterSuggestionsCombo.SelectedIndex;
-        var analysis = ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, _reviewLimit);
+        // The saved directory travels into the review analysis, so the panel that a reader opens after
+        // a repair can say which chapters the directory lists and the tree still lacks. Without it the
+        // panel only sees gaps in the numbering and reports "two problems" while forty are missing.
+        var analysis = ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, _reviewLimit,
+            reference: SavedReference());
         _reviewGroups = analysis.Groups.ToArray();
         _reviewGroupIndex.Clear();
         foreach (var group in _reviewGroups)

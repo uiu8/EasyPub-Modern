@@ -34,7 +34,8 @@ public static class ChapterReviewAnalyzer
     }
 
     public static ChapterReviewAnalysis Analyze(ChapterTreeDocument document, IReadOnlyList<ChapterTreeEntry>? currentEntries = null,
-        bool detectUnrecognized = true, int maximumGroups = 200, CancellationToken cancellationToken = default)
+        bool detectUnrecognized = true, int maximumGroups = 200, CancellationToken cancellationToken = default,
+        ReferenceCatalog? reference = null)
     {
         var entries = currentEntries ?? document.Entries;
         // A tree reconciled against an official directory already answers "which chapters exist".
@@ -208,6 +209,31 @@ public static class ChapterReviewAnalyzer
                 Message = $"同一层级有 {batch.Length} 处编号顺序差异，已合并展示。可能涉及编号重启、体系混用或顺序调整；不据此认定缺章，也不自动改号。请选择原文位置逐项核对。" };
             groups.Add(new(issue, ReviewCategories.Structure, batch.SelectMany(g => g.NodeIds).Distinct().ToArray(),
                 batch.SelectMany(g => g.Lines).Distinct().Order().ToArray(), batch.SelectMany(g => g.RelatedIssues).ToArray()));
+        }
+        // What the directory knows and the tree does not. Everything above reads the text on its own:
+        // it can see that numbering jumps, but not which chapters are supposed to be there. Once a
+        // directory has been applied the difference matters more, not less — the repair already left
+        // chapters unplaced, and without this the panel a reader opens afterwards says "two gaps" while
+        // forty chapters are missing. Reported as findings, never as actions.
+        if (reference is not null)
+        {
+            var known = entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is not null)
+                .Select(e => ReferenceOutline.ParseKey(e.Title).Canonical).ToHashSet(StringComparer.Ordinal);
+            var absent = reference.Nodes.Where(node => node.Kind == ReferenceNodeKind.Chapter)
+                .Where(node => !known.Contains(ReferenceOutline.ParseKey(node.Title).Canonical))
+                .ToArray();
+            if (absent.Length > 0)
+            {
+                var listed = string.Join("；", absent.Take(6).Select(node => node.Title));
+                var rest = absent.Length > 6 ? $" 等共 {absent.Length} 章" : "";
+                var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning,
+                    "reference_chapter_absent",
+                    $"参考目录里有 {absent.Length} 章在章节树中没有：{listed}{rest}。"
+                    + "这些章要么原文里确实没有（软件不会补造正文），要么没被识别到；请对照原文核对，"
+                    + "需要补建的入口在「目录辅助修复」。本项只提示，不会修改章节树。",
+                    PreflightTargetKind.Chapters, 0);
+                groups.Add(new(issue, ReviewCategories.Missing, [], [], [issue]));
+            }
         }
         var ordered = groups.OrderBy(g => g.Issue.LineNumber ?? int.MaxValue).ToArray();
         return new(ordered.Take(Math.Max(1, maximumGroups)).ToArray(), ordered.Length);

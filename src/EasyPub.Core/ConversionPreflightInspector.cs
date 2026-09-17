@@ -216,7 +216,14 @@ public sealed class ConversionPreflightInspector
                         books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
                         if (Check(PreflightTargetKind.Chapters))
                         {
-                            var review = ChapterReviewAnalyzer.Analyze(document, detectUnrecognized: request.ChapterTree is null, cancellationToken: token);
+                            // The saved directory for this book, when there is one, so the pre-conversion
+                            // check can say which chapters the release has and this file lacks. Without it
+                            // the check reads the text alone and reports numbering gaps, which is a much
+                            // weaker statement than "forty chapters are missing" — and this is the last
+                            // screen before the file is converted.
+                            var savedCatalog = ReferenceCatalogInput.ReadCatalog(ReferenceCatalogInput.Load(document.SourceSha256));
+                            var review = ChapterReviewAnalyzer.Analyze(document, detectUnrecognized: request.ChapterTree is null,
+                                cancellationToken: token, reference: savedCatalog);
                             issues.AddRange(review.Groups.Select(group => group.Issue));
                             if (review.TotalGroups > review.Groups.Count)
                                 issues.Add(new(request.InputPath, PreflightSeverity.Warning, "chapter_diagnostics_limit",
