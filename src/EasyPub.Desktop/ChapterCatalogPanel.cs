@@ -256,3 +256,4 @@ public partial class ChapterEditorWindow
     private static string HostOf(string source) =>
         Uri.TryCreate(source, UriKind.Absolute, out var uri) ? uri.Host : source;
 }
+

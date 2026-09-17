@@ -28,6 +28,99 @@ public partial class ChapterEditorWindow
     private bool _editorClosed;
     private ChapterBreakpoint[] _numberingNotes = [];
 
+    /// <summary>
+    /// What counts as a recoverable heading when the review panel offers to rebuild one. Kept per
+    /// editor rather than global: the right answer depends on the book in front of the user, and a
+    /// widened setting that suits one release will invent candidates in the next.
+    /// </summary>
+    internal MissingChapterHeadingOptions HeadingRepairOptions { get; set; } = new();
+
+    private Button? _headingRepairOptionsButton;
+
+    /// <summary>
+    /// The judgement calls behind "which headings did the recogniser miss", made editable. Every one
+    /// of these widens the search, so the dialog states what each widening costs as well as what it
+    /// finds, and the result is still a candidate list the user ticks item by item.
+    /// </summary>
+    private void EditHeadingRepairOptions()
+    {
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "这些开关决定“什么算漏识别标题”。放宽会找到更多，也会带来更多需要核对的候选；"
+                 + "无论怎么放宽，补建都只发生在原文已有的行上，原始 TXT 不变。",
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 14),
+        });
+        var gapRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        gapRow.Children.Add(new TextBlock { Text = "两章之间最多补：", VerticalAlignment = VerticalAlignment.Center });
+        var gap = new TextBox { Text = HeadingRepairOptions.MaximumGap.ToString(), Width = 70 };
+        gapRow.Children.Add(gap);
+        gapRow.Children.Add(new TextBlock { Text = " 章", VerticalAlignment = VerticalAlignment.Center });
+        panel.Children.Add(gapRow);
+        var isolated = new CheckBox
+        {
+            Content = "只认独立成行（上下有空行）的标题",
+            IsChecked = HeadingRepairOptions.RequireIsolatedLine,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        panel.Children.Add(isolated);
+        var typos = new CheckBox
+        {
+            Content = "允许按编号纠错表纠正章号里的错字（如「第一百零久章」）",
+            IsChecked = HeadingRepairOptions.AllowNumberTypos,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        panel.Children.Add(typos);
+        var prefix = new CheckBox
+        {
+            Content = "允许标题缺少「第」字（如「一百零二章 归途」）",
+            IsChecked = HeadingRepairOptions.AllowMissingPrefix,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        panel.Children.Add(prefix);
+        var note = new TextBlock
+        {
+            Text = "分卷重新计数的书，两章之间章号会差很多；把上限调小可以避免把这种编号约定当成缺正文。",
+            TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 0, 0, 14),
+        };
+        note.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
+        panel.Children.Add(note);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var cancel = new Button { Content = "取消", IsCancel = true, Margin = new Thickness(0, 0, 8, 0) };
+        var save = new Button { Content = "应用", IsDefault = true };
+        buttons.Children.Add(cancel); buttons.Children.Add(save);
+        panel.Children.Add(buttons);
+        var dialog = new Window
+        {
+            Title = "补建范围", Owner = Window.GetWindow(this), Width = 520, SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, Content = panel,
+        };
+        dialog.SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+        dialog.SetResourceReference(ForegroundProperty, "PrimaryTextBrush");
+        save.Click += (_, _) =>
+        {
+            if (!int.TryParse(gap.Text, out var limit) || limit < 1 || limit > 500)
+            {
+                ShowReviewFeedback("上限请填 1–500 之间的整数。");
+                return;
+            }
+            HeadingRepairOptions = new MissingChapterHeadingOptions
+            {
+                MaximumGap = limit,
+                RequireIsolatedLine = isolated.IsChecked == true,
+                AllowNumberTypos = typos.IsChecked == true,
+                AllowMissingPrefix = prefix.IsChecked == true,
+            };
+            dialog.DialogResult = true;
+        };
+        if (dialog.ShowDialog() != true) return;
+        // The findings on screen were computed with the previous settings, so they have to be redone.
+        InvalidateBreakpoints();
+        ShowReviewFeedback($"补建范围已更新：两章之间最多补 {HeadingRepairOptions.MaximumGap} 章"
+            + $"、{(HeadingRepairOptions.RequireIsolatedLine ? "只认独立成行" : "也认紧挨段落的标题")}"
+            + $"、{(HeadingRepairOptions.AllowNumberTypos ? "允许章号纠错" : "不做章号纠错")}。请重新核对跳章区间。");
+    }
+
     private ChapterReviewGroup? ReviewGroup(ConversionPreflightIssue? issue) => issue is null ? null
         : _reviewGroupIndex.TryGetValue((issue.Code, issue.LineNumber), out var group)
             ? group
@@ -483,7 +576,7 @@ public partial class ChapterEditorWindow
         if (issue?.Code == "chapter_number_gap")
         {
             var entries = Flatten().Select(node => node.ToEntry()).ToArray();
-            var fixable = MissingChapterHeadings.Find(_document, entries);
+            var fixable = MissingChapterHeadings.Find(_document, entries, HeadingRepairOptions);
             var related = _selectedNode?.TitleLineNumber is int gapLine
                 ? fixable.Count(candidate => candidate.NextLine == gapLine) : 0;
             ReviewHeading.Text = "跳章区间 · 章节号之间断了";
@@ -502,6 +595,22 @@ public partial class ChapterEditorWindow
             ActionScopeText.Text = related > 0 || fixable.Count > 0
                 ? "只补建已确认的标题 · 原始 TXT 不变 · 可撤销"
                 : "不修改任何内容 · 只用于核对";
+            // The search behind those numbers is a set of judgement calls — how wide a gap to bridge,
+            // whether a heading must stand alone, whether a mistyped number may be corrected. A book
+            // that finds nothing usually needs one of them widened, and saying which one is the whole
+            // point of exposing them rather than hard-coding an answer. The button is created once:
+            // this branch runs on every selection change.
+            if (_headingRepairOptionsButton is null)
+            {
+                _headingRepairOptionsButton = new Button
+                {
+                    Content = "补建范围…",
+                    Margin = new Thickness(6, 0, 0, 0),
+                    ToolTip = "调整“什么算漏识别标题”的判断范围；放宽后候选会变多，仍需逐条核对",
+                };
+                _headingRepairOptionsButton.Click += (_, _) => EditHeadingRepairOptions();
+                if (ReviewActionButton.Parent is Panel actionRow) actionRow.Children.Add(_headingRepairOptionsButton);
+            }
             return;
         }
         ReviewHeading.Text = count > 1 ? $"已选 {count} 个章节"
@@ -552,7 +661,7 @@ public partial class ChapterEditorWindow
             // The same exits the card offers: build the headings the text does contain, or go and compare
             // against the directory. Never fall through to an edit that cannot restore a missing chapter.
             var entries = Flatten().Select(node => node.ToEntry()).ToArray();
-            var fixable = MissingChapterHeadings.Find(_document, entries);
+            var fixable = MissingChapterHeadings.Find(_document, entries, HeadingRepairOptions);
             if (_selectedNode?.TitleLineNumber is int line && fixable.Any(candidate => candidate.NextLine == line))
             {
                 RepairMissingHeadings(line);
@@ -672,3 +781,4 @@ public partial class ChapterEditorWindow
 }
 
 internal sealed record ReviewLocation(int Line, string Label);
+
