@@ -113,11 +113,21 @@ public static class ChapterContentDuplicates
     /// text, so a huge one means hundreds of chapters share one body verbatim — a fact worth reporting
     /// once, not a reason to perform hundreds of thousands of comparisons.
     /// </param>
+    /// <param name="maximumChapters">
+    /// Above this many chapters the check is skipped entirely. It reads every body once, which measures
+    /// 241 ms on an 8000-chapter file against 5 ms for the same-title comparison — and this runs inside
+    /// the analysis path that the pre-conversion check times against a 400 ms budget. The comparison is
+    /// quadratic in the worst case and linear-with-a-large-constant in the common one, so it is bounded
+    /// rather than left to grow with the book. Books past the limit still get every other check; only
+    /// this one — the same prose under a *different* title — goes unreported.
+    /// </param>
     public static IReadOnlyList<CrossTitleDuplicate> FindCrossTitle(ChapterTreeDocument document,
-        IReadOnlyList<ChapterTreeEntry> entries, int maximumGroupSize = 32, CancellationToken cancellationToken = default)
+        IReadOnlyList<ChapterTreeEntry> entries, int maximumGroupSize = 32, int maximumChapters = 3_000,
+        CancellationToken cancellationToken = default)
     {
         if (maximumGroupSize < 2) return [];
         var chapters = entries.Where(entry => !entry.IsFrontMatter && entry.TitleLineNumber is not null).ToArray();
+        if (chapters.Length > maximumChapters) return [];
         // One pass over the bodies: group by the text itself, so the pair that matters — identical prose
         // — is grouped exactly, and no bucket ever holds chapters that merely resemble each other.
         var bodies = new Dictionary<int, (ChapterTreeEntry Entry, Body Body)>();

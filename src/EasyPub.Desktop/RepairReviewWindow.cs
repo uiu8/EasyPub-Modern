@@ -186,19 +186,25 @@ public sealed class RepairReviewWindow : Window
         // The first two move with the checkboxes, the last two do not: a chapter the directory numbered
         // but the text lacks, and one it never numbered, are facts about the directory rather than
         // choices, and no checkbox can change them. Each label says which it is.
-        (string Label, Func<IReadOnlyCollection<ReferenceAction>, int> Value, string Brush, string? Note)[] blocks =
+        // Each figure is "数 + 单位", and the label names the thing being counted. The labels used to be
+        // "处并回" and "章需你核对" — fragments that read as nonsense under a number ("1 处并回"): the
+        // unit had been folded into the label and the verb lost its object. The unit goes in the number
+        // line and the label says what the count is.
+        (string Label, Func<IReadOnlyCollection<ReferenceAction>, int> Value, string Brush, string? Note, string Unit)[] blocks =
         [
-            ("补齐", chosen => chosen.Count(action => action.Kind == ReferenceActionKind.AddChapter), "PrimaryTextBrush", null),
-            ("处并回", chosen => chosen.Count(action => action.Kind == ReferenceActionKind.DemoteExtra), "PrimaryTextBrush", null),
-            ("章需你核对", _ => _outcome.UnmatchedWithNumber, "WarningBrush", null),
-            ("章疑似公告", _ => _outcome.UnmatchedNoNumber, "SecondaryTextBrush", "通常无需处理"),
+            ("补齐漏识别", chosen => chosen.Count(action => action.Kind == ReferenceActionKind.AddChapter), "PrimaryTextBrush", null, "章"),
+            ("标题并回正文", chosen => chosen.Count(action => action.Kind == ReferenceActionKind.DemoteExtra), "PrimaryTextBrush", null, "处"),
+            ("待你核对", _ => _outcome.UnmatchedWithNumber, "WarningBrush", null, "章"),
+            ("疑似公告", _ => _outcome.UnmatchedNoNumber, "SecondaryTextBrush", "通常无需处理", "章"),
         ];
-        foreach (var (label, value, brush, note) in blocks)
+        foreach (var (label, value, brush, note, unit) in blocks)
         {
             var stack = new StackPanel { Margin = new Thickness(0, 0, 40, 0), Name = "Stat_" + label };
             var number = new TextBlock { FontSize = 28, FontWeight = FontWeights.SemiBold };
             number.SetResourceReference(TextBlock.ForegroundProperty, brush);
             stack.Children.Add(number);
+            // The unit rides with the figure, so the reading is "3 章" over "补齐漏识别" rather than a
+            // bare number whose unit has to be guessed from the label.
             var caption = new TextBlock { Text = label, FontSize = 12.5, Margin = new Thickness(0, 2, 0, 0) };
             caption.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
             stack.Children.Add(caption);
@@ -209,7 +215,7 @@ public sealed class RepairReviewWindow : Window
                 stack.Children.Add(hint);
             }
             // Kept so cancelling a row updates the figure it belongs to without rebuilding the header.
-            _stats.Add(new StatView(number, value));
+            _stats.Add(new StatView(number, actions => $"{value(actions)} {unit}"));
             panel.Children.Add(stack);
         }
         return panel;
@@ -766,7 +772,7 @@ public sealed class RepairReviewWindow : Window
         // is how the header came to show zeros beside a list of ticked changes.
         var chosen = SelectedActions();
         for (var index = 0; index < _stats.Count; index++)
-            _stats[index].Number.Text = _stats[index].Value(chosen).ToString();
+            _stats[index].Number.Text = _stats[index].Value(chosen);
 
         var kindsInPlay = _changeKinds.Count(view => view.Rows.Count > 0);
         _summaryTitle.Text = total == 0
@@ -846,10 +852,10 @@ public sealed class RepairReviewWindow : Window
         return card;
     }
 
-    private sealed class StatView(TextBlock number, Func<IReadOnlyCollection<ReferenceAction>, int> value)
+    private sealed class StatView(TextBlock number, Func<IReadOnlyCollection<ReferenceAction>, string> value)
     {
         public TextBlock Number { get; } = number;
-        public Func<IReadOnlyCollection<ReferenceAction>, int> Value { get; } = value;
+        public Func<IReadOnlyCollection<ReferenceAction>, string> Value { get; } = value;
     }
 
     /// <summary>

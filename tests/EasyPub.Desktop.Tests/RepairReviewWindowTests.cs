@@ -145,11 +145,11 @@ public class RepairReviewWindowTests
                 Assert.Contains($"已对齐 {outcome.AlignedCount} 章", text);
                 // Read by name: the figure and its caption are separate elements, so pairing them by
                 // string concatenation was only ever a coincidence of how the layout stacked them.
-                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.AddChapter).ToString(), Stat(window, "补齐"));
-                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra).ToString(), Stat(window, "处并回"));
-                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra).ToString(), Stat(window, "处并回"));
-                Assert.Equal(outcome.UnmatchedWithNumber.ToString(), Stat(window, "章需你核对"));
-                Assert.Equal(outcome.UnmatchedNoNumber.ToString(), Stat(window, "章疑似公告"));
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.AddChapter) + " 章", Stat(window, "补齐漏识别"));
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra) + " 处", Stat(window, "标题并回正文"));
+                Assert.Equal(selection.Count(a => a.Kind == ReferenceActionKind.DemoteExtra) + " 处", Stat(window, "标题并回正文"));
+                Assert.Equal(outcome.UnmatchedWithNumber + " 章", Stat(window, "待你核对"));
+                Assert.Equal(outcome.UnmatchedNoNumber + " 章", Stat(window, "疑似公告"));
 
                 // The change list is on the left, in full: every kind of change the repair can make is
                 // named there, so the reader does not have to open categories to find out what changed.
@@ -167,11 +167,11 @@ public class RepairReviewWindowTests
                 foreach (var box in Descendants<CheckBox>(window).Where(box => box.IsChecked == true).ToArray())
                     box.IsChecked = false;
                 window.UpdateLayout();
-                Assert.Equal("0", Stat(window, "补齐"));
-                Assert.Equal("0", Stat(window, "处并回"));
+                Assert.Equal("0 章", Stat(window, "补齐漏识别"));
+                Assert.Equal("0 处", Stat(window, "标题并回正文"));
                 // The two directory facts are not choices and must survive clearing everything.
-                Assert.Equal(outcome.UnmatchedWithNumber.ToString(), Stat(window, "章需你核对"));
-                Assert.Equal(outcome.UnmatchedNoNumber.ToString(), Stat(window, "章疑似公告"));
+                Assert.Equal(outcome.UnmatchedWithNumber + " 章", Stat(window, "待你核对"));
+                Assert.Equal(outcome.UnmatchedNoNumber + " 章", Stat(window, "疑似公告"));
                 // And the change list says so too, rather than keeping its opening figures.
                 var cleared = string.Concat(Descendants<TextBlock>(window).Select(block => block.Text + "\n"));
                 Assert.Contains("未选任何修改", cleared);
@@ -303,3 +303,5 @@ public class RepairReviewWindowTests
         }
     }
 }
+
+
