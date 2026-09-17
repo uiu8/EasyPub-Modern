@@ -146,13 +146,20 @@ public sealed class ChapterTreeDocument
         {
             var heading = headings[index];
             var endLine = index + 1 < headings.Count ? headings[index + 1].LineNumber - 1 : sourceLines.Length;
+            // A heading printed twice in a row — "第九章 归途" then the identical line again — is one
+            // chapter, and the recognition pass already treats it as one by not emitting a second
+            // candidate. But the repeated line is still a line in the file, and the body range used to
+            // begin right after the heading, which swallowed it: the finished book opened every such
+            // chapter with the title printed a second time as its first body line. Skipping the run
+            // here is what makes "one chapter" true of the ranges as well as of the entries.
+            var bodyStart = SkipRepeatedHeadingRun(sourceLines, heading.LineNumber);
             entries.Add(new ChapterTreeEntry(
                 Guid.NewGuid().ToString("N"),
                 heading.Title,
                 heading.Level,
                 true,
                 heading.LineNumber,
-                CreateRange(heading.LineNumber + 1, endLine))
+                CreateRange(bodyStart, endLine))
             {
                 HeadingLevel = heading.Level,
                 RecognitionSource = candidates.TryGetValue(heading.LineNumber, out var sourceCandidate)
@@ -238,6 +245,33 @@ public sealed class ChapterTreeDocument
 
     private static IReadOnlyList<ChapterSourceRange> CreateRange(int startLine, int endLine) =>
         startLine <= endLine ? [new ChapterSourceRange(startLine, endLine)] : [];
+
+    /// <summary>
+    /// The first line after the run of identical heading lines that begins at <paramref name="headingLine"/>.
+    ///
+    /// Only lines byte-identical to the heading, taken consecutively, are skipped — a body whose first
+    /// paragraph happens to repeat a sentence is not a heading run, because the heading line itself is
+    /// matched by exact text equality and nothing here re-tests it against the chapter pattern. A run is
+    /// capped at a handful of lines so that a pathological file cannot lose a chapter's entire body to
+    /// this rule.
+    /// </summary>
+    internal const int MaximumRepeatedHeadingRun = 4;
+
+    private static int SkipRepeatedHeadingRun(IReadOnlyList<ChapterTreeSourceLine> sourceLines, int headingLine)
+    {
+        if (headingLine < 1 || headingLine > sourceLines.Count) return headingLine + 1;
+        var text = sourceLines[headingLine - 1].Text.Trim();
+        if (text.Length == 0) return headingLine + 1;
+        var line = headingLine + 1;
+        var skipped = 0;
+        while (line <= sourceLines.Count && skipped < MaximumRepeatedHeadingRun
+            && string.Equals(sourceLines[line - 1].Text.Trim(), text, StringComparison.Ordinal))
+        {
+            line++;
+            skipped++;
+        }
+        return line;
+    }
 
     private static Regex CompilePattern(string? pattern, string fallback) =>
         new(string.IsNullOrWhiteSpace(pattern) ? fallback : pattern, RegexOptions.Compiled);

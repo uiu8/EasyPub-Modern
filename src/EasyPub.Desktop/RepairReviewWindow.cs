@@ -121,8 +121,14 @@ public sealed class RepairReviewWindow : Window
         // The rows have to exist before the first Refresh asks them what is ticked: they are the only
         // record of the user's choice, so a refresh that ran first would count an empty selection and
         // then have nothing left to correct it with — the boxes are built from it, not the other way.
-        RefreshRows(PreviewChanges());
-        Refresh();
+        // `_building` marks that window: until the boxes exist, the selection is the plan's default.
+        _building = true;
+        try
+        {
+            RefreshRows(PreviewChanges());
+            Refresh();
+        }
+        finally { _building = false; }
     }
 
     /// <summary>
@@ -723,13 +729,21 @@ public sealed class RepairReviewWindow : Window
         var after = _outcome.Entries ?? _before;
         if (_previewDocument is not null && _outcome.Plan is not null)
         {
-            var chosen = SelectedActions();
+            // First call happens before any checkbox exists, so reading the selection would answer
+            // "nothing is ticked" and the window would draw an empty list of changes — every category
+            // showing 0 beside a header that had just counted hundreds. On that call the selection is
+            // by definition the plan's own default; only after the boxes exist is reading them the
+            // truth. Without this the whole confirmation window was blank, and only on the one path
+            // that passes a preview document — which is the path every button takes.
+            var chosen = _building
+                ? _outcome.Plan.DefaultSelection.ToArray()
+                : SelectedActions().ToArray();
             // Rebuilding verifies the tree again, which is wasted work while the selection still
             // matches the preview that already produced it.
-            var unchanged = chosen.Count == _outcome.Plan.DefaultSelection.Count()
+            var unchanged = chosen.Length == _outcome.Plan.DefaultSelection.Count()
                 && chosen.ToHashSet().SetEquals(_outcome.Plan.DefaultSelection);
             after = unchanged ? _outcome.Entries ?? _before
-                : chosen.Count == 0 ? _before
+                : chosen.Length == 0 ? _before
                 : ChapterAutoRepair.RebuildWithSelection(_previewDocument, _outcome, chosen);
         }
         // The plan is handed over so every change can name the action that caused it, instead of the

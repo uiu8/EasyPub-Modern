@@ -10,16 +10,6 @@ namespace EasyPub.Desktop;
 
 public partial class ChapterEditorWindow
 {
-    private sealed class ProposalRow
-    {
-        public bool Selected { get; set; }
-        public HeadingProposal Proposal { get; init; } = null!;
-        public int Line => Proposal.Line;
-        public string Title => Proposal.Original;
-        public string Reference => Proposal.Suggested;
-        public string Evidence => Proposal.Evidence;
-    }
-
     private async void CatalogAssist_Click(object sender, RoutedEventArgs e)
     {
         if (_sourceChanged) return;
@@ -80,31 +70,17 @@ public partial class ChapterEditorWindow
         var outline = new Button
         {
             Content = "预览章节调整…", IsEnabled = false,
-            ToolTip = "对照参考目录补建漏识别章节、统一标题、移除重复章节、建立卷层级；原始 TXT 不变，可撤销",
+            ToolTip = "对照参考目录补建漏识别章节、统一标题、移除重复章节、建立卷层级；"
+                + "与顶部「一键目录修复」打开同一个修复确认窗，原始 TXT 不变，可撤销",
             Padding = new Thickness(16, 7, 16, 7)
         };
         outlineRow.Children.Add(outline);
-        var options = new WrapPanel();
-        options.Children.Add(new TextBlock { Text = "扫描正文超过（TXT 实际行数）：", VerticalAlignment = VerticalAlignment.Center });
-        var minimum = new TextBox { Text = "200", Width = 75 }; options.Children.Add(minimum);
-        var scan = new Button { Content = "检测并预览补建" }; options.Children.Add(scan);
-        var referenceTitles = new CheckBox { Content = "采用匹配的参考标题（否则保留原题）", VerticalAlignment = VerticalAlignment.Center }; options.Children.Add(referenceTitles);
-        var grid = new DataGrid { AutoGenerateColumns = false, CanUserAddRows = false, CanUserDeleteRows = false, SelectionMode = DataGridSelectionMode.Single, Height = 240 };
-        grid.Columns.Add(new DataGridCheckBoxColumn { Header = "补建", Binding = new System.Windows.Data.Binding("Selected") });
-        foreach (var (header, binding) in new[] { ("原文行", "Line"), ("原始标题", "Title"), ("参考标题", "Reference"), ("依据", "Evidence") })
-            grid.Columns.Add(new DataGridTextColumn { Header = header, Binding = new System.Windows.Data.Binding(binding), IsReadOnly = true, Width = new DataGridLength(1, DataGridLengthUnitType.Star) });
-        var apply = new Button { Content = "补建勾选章节", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
-        var degradedPanel = new StackPanel();
-        degradedPanel.Children.Add(new TextBlock
+        top.Children.Add(new TextBlock
         {
-            Text = "没有官方目录时，只能依据本地正文启发式推断（独立短行 + 上下空行 + 同名分段），可能误判，请逐条核对。",
-            TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = secondary, Margin = new Thickness(0, 2, 0, 8)
+            Text = "本按钮与顶部「一键目录修复」进入同一个修复确认窗，依据就是你在这里选定或粘贴的目录；"
+                + "不再有第二套预览与勾选。",
+            TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = secondary, Margin = new Thickness(0, 6, 0, 0)
         });
-        degradedPanel.Children.Add(options);
-        degradedPanel.Children.Add(grid);
-        degradedPanel.Children.Add(apply);
-        top.Children.Add(new Separator { Margin = new Thickness(0, 14, 0, 6) });
-        top.Children.Add(new Expander { Header = "没有参考目录时：本地扫描（启发式，可能误判）", Content = degradedPanel, IsExpanded = false });
         var status = new TextBlock
         {
             Text = preferred.Count > 0
@@ -114,13 +90,29 @@ public partial class ChapterEditorWindow
         };
         top.Children.Add(status);
         var footer = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        var saveSettings = new Button { Content = "保存本书目录与阈值" };
+        var saveSettings = new Button { Content = "保存本书目录" };
         var cancel = new Button { Content = "关闭", IsCancel = true };
         footer.Children.Add(saveSettings); footer.Children.Add(cancel); DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
-        outline.Click += (_, _) => ReferenceOutlineAssist(ReferenceCatalogInput.ParseText(catalogText.Text) is { } edited && sources.SelectedItem is ReferenceCatalog picked
-            && catalogText.Text == string.Join(Environment.NewLine, picked.Nodes.Select(n => n.Title)) ? picked : null, catalogText.Text);
+        // 扫描阈值不再是本对话框的界面元素：它只影响自助扫描，而自助扫描已并入统一入口。
+        // 保留这个值是为了不改动已保存的目录偏好格式 —— 读写都照旧，只是不再出现在界面上。
+        var minimumLines = 200;
+        // 与顶部「一键目录修复」同一个方法。区别只在传参：这里把用户当场选定/粘贴的目录直接传进去，
+        // 不再另外写盘再读回来，确认窗里显示的也就是这一份目录。
+        outline.Click += async (_, _) =>
+        {
+            var edited = ReferenceCatalogInput.ParseText(catalogText.Text);
+            if (edited is null) { status.Text = "目录文字里没有可用的章节标题。"; return; }
+            var picked = sources.SelectedItem as ReferenceCatalog;
+            var chosen = picked is not null
+                && catalogText.Text == string.Join(Environment.NewLine, picked.Nodes.Select(n => n.Title))
+                    ? picked : edited;
+            Save();
+            status.Text = $"已按这份目录（{chosen.Titles.Count} 章）生成方案，正在打开修复确认窗…";
+            // 只把要显示的文本传进去，线程编组由统一入口负责 —— 对话框自己不做跨线程处理。
+            await RunRepairReviewAsync(chosen, text => status.Text = text);
+            status.Text = "修复确认窗已关闭。可继续修改目录后再次预览。";
+        };
         dialog.Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EasyPub Modern", "Catalogs", _document.SourceSha256 + ".json");
         try
         {
             if (ReferenceCatalogInput.Load(_document.SourceSha256) is { } saved)
@@ -132,22 +124,19 @@ public partial class ChapterEditorWindow
                 query.Text = string.IsNullOrWhiteSpace(saved.Query)
                     ? ChapterAutoRepair.ExtractBookName(_document.SourcePath)
                     : saved.Query;
-                url.Text = saved.Url; catalogText.Text = saved.Text; minimum.Text = saved.MinimumLines.ToString();
+                url.Text = saved.Url; catalogText.Text = saved.Text;
+                if (saved.MinimumLines > 0) minimumLines = saved.MinimumLines;
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException) { status.Text = "已保存目录无法读取，可重新获取或导入。"; }
         using var lifetime = new CancellationTokenSource();
         CancellationTokenSource? request = null;
-        IReadOnlyList<ChapterTreeEntry>? snapshot = null;
-        ProposalRow[] rows = [];
-        void Invalidate() { apply.IsEnabled = false; grid.ItemsSource = null; rows = []; }
         void Save()
         {
-            if (!int.TryParse(minimum.Text, out var count) || count < 1) throw new InvalidOperationException("行数必须为正整数。");
             var exact = sources.SelectedItem as ReferenceCatalog;
             if (exact is not null && catalogText.Text != string.Join(Environment.NewLine, exact.Nodes.Select(n => n.Title))) exact = null;
             ReferenceCatalogInput.Save(_document.SourceSha256,
-                new CatalogPreferences(query.Text, url.Text, catalogText.Text, count) { Catalog = exact });
+                new CatalogPreferences(query.Text, url.Text, catalogText.Text, minimumLines) { Catalog = exact });
             InvalidateBreakpoints();
             ScheduleBreakpoints();
         }
@@ -211,43 +200,9 @@ public partial class ChapterEditorWindow
             try { if (new FileInfo(picker.FileName).Length > 2 * 1024 * 1024) throw new IOException("目录文件超过 2 MB。"); catalogText.Text = File.ReadAllText(picker.FileName); url.Text = ""; sourceNote.Text = "来源：本地目录文件（用户导入）"; }
             catch (Exception ex) { status.Text = ex.Message; }
         };
-        catalogText.TextChanged += (_, _) => { Invalidate(); outline.IsEnabled = ReferenceCatalogInput.ParseText(catalogText.Text) is not null; };
+        catalogText.TextChanged += (_, _) => outline.IsEnabled = ReferenceCatalogInput.ParseText(catalogText.Text) is not null;
         outline.IsEnabled = ReferenceCatalogInput.ParseText(catalogText.Text) is not null;
-        minimum.TextChanged += (_, _) => Invalidate();
-        scan.Click += async (_, _) =>
-        {
-            if (!int.TryParse(minimum.Text, out var count) || count < 1) { status.Text = "行数必须为正整数。"; return; }
-            snapshot = Flatten().Select(n => n.ToEntry()).ToArray();
-            var titles = catalogText.Text.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            scan.IsEnabled = false; status.Text = "正在扫描当前章节树…";
-            try
-            {
-                var proposals = await Task.Run(() => UnnumberedHeadings.Find(_document, snapshot, count, titles));
-                if (lifetime.IsCancellationRequested) return;
-                rows = proposals.Select(p => new ProposalRow { Proposal = p, Selected = p.Recommended }).ToArray();
-                grid.ItemsSource = rows; apply.IsEnabled = rows.Length > 0;
-                status.Text = $"发现 {rows.Length} 个候选。请核对后勾选；只补建章节，不删除、不重排，原始 TXT 不变。";
-            }
-            catch (Exception ex) { status.Text = ex.Message; }
-            finally { scan.IsEnabled = true; }
-        };
-        saveSettings.Click += (_, _) => { try { Save(); status.Text = "已保存本书目录和阈值；没有保存 Cookie。"; } catch (Exception ex) { status.Text = ex.Message; } };
-        apply.Click += (_, _) =>
-        {
-            grid.CommitEdit(); grid.CommitEdit();
-            var selected = rows.Where(r => r.Selected).Select(r => r.Proposal).ToArray();
-            if (snapshot is null || selected.Length == 0) { status.Text = "请至少勾选一个候选。"; return; }
-            try
-            {
-                var repaired = UnnumberedHeadings.Apply(_document, snapshot, selected, referenceTitles.IsChecked == true);
-                if (!ConfirmWorkbench($"将补建 {selected.Length} 个章节，正文顺序保持不变。确定应用？", "确认补建章节")) return;
-                Mutate(() => { Roots.Clear(); foreach (var root in BuildTree(repaired)) Roots.Add(root); _selectedNode = Flatten().FirstOrDefault(n => n.TitleLineNumber == selected[0].Line); });
-                SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]); RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
-                dialog.DialogResult = true;
-                SetReviewResult($"已补建 {selected.Length} 个章节，原始 TXT 不变，可撤销。没有重建已删除的章节。");
-            }
-            catch (Exception ex) { status.Text = ex.Message; }
-        };
+        saveSettings.Click += (_, _) => { try { Save(); status.Text = "已保存本书目录；没有保存 Cookie。"; } catch (Exception ex) { status.Text = ex.Message; } };
         dialog.Closed += (_, _) => { lifetime.Cancel(); request?.Cancel(); };
         dialog.ShowDialog(); request?.Dispose();
     }

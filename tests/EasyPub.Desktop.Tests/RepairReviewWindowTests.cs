@@ -21,7 +21,7 @@ public class RepairReviewWindowTests
     /// list (kept until the user says otherwise), both halves of the mismatch, and a numbered entry
     /// with nothing behind it.
     /// </summary>
-    private static async Task<(AutoRepairOutcome Outcome, IReadOnlyList<ChapterTreeEntry> Before)> RepairOutcomeAsync()
+    private static async Task<(AutoRepairOutcome Outcome, IReadOnlyList<ChapterTreeEntry> Before, ChapterTreeDocument Document)> RepairOutcomeAsync()
     {
         var path = Path.Combine(Path.GetTempPath(), $"easypub-review-{Guid.NewGuid():N}.txt");
         await File.WriteAllTextAsync(path,
@@ -34,13 +34,13 @@ public class RepairReviewWindowTests
             var document = await ChapterTreeDocument.LoadAsync(path);
             var outcome = ChapterAutoRepair.Prepare(document,
                 ReferenceCatalogInput.ParseText("第一章 起点\n第二章 继续\n第三章 收网\n第四章 断线\n请假一天"));
-            return (outcome, document.Entries);
+            return (outcome, document.Entries, document);
         }
         finally { File.Delete(path); }
     }
 
     /// <summary>The tree the preview started from, which the window needs to describe the changes.</summary>
-    private static RepairReviewWindow Build((AutoRepairOutcome Outcome, IReadOnlyList<ChapterTreeEntry> Before) subject) =>
+    private static RepairReviewWindow Build((AutoRepairOutcome Outcome, IReadOnlyList<ChapterTreeEntry> Before, ChapterTreeDocument Document) subject) =>
         new(subject.Outcome, subject.Before, _ => { });
 
     /// <summary>
@@ -96,8 +96,7 @@ public class RepairReviewWindowTests
 
     [Fact]
     public async Task The_window_can_be_resized_instead_of_being_pinned_to_one_size()
-    {
-        var subject = await RepairOutcomeAsync();
+    {        var subject = await RepairOutcomeAsync();
         Exception? failure = null;
         var thread = new Thread(() =>
         {
@@ -301,6 +300,60 @@ public class RepairReviewWindowTests
             if (node is T match) yield return match;
             foreach (var nested in LogicalDescendants<T>(node)) yield return nested;
         }
+    }
+
+    /// <summary>
+    /// 传了 <c>previewDocument</c> 与不传，必须画出同一份清单。
+    ///
+    /// 这条测试的来历：确认窗在「传了 previewDocument」这条路径上整片空白 —— 标题写
+    /// 「本次没有需要应用的改动」，每一类都是 0，而同一屏的页眉刚刚数出 437 章已对齐。
+    /// 原因是 <c>PreviewChanges()</c> 从复选框读当前选择，而构造函数第一次调它的时候复选框
+    /// 还没建出来，于是选择读成空、清单也就建成了空的。
+    ///
+    /// 生产代码**始终**传 previewDocument（<c>RunRepairReviewAsync</c> 传 <c>snapshot</c>），
+    /// 而在此之前每一处测试都不传 —— 这个分支从来没有被看过一眼。这条断言把两条路径绑在一起：
+    /// 谁再让它们分叉，这里立刻红。
+    /// </summary>
+    [Fact]
+    public async Task A_preview_document_draws_the_same_change_list()
+    {
+        var subject = await RepairOutcomeAsync();
+        var before = subject.Before;
+        Exception? failure = null;
+        var rows = new Dictionary<string, int>();
+        var selected = new Dictionary<string, int>();
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                void Measure(string label, ChapterTreeDocument? preview)
+                {
+                    var window = preview is null
+                        ? new RepairReviewWindow(subject.Outcome, before, _ => { })
+                        : new RepairReviewWindow(subject.Outcome, before, _ => { }, preview);
+                    window.ShowInTaskbar = false;
+                    window.WindowStyle = WindowStyle.None;
+                    window.Opacity = 0;
+                    window.Show();
+                    window.UpdateLayout();
+                    rows[label] = LogicalDescendants<CheckBox>(window).Count();
+                    selected[label] = window.SelectedActions().Count;
+                    window.Close();
+                }
+
+                Measure("with", subject.Document);
+                Measure("without", null);
+            }
+            catch (Exception ex) { failure = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(60)), "窗口线程没有在 60 秒内结束");
+        if (failure is not null) throw failure;
+
+        Assert.True(rows["without"] > 0, "不传 previewDocument 时本来就没有待勾选行，测试样本失效");
+        Assert.Equal(rows["without"], rows["with"]);
+        Assert.Equal(selected["without"], selected["with"]);
     }
 }
 
