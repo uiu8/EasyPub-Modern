@@ -323,6 +323,43 @@ public sealed class SourceVersionTransition
     }
 
     /// <summary>
+    /// The whole migration for the <b>other</b> way a source version changes: the file was edited outside
+    /// this program, and the program still holds models written against the old text.
+    ///
+    /// <para>There is no patch in hand for this case — nobody recorded what the person typed — so it is
+    /// derived by comparing the two texts line by line, exactly as a restore does. Deriving it here rather
+    /// than in the window is the point: the window would have to read the file, guess at the encoding and
+    /// work out the operations, and every one of those is a thing this class already does for the repair
+    /// path.</para>
+    ///
+    /// <para>An unchanged file is <b>not</b> an error. The check that calls this runs whenever the window is
+    /// activated, and most activations happen after the file did not change; reporting a failure there would
+    /// train the user to ignore the message that matters.</para>
+    /// </summary>
+    public static async Task<SourceTransitionResult> AfterExternalEditAsync(
+        SourceTransitionState before,
+        string sourcePath,
+        ChapterTreeDocumentCache? cache = null,
+        TextEncodingMode encodingMode = TextEncodingMode.Auto,
+        string? oldCatalogPath = null,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        var after = await SourceTextDocument.LoadAsync(sourcePath, encodingMode, token).ConfigureAwait(false);
+        var newText = after.Render();
+        if (string.Equals(before.Source.Render(), newText, StringComparison.Ordinal))
+            return new SourceTransitionResult(true,
+                [new SourceTransitionStepReport("核对版本", SourceTransitionStepOutcome.AlreadySatisfied,
+                    "磁盘上的原文与内存中的文本一致，无需迁移")],
+                before, "原文内容未变，无需迁移。");
+
+        return await AfterReplaceAsync(before, SourceDiff.Patch(before.Source, after), newText, sourcePath,
+            cache, encodingMode, oldCatalogPath, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Whether the state already describes the text the patch produces.
     ///
     /// <para>Compared by rendering the state's own text, not by asking the caller for a hash: the caller's

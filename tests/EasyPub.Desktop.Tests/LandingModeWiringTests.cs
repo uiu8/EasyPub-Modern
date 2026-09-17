@@ -94,7 +94,7 @@ public class LandingModeWiringTests
                 ChapterRepairApplier.ProposalFor(subject.Outcome, subject.Document)!, mode, actions));
 
     private static ChapterRepairApplier Applier(string workspace) =>
-        new(workspace, backupPathFor: (_, _) => Task.FromResult<string?>(null));
+        new(workspace, backupPathFor: (_, _, _) => Task.FromResult<string?>(null));
 
     private static string Workspace() =>
         Path.Combine(Path.GetTempPath(), $"easypub-landing-tx-{Guid.NewGuid():N}");

@@ -178,6 +178,7 @@ public partial class ChapterEditorWindow
             SetOperationSelection([]);
         });
         if (changedSource) { _undo.Clear(); _redo.Clear(); }
+        _baselineSource = TryLoadBaseline(replacement.SourcePath, _encodingMode);
         _detectUnrecognized = true;
         // A different TXT means a different saved directory, so the rows must be marked again from scratch.
         InvalidateBreakpoints();
@@ -248,15 +249,150 @@ public partial class ChapterEditorWindow
             var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(document.SourcePath)));
             if (!ReferenceEquals(document, _document)) return;
             _sourceChanged = hash != document.SourceSha256;
-            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已保存修改。点击右侧“原文已变化 · 刷新”即可在当前工作台更新章节和检查结果。");
+            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已保存修改。点击右侧“原文已变化 · 刷新”会用版本迁移把当前章节树搬到新行号，并列出没能跟过来的章节。");
         }
         catch (Exception error) { _sourceChanged = true; ShowReviewFeedback("无法校验原始 TXT：" + error.Message); }
         finally { _checkingSource = false; UpdateSaveState(); UpdateActionButtons(); }
     }
 
+    /// <summary>
+    /// The text of the version this window's models describe, or null when it cannot be read.
+    ///
+    /// <para>Null is a real answer and the caller falls back to re-recognising: a book whose bytes cannot be
+    /// read is one there is nothing to compare against, and pretending otherwise would migrate against a
+    /// text nobody has.</para>
+    /// </summary>
+    private static SourceTextDocument? TryLoadBaseline(string sourcePath, TextEncodingMode encodingMode)
+    {
+        try { return SourceTextDocument.Load(sourcePath, encodingMode); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    /// <summary>
+    /// The last migration this window ran, kept so a caller can report on it.
+    ///
+    /// <para>Set by <see cref="MigrateToExternalEditAsync"/>, which is what the 「原文已变化 · 刷新」 button
+    /// ends in — so a test can press that button's own entry and read the outcome, rather than calling the
+    /// migration directly and asserting something the button might not reach.</para>
+    /// </summary>
+    internal SourceTransitionResult? LastMigration { get; private set; }
+
+    /// <summary>
+    /// Brings the workbench onto a TXT that was changed outside the program.
+    ///
+    /// <para>This is the whole point of keeping <see cref="_baselineSource"/>: "refresh" used to mean
+    /// re-recognise, so correcting one typo in Notepad threw away every title, level and directory tick the
+    /// reader had arranged. The migration moves those onto the new line numbers instead, and says which ones
+    /// could not come along.</para>
+    ///
+    /// <para>Internal so the tests drive this entry rather than a copy of it — the button calls it too.</para>
+    /// </summary>
+    internal async Task<SourceTransitionResult?> MigrateToExternalEditAsync()
+    {
+        if (_document is null) return null;
+        // Nothing to compare against: re-recognise, and say why rather than pretending it was a migration.
+        if (_baselineSource is null)
+        {
+            ShowReviewFeedback("这次拿不到用于比对的旧文本，只能按当前规则重新识别。");
+            return null;
+        }
+        ValidateRules();
+        var before = new SourceTransitionState(
+            _document.SourcePath,
+            _baselineSource,
+            _document,
+            _document.CreatePlan(Flatten().Select(node => node.ToEntry()).ToArray()),
+            SavedReference(),
+            new Dictionary<string, ChapterReviewGroup>(_confirmedGroups),
+            null)
+        {
+            RenderedHash = SourceFileHasher.HashOfRendered(_baselineSource, _baselineSource.Render()),
+        };
+
+        try
+        {
+            IsEnabled = false;
+            RefreshSourceButton.IsEnabled = false;
+            var result = await SourceVersionTransition.AfterExternalEditAsync(before, _document.SourcePath,
+                encodingMode: _encodingMode);
+            LastMigration = result;
+            if (!result.Succeeded)
+            {
+                ShowReviewFeedback("未能把章节树搬到新原文上：" + result.Message);
+                return result;
+            }
+            AdoptMigratedState(result);
+            SetReviewResult(result.Describe());
+            return result;
+        }
+        catch (Exception error)
+        {
+            InkDialog.Show(_rulesDialog ?? this, error.Message, "无法按新原文迁移章节树",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return null;
+        }
+        finally
+        {
+            IsEnabled = true;
+            RefreshSourceButton.IsEnabled = true;
+            UpdateSummary(); UpdateActionButtons(); UpdateUndoRedoButtons(); UpdateSaveState();
+        }
+    }
+
+    /// <summary>
+    /// Puts a migrated state into the workbench.
+    ///
+    /// <para>The plan comes from the migration and the source lines from a fresh parse of the same file: a
+    /// plan carries line numbers and no text, and re-recognising would not have the reader's arrangements.
+    /// The undo history goes, because every snapshot in it is written in the old numbering.</para>
+    /// </summary>
+    private void AdoptMigratedState(SourceTransitionResult result)
+    {
+        if (result.State.Plan is not { } plan)
+        {
+            ShowReviewFeedback("迁移没有给出章节树，当前章节树未改动。");
+            return;
+        }
+
+        var replacement = ChapterTreeDocument.Load(_document.SourcePath, File.ReadAllBytes(_document.SourcePath),
+            chapterPattern: NormalizePattern(ChapterPatternText.Text), hierarchy: ReadHierarchyOptions(),
+            encodingMode: _encodingMode, existingPlan: plan);
+
+        _sourceChanged = false;
+        _undo.Clear();
+        _redo.Clear();
+        _confirmedGroups.Clear();
+        _baselineSource = TryLoadBaseline(replacement.SourcePath, _encodingMode);
+        Mutate(() =>
+        {
+            _document = replacement;
+            _recognitionState = CaptureRules();
+            Roots.Clear();
+            foreach (var root in BuildTree(replacement.Entries)) Roots.Add(root);
+            _selectedNode = null;
+            SetOperationSelection([]);
+        });
+        _detectUnrecognized = true;
+        // A different TXT version means different saved-directory rows, so they are re-marked from scratch.
+        InvalidateBreakpoints();
+        _allReviewIssues = [];
+    }
+
     private Window ThemedWindow(string title, double width, double height)
     {
-        var window = new Window { Owner = _rulesDialog ?? this, Title = title, Width = width, Height = height, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var window = new Window
+        {
+            Title = title, Width = width, Height = height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        // An owner may only be given to a window that is itself shown, and this method is reached from
+        // `async void` handlers as well as from click handlers — so by the time a continuation arrives, the
+        // workbench may never have been shown or may already be closed. Throwing there is not a failed
+        // operation: the exception surfaces on a thread with nothing left to catch it and takes the process
+        // down. A dialog without an owner still opens; it just does not centre on the window.
+        try { window.Owner = _rulesDialog ?? this; }
+        catch (InvalidOperationException) { }
         window.SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
         window.SetResourceReference(ForegroundProperty, "PrimaryTextBrush");
         return window;

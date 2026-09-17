@@ -41,7 +41,7 @@ public class ChapterBatchTests
                 new("第一章 开始",ReferenceNodeKind.Chapter,null,null),
                 new("第二章 继续",ReferenceNodeKind.Chapter,null,null)]);
             var outcome=ChapterAutoRepair.Prepare(document.WithEntries(original),catalog);
-            window.ApplyRepairEntries(outcome.Entries!);
+            window.ApplyRepairEntries(document.WithEntries(outcome.Entries!));
             var after=window.Roots.Select(n=>n.ToEntry()).ToArray();
             RepairIntegrity.Verify(original,after,outcome.RemovedSourceLines);
             ((Button)window.FindName("UndoButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

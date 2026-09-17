@@ -110,7 +110,7 @@
                     </StackPanel>
                     <StackPanel Grid.Row="3" HorizontalAlignment="Stretch">
                         <RadioButton x:Name="TasksNavigationButton" GroupName="MainNavigation" Content="转换记录与验收" Tag="&#xE8FD;" Style="{StaticResource SidebarNavigation}" Click="NavigateTasks_Click"/>
-                        <Button Content="原文备份管理…" Click="ManageSourceBackups_Click" HorizontalContentAlignment="Left" Margin="0,6,0,6"/>
+                        <Button Content="原文备份…" Click="ManageSourceBackups_Click" HorizontalContentAlignment="Left" Margin="0,6,0,6"/>
                         <Button x:Name="ShortcutManagerButton" Content="快捷键管理" Tag="&#xE765;" Click="ManageShortcuts_Click" HorizontalContentAlignment="Left" Padding="10,7" MinHeight="34"/>
                         <TextBlock x:Name="VersionText" Text="v—" Margin="8,8,0,4" Foreground="{DynamicResource SecondaryTextBrush}" FontSize="11"/>
                     </StackPanel>

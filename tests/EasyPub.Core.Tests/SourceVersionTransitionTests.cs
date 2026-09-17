@@ -438,4 +438,57 @@ public class SourceVersionTransitionTests : IDisposable
         // 迁移后的树必须能通过正式校验，否则它就不该被交给后面的流程。
         ChapterTreeDocument.ValidatePlan(result.State.Plan, result.State.RecognitionTree!.LineCount);
     }
+
+    // ── 另一条换版本的路径：文件是本程序之外改的，手里没有任何补丁 ────────────────────────────
+
+    /// <summary>直接在磁盘上改文本，然后问迁移该怎么做：没有补丁，只有前后两个版本。</summary>
+    private static async Task<SourceTransitionResult> EditOutsideAsync(string path, SourceTransitionState state,
+        Func<string, string> edit)
+    {
+        await File.WriteAllTextAsync(path, edit(await File.ReadAllTextAsync(path)), new UTF8Encoding(false));
+        return await SourceVersionTransition.AfterExternalEditAsync(state, path);
+    }
+
+    [Fact]
+    public async Task An_edit_made_outside_the_program_keeps_the_chapters_it_did_not_touch()
+    {
+        // 有人在记事本里改了一句正文。标题行一个没动，所以每一章的身份都该跟过来 ——
+        // 而不是"原文变了，整棵树重新识别"。
+        var (path, state) = await LoadAsync();
+        var result = await EditOutsideAsync(path, state, text => text.Replace("正文三。", "正文三，改过一句。"));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.False(result.FellBackToRecognition);
+        Assert.Equal(state.Plan!.Entries.Count, result.Rebinds.Count);
+        Assert.All(result.Rebinds, rebind => Assert.True(rebind.Survived, rebind.Title));
+        Assert.Equal(state.Plan.Entries.Count, result.State.Plan!.Entries.Count);
+        Assert.Contains("正文三，改过一句。", result.State.Source.Lines.Select(line => line.Text));
+    }
+
+    [Fact]
+    public async Task An_edit_outside_the_program_that_deletes_a_heading_reports_that_chapter_as_lost()
+    {
+        var (path, state) = await LoadAsync();
+        // 连标题带正文删掉第二章：它前后的两章在新行号下会贴在一起，但那是两章，不是一章。
+        var result = await EditOutsideAsync(path, state, text => text.Replace("第二章 中途\n正文二。\n", ""));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Contains(result.Rebinds, rebind => rebind.Title == "第二章 中途" && !rebind.Survived);
+        // 没被碰过的那几章不受影响：一次外部编辑不该连累它们。
+        Assert.Equal(state.Plan!.Entries.Count - 1, result.Rebinds.Count(rebind => rebind.Survived));
+    }
+
+    [Fact]
+    public async Task An_unchanged_file_is_not_reported_as_a_failed_migration()
+    {
+        // 这个检查在工作台每次激活时都会跑，而多数激活之前文件根本没变。
+        // 在那里报一次失败，等于教用户忽略真正要紧的那条消息。
+        var (path, state) = await LoadAsync();
+        var result = await SourceVersionTransition.AfterExternalEditAsync(state, path);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Empty(result.Rebinds);
+        Assert.Contains("未变", result.Message);
+        Assert.Contains(result.Steps, step => step.Outcome == SourceTransitionStepOutcome.AlreadySatisfied);
+    }
 }

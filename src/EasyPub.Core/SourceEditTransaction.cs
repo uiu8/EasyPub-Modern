@@ -474,4 +474,83 @@ public static class SourceEditRecovery
             .Where(journal => journal.State is not (RepairJournalState.Committed
                 or RepairJournalState.RolledBack or RepairJournalState.Conflict))
             .ToArray();
+
+    /// <summary>
+    /// Everything a person still has to be told about: in flight, or stopped because the file and the
+    /// journal disagreed.
+    ///
+    /// <para><see cref="Pending"/> deliberately excludes a conflict — recovery cannot act on one — but a
+    /// window that showed only <see cref="Pending"/> would report "nothing to finish" while a conflict sat
+    /// there for ever. The two lists answer different questions and both are needed.</para>
+    /// </summary>
+    public static IReadOnlyList<RepairJournal> Outstanding(string transactionRoot) =>
+        new RepairJournalStore(transactionRoot).LoadAll()
+            .Where(journal => journal.State is not (RepairJournalState.Committed
+                or RepairJournalState.RolledBack))
+            .ToArray();
+
+    /// <summary>
+    /// Finishes every unfinished transaction under one root, oldest first.
+    ///
+    /// <para>This is the entry a window calls. It exists so that "the program starts and tidies up after a
+    /// crash" and "a person presses a button" are the same call, rather than two implementations that agree
+    /// only until one of them is edited.</para>
+    ///
+    /// <para>One transaction failing does not stop the others. Two books each holding an interrupted edit is
+    /// exactly the case this is for, and stopping at the first would leave the second unfinished with no
+    /// record of why.</para>
+    /// </summary>
+    public static async Task<SourceRecoveryReport> RecoverAllAsync(string transactionRoot,
+        Func<RepairJournal, CancellationToken, Task>? afterReplace = null, CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(transactionRoot);
+        var results = new List<SourceEditResult>();
+        foreach (var journal in Pending(transactionRoot))
+        {
+            token.ThrowIfCancellationRequested();
+            // Captured rather than closed over the loop variable, so each transaction's callback is told
+            // which transaction it is finishing.
+            var captured = journal;
+            var callback = afterReplace is null
+                ? null
+                : new Func<CancellationToken, Task>(inner => afterReplace(captured, inner));
+            results.Add(await RecoverAsync(transactionRoot, journal.TransactionId, callback, token)
+                .ConfigureAwait(false));
+        }
+        return new SourceRecoveryReport(results);
+    }
+}
+
+/// <summary>What one pass over the unfinished transactions did.</summary>
+public sealed record SourceRecoveryReport(IReadOnlyList<SourceEditResult> Results)
+{
+    /// <summary>Nothing was unfinished, which is the ordinary case.</summary>
+    public static SourceRecoveryReport Empty { get; } = new([]);
+
+    /// <summary>The ones it finished on its own — the file is now the version that was agreed to.</summary>
+    public IReadOnlyList<SourceEditResult> Completed =>
+        Results.Where(result => result.Outcome == SourceEditOutcome.Committed).ToArray();
+
+    /// <summary>The ones it abandoned without ever touching the file.</summary>
+    public IReadOnlyList<SourceEditResult> Discarded =>
+        Results.Where(result => result.Outcome == SourceEditOutcome.RolledBack).ToArray();
+
+    /// <summary>The ones a person has to look at.</summary>
+    public IReadOnlyList<SourceEditResult> NeedsAttention =>
+        Results.Where(result => result.NeedsAttention).ToArray();
+
+    public bool AnythingHappened => Results.Count > 0;
+
+    /// <summary>One sentence for a status line, with the counts that are not zero.</summary>
+    public string Describe()
+    {
+        if (Results.Count == 0) return "没有未完成的原文修改。";
+        var parts = new List<string>();
+        if (Completed.Count > 0) parts.Add($"补完 {Completed.Count} 次原文替换");
+        if (Discarded.Count > 0) parts.Add($"作废 {Discarded.Count} 条未改动原文的记录");
+        var untouched = Results.Count - Completed.Count - Discarded.Count - NeedsAttention.Count;
+        if (untouched > 0) parts.Add($"{untouched} 条无需处理");
+        if (NeedsAttention.Count > 0) parts.Add($"{NeedsAttention.Count} 条需要人工确认");
+        return "上次的原文修改：" + string.Join("，", parts) + "。";
+    }
 }

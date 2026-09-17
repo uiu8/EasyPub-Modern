@@ -8,19 +8,35 @@ namespace EasyPub.Desktop;
 
 public partial class ChapterEditorWindow
 {
-    internal void ApplyRepairEntries(IReadOnlyList<ChapterTreeEntry> entries)
+    /// <summary>
+    /// Adopts the tree a repair produced, and — when the repair also wrote the TXT — the new version of the
+    /// book itself.
+    ///
+    /// <para>Taking the whole document rather than only its entries is what keeps the window honest about
+    /// which version it is showing. While this only replaced the rows, <c>_document</c> still described the
+    /// pre-repair file, so a repair that had just written the TXT left the window claiming "原文已变化 · 刷新"
+    /// about the program's own edit.</para>
+    /// </summary>
+    internal void ApplyRepairEntries(ChapterTreeDocument document)
     {
+        // A snapshot written in the old numbering cannot be replayed onto the new one, so the history goes
+        // with the version it belongs to.
+        var changedSource = !string.Equals(document.SourceSha256, _document.SourceSha256, StringComparison.OrdinalIgnoreCase);
+        _document = document;
+        _sourceChanged = false;
+        _baselineSource = TryLoadBaseline(document.SourcePath, _encodingMode);
+        if (changedSource) { _undo.Clear(); _redo.Clear(); _confirmedGroups.Clear(); }
         Mutate(() =>
         {
             Roots.Clear();
-            foreach (var root in BuildTree(entries)) Roots.Add(root);
+            foreach (var root in BuildTree(document.Entries)) Roots.Add(root);
             _selectedNode = Flatten().FirstOrDefault();
         }, markManual: false);
         // The pass just wrote the directory it used next to this source hash, so re-read it: the rows can
         // now name the chapters the release has and this file does not.
         InvalidateBreakpoints();
         SetOperationSelection(_selectedNode is null ? [] : [_selectedNode]);
-        RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons();
+        RefreshSelectedLines(); UpdateSummary(); UpdateActionButtons(); UpdateSaveState(); UpdateUndoRedoButtons();
     }
 
     private async void AutoRepair_Click(object sender, RoutedEventArgs e)
@@ -89,6 +105,12 @@ public partial class ChapterEditorWindow
     {
         if (_sourceChanged || !IsEnabled) return;
         var snapshot = _document.WithEntries(Flatten().Select(node => node.ToEntry()).ToArray());
+        // The tree the reader arranged, as a plan that can be saved beside the bytes it belongs to.
+        //
+        // Every snapshot this window took used to be bytes-only, because nothing ever handed the second
+        // argument over — so 「恢复到当时的完整书稿状态」 was offered by the restore layer and could never be
+        // chosen in the interface. Passing it here is what makes that option real.
+        var snapshotPlan = snapshot.CreatePlan(snapshot.Entries);
         using var cancellation = new CancellationTokenSource();
 
         // The standalone button owns its progress window; a caller that already has a dialog passes a
@@ -147,8 +169,10 @@ public partial class ChapterEditorWindow
             IReadOnlyCollection<ReferenceAction>? chosen = null;
             var store = SourceBackupStore.CreateDefault();
             var volumeLevels = outcome.Catalog?.VolumeTitles.Count > 0;
-            var applier = new ChapterRepairApplier(store.DirectoryPath,
-                backupPathFor: (_, _) => Task.FromResult<string?>(store.EnsureSnapshot(snapshot)));
+            // No backup callback: the applier takes the pre-edit snapshot itself, through the backup layer,
+            // and hands it both the text and the tree. That is what makes 「恢复原文与当时的章节树」 possible
+            // for this version later — every snapshot used to come out bytes-only.
+            var applier = new ChapterRepairApplier(store.DirectoryPath);
             var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions, snapshot,
                 // Read from settings rather than fixed here: which mode the window opens on is a preference
                 // about how much the program may do on its own, and the window still shows both options and
@@ -156,8 +180,11 @@ public partial class ChapterEditorWindow
                 defaultMode: AppSettingsStore.CreateDefault().Load().DefaultRepairLandingMode,
                 previewMode: (mode, actions) => applier.Preview(outcome, snapshot, mode, actions, volumeLevels),
                 decisionsFor: (mode, actions) => ChapterRepairApplier.DecisionsFor(
-                    ChapterRepairApplier.ProposalFor(outcome, snapshot)!, mode, actions))
-            { Owner = _rulesDialog ?? this };
+                    ChapterRepairApplier.ProposalFor(outcome, snapshot)!, mode, actions));
+            // Same reason as ThemedWindow: this runs after an await, where the workbench may have been closed
+            // and an exception would take the process down rather than fail the repair.
+            try { dialog.Owner = _rulesDialog ?? this; }
+            catch (InvalidOperationException) { }
             if (dialog.ShowDialog() != true || chosen is null)
             { SetReviewResult("未应用修复方案，当前章节树保持不变。"); return; }
 
@@ -172,10 +199,10 @@ public partial class ChapterEditorWindow
             {
                 // The mode that has always existed: change the tree, leave the file alone. No transaction is
                 // created for it, and by the design's invariant none ever should be.
-                var backup = store.EnsureSnapshot(snapshot);
+                var backup = store.EnsureSnapshot(snapshot, snapshotPlan);
                 var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
                 if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
-                ApplyRepairEntries(applied);
+                ApplyRepairEntries(_document.WithEntries(applied));
                 SetReviewResult(outcome.Verdict + "。可撤销。备份：" + backup
                     + (receipt is null ? "" : "；移除清单：" + receipt));
                 return;
@@ -193,7 +220,7 @@ public partial class ChapterEditorWindow
             var movedDocument = ReloadAfterEdit(result, snapshot);
             if (outcome.Catalog is { } usedCatalog)
                 ReferenceCatalogInput.SaveCatalog(movedDocument.SourceSha256, usedCatalog);
-            ApplyRepairEntries(movedDocument.Entries);
+            ApplyRepairEntries(movedDocument);
             SetReviewResult(outcome.Verdict + "。" + result.Message);
         }
         catch (OperationCanceledException) { SetReviewResult("目录修复已取消，当前章节树保持不变。"); }

@@ -13,6 +13,7 @@ namespace EasyPub.Desktop;
 public partial class ChapterEditorWindow : Window
 {
     private ChapterTreeDocument _document;
+    private SourceTextDocument? _baselineSource;
     private readonly TextEncodingMode _encodingMode;
     private readonly Stack<ChapterEditorSnapshot> _undo = [];
     private readonly Stack<ChapterEditorSnapshot> _redo = [];
@@ -48,6 +49,11 @@ public partial class ChapterEditorWindow : Window
         Closed += (_, _) => { _editorClosed = true; _breakpointRequest?.Cancel(); _catalogRequest?.Cancel(); };
         _document = document;
         _encodingMode = encodingMode;
+        // The text this window's models describe, read while the file is still that version. It exists for
+        // the migration that runs when somebody edits the TXT outside the program: by the time a version
+        // check notices the difference, the old text is gone from disk, and without it there is nothing to
+        // compare against — only a guess at what the person changed.
+        _baselineSource = TryLoadBaseline(document.SourcePath, encodingMode);
         _detectUnrecognized = detectUnrecognized;
         Roots = BuildTree(document.Entries);
         if (savedPlan?.SourceSha256 == document.SourceSha256)
@@ -409,8 +415,29 @@ public partial class ChapterEditorWindow : Window
         UpdateActionButtons();
     }
 
-    private async void RebuildFromRules_Click(object sender, RoutedEventArgs e)
+    private async void RebuildFromRules_Click(object sender, RoutedEventArgs e) =>
+        await RebuildOrMigrateAsync(sender);
+
+    /// <summary>
+    /// What 「重新识别」 and 「原文已变化 · 刷新」 each do, decided by which button was pressed.
+    ///
+    /// <para>Separate from the click handler — which is an <c>async void</c> and cannot be awaited — so the
+    /// rule itself is testable: a test presses the refresh button's own entry and reads the outcome, rather
+    /// than calling the migration and asserting something the button might not actually reach.</para>
+    /// </summary>
+    internal async Task RebuildOrMigrateAsync(object? sender)
     {
+        // 「刷新原文」在原文被外部改过时是**迁移**，不是重新识别。
+        //
+        // 这两个动作以前是同一个：改了一个错字再刷新，全部手工编排就没了，而界面上没有任何一处说过
+        // 这件事会发生。迁移保住标题、层级和目录勾选，只把行号搬到新版本上，并列出真的没能跟过来的
+        // 那几章。「重新识别」按钮仍然是重新识别 —— 那是用户明确要求丢掉手调树的那条路。
+        if (_sourceChanged && ReferenceEquals(sender, RefreshSourceButton))
+        {
+            await MigrateToExternalEditAsync();
+            return;
+        }
+
         if (!ConfirmWorkbench("重新识别会替换当前手动章节树。同一原文版本可撤销；原文变化时开启新历史。是否继续？", "重新识别章节")) return;
         try
         {

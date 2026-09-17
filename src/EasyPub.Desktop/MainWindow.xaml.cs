@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     private string _textEditorPath = "notepad.exe";
     private readonly Dictionary<string, SourceFileStamp> _pendingSourceEdits = new(StringComparer.OrdinalIgnoreCase);
     private bool _refreshingSourceEdits;
+    private static bool _sourceEditsFinished;
     private int _coverPreviewVersion;
     private readonly FavoriteFolderStore _favoriteFolderStore = FavoriteFolderStore.CreateDefault();
     private readonly MetadataMappingStore _metadataMappingStore = MetadataMappingStore.CreateDefault();
@@ -682,7 +683,45 @@ public partial class MainWindow : Window
     private static string DescribeAvailableUpdate(Version version) =>
         $"发现新版本 {EasyPub.Core.AppVersion.Display(version)}；打开「设置 → 更新与关于」可立即更新。";
 
-    private async void MainWindow_Activated(object? sender, EventArgs e) => await RefreshPendingSourceEditsAsync();
+    private async void MainWindow_Activated(object? sender, EventArgs e)
+    {
+        await FinishInterruptedSourceEditsAsync();
+        await RefreshPendingSourceEditsAsync();
+    }
+
+    /// <summary>
+    /// Finishes whatever source edit a previous run was in the middle of.
+    ///
+    /// <para>Runs on the first activation rather than in the constructor: recovery reads — and may write —
+    /// book files, and a window that has not been shown yet has nowhere to report what it did.</para>
+    ///
+    /// <para>The guard is <b>static</b>, so this happens once for the process rather than once per window.
+    /// There is one main window in the application, so the only thing the difference shows up in is a test
+    /// suite that builds many of them: there, every extra window meant another full scan of the backup
+    /// folder — and, worse, another chance to finish a transaction belonging to the person running the
+    /// tests.</para>
+    ///
+    /// <para>Nothing is shown but the status line. A modal dialog here would block whatever is on screen
+    /// until somebody clicks it — at startup, of all moments — and a conflict is not urgent: the record is
+    /// on disk and 「原文备份…」 lists it.</para>
+    ///
+    /// <para>It calls the same <see cref="SourceEditRecovery.RecoverAllAsync"/> the backup window's button
+    /// calls. Two entries, one implementation — the alternative is a startup path that drifts from the one a
+    /// person can press.</para>
+    /// </summary>
+    private async Task FinishInterruptedSourceEditsAsync()
+    {
+        if (_sourceEditsFinished) return;
+        _sourceEditsFinished = true;
+        try
+        {
+            var report = await SourceEditRecovery.RecoverAllAsync(SourceBackupStore.CreateDefault().DirectoryPath);
+            if (!report.AnythingHappened) return;
+            StatusText.Text = report.Describe()
+                + (report.NeedsAttention.Count == 0 ? "" : "可打开「原文备份…」查看这些记录。");
+        }
+        catch (Exception error) { StatusText.Text = "无法收尾上次的原文修改：" + error.Message; }
+    }
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {

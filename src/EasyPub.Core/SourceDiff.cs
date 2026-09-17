@@ -32,27 +32,78 @@ public static class SourceDiff
         ArgumentNullException.ThrowIfNull(from);
         ArgumentNullException.ThrowIfNull(to);
 
-        var operations = new List<SourceOperation>();
-        var matched = Walk(from, to, (sourceLine, index) =>
-        {
-            var text = to.Lines[index].Text;
-            // An inserted line is anchored to the old line it follows, which is what makes its position
-            // unambiguous when the same text appears more than once. Nothing consumed yet means it goes in
-            // front of line 1.
-            var anchor = sourceLine > 0
-                ? (SourceAnchor)new AfterOriginalLine(sourceLine)
-                : new BeforeOriginalLine(1);
-            operations.Add(new InsertLineAtAnchor(anchor, text)
-            {
-                OperationId = "ins-" + index.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ActionId = "restore",
-            });
-        });
+        // The new lines that have no original are collected rather than turned into operations here: whether
+        // one of them is really an <b>edit</b> of a line depends on the lines after it, and that is only known
+        // once the walk has finished.
+        var inserts = new List<(int Anchor, int Index)>();
+        var matched = Walk(from, to, (anchor, index) => inserts.Add((anchor, index)));
 
-        // A line of the old text that nothing matched has to go.
+        var operations = new List<SourceOperation>();
+        var replaced = new HashSet<int>();
+
+        // One batch of inserts — the ones anchored after the same old line — sits where a run of consecutive
+        // old lines was dropped. The first min(inserted, dropped) of each are paired up line by line and
+        // written as <b>replacements</b> rather than as a delete plus an insert.
+        //
+        // Not for brevity. A delete plus an insert leaves the coordinate map with no answer for that line, so
+        // every chapter whose body contained it loses it: measured on a book where one body sentence was
+        // edited outside the program, that chapter came back as "no body left" and its identity was dropped.
+        // A replacement keeps the line, which is what actually happened to it.
+        foreach (var group in inserts.GroupBy(insert => insert.Anchor).OrderBy(group => group.Key))
+        {
+            var anchor = group.Key;
+            var batch = group.OrderBy(insert => insert.Index).ToArray();
+
+            // The old lines this batch landed among: the unmatched run that starts right after the anchor.
+            var dropped = new List<int>();
+            for (var line = anchor + 1; line <= from.Lines.Count && !matched.Contains(line); line++)
+                dropped.Add(line);
+
+            var paired = 0;
+            // The batch at the very top of the file is never paired. "Insert before line 1" and "replace line
+            // 1" are not the same position to the renderer: the insert takes the default terminator, while the
+            // replacement keeps the terminator the old line had — and on an empty file that line has none, so
+            // pairing there glues the first two lines together.
+            if (anchor > 0)
+                while (paired < batch.Length && paired < dropped.Count)
+                {
+                    var line = dropped[paired];
+                    operations.Add(new ReplaceOriginalLine(line, from.Lines[line - 1].Text,
+                        to.Lines[batch[paired].Index].Text)
+                    {
+                        OperationId = "rep-" + line.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ActionId = "restore",
+                    });
+                    replaced.Add(line);
+                    paired++;
+                }
+
+            if (paired == batch.Length) continue;
+
+            // More new lines than dropped ones: the rest are genuine insertions, and they belong <b>after the
+            // last line this batch replaced</b>. Anchoring them at the original anchor would place them before
+            // the replacements, and the file would come out reordered; anchoring them at one of the dropped
+            // lines is worse — the renderer skips a deleted line and its trailing inserts with it, so they
+            // would vanish from the output altogether.
+            //
+            // Nothing was paired only at the very top of the file, and there the anchor is where they go.
+            var at = paired > 0 ? dropped[paired - 1] : anchor;
+            for (var rest = paired; rest < batch.Length; rest++)
+                operations.Add(new InsertLineAtAnchor(
+                    at > 0 ? new AfterOriginalLine(at) : new BeforeOriginalLine(1), to.Lines[batch[rest].Index].Text)
+                {
+                    // Zero-padded so the renderer's ordinal sort of same-anchor inserts is the text's order:
+                    // "ins-10" sorts before "ins-9", and a batch of ten is an ordinary batch.
+                    OperationId = "ins-" + batch[rest].Index.ToString("D6",
+                        System.Globalization.CultureInfo.InvariantCulture),
+                    ActionId = "restore",
+                });
+        }
+
+        // A line of the old text that nothing matched, and that no replacement already claimed, has to go.
         for (var line = 1; line <= from.Lines.Count; line++)
         {
-            if (matched.Contains(line)) continue;
+            if (matched.Contains(line) || replaced.Contains(line)) continue;
             operations.Add(new DeleteOriginalLine(line, from.Lines[line - 1].Text)
             {
                 OperationId = "del-" + line.ToString(System.Globalization.CultureInfo.InvariantCulture),

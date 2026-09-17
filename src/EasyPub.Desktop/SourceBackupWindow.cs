@@ -11,14 +11,12 @@ namespace EasyPub.Desktop;
 /// <summary>
 /// The backup folder, as a reader sees it.
 ///
-/// Three things this window deliberately does NOT do.
+/// Three things this window deliberately does NOT do on its own.
 ///
-/// It does not restore over a book. Writing a backup back onto a source file is a source mutation: it
-/// needs the same transaction, journal and crash recovery as any other edit, because a half-restored
-/// TXT with a stale chapter tree is worse than no restore at all. Until that layer exists (Phase 5)
-/// the strongest action here is exporting a *copy* to a path the reader picks, which is what the
-/// 「导出为 TXT 副本…」 button does. The old 「恢复为 TXT 副本…」 caption was already export-only; the
-/// name now says so.
+/// It does not restore over a book <b>by itself</b>. Writing a backup back onto a source file is a source
+/// mutation, so it goes through the same transaction, journal and crash recovery as any repair —
+/// <see cref="RestoreTransaction"/>, the layer this window used to wait for. What the window adds is the
+/// asking: which version, and whether the chapter tree saved with it comes back too.
 ///
 /// It does not delete without being told. Retention removes only the oldest snapshots beyond the
 /// configured limit, never the baseline, and never while a transaction journal exists for the book.
@@ -47,8 +45,10 @@ public sealed class SourceBackupWindow : Window
     {
         TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0),
     };
+    private readonly Button _restore = new() { Content = "恢复此版本…", Margin = new Thickness(4) };
     private readonly Button _exportOne = new() { Content = "导出为 TXT 副本…", Margin = new Thickness(4) };
     private readonly Button _exportAll = new() { Content = "导出所选书籍的全部备份…", Margin = new Thickness(4) };
+    private readonly Button _finish = new() { Content = "完成未完成的原文修改…", Margin = new Thickness(4) };
     private readonly Button _openFolder = new() { Content = "打开备份位置", Margin = new Thickness(4) };
     private readonly Button _prune = new() { Content = "按保留数清理…", Margin = new Thickness(4) };
     private readonly Button _remove = new() { Content = "将所选备份移入回收站…", Margin = new Thickness(4) };
@@ -86,12 +86,22 @@ public sealed class SourceBackupWindow : Window
         header.Children.Add(locationRow);
         DockPanel.SetDock(header, Dock.Top); panel.Children.Add(header);
 
-        var footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        // Two rows rather than one: the actions a reader came here for, and the housekeeping. A single row
+        // of seven buttons pushed 「关闭」 off the window at the default width.
+        var footer = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var close = new Button { Content = "关闭", Margin = new Thickness(4), IsCancel = true };
         close.Click += (_, _) => Close();
-        footer.Children.Add(_exportOne); footer.Children.Add(_exportAll);
-        footer.Children.Add(_openFolder); footer.Children.Add(_prune); footer.Children.Add(_remove);
-        footer.Children.Add(close);
+        actions.Children.Add(_restore); actions.Children.Add(_exportOne); actions.Children.Add(_exportAll);
+        actions.Children.Add(close);
+        var housekeeping = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        housekeeping.Children.Add(_finish); housekeeping.Children.Add(_openFolder);
+        housekeeping.Children.Add(_prune); housekeeping.Children.Add(_remove);
+        footer.Children.Add(actions); footer.Children.Add(housekeeping);
         DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
 
         var status = _statusText;
@@ -147,8 +157,10 @@ public sealed class SourceBackupWindow : Window
 
         Content = panel;
         _books.SelectionChanged += (_, _) => ReloadEntries();
+        _restore.Click += Restore_Click;
         _exportOne.Click += ExportOne_Click;
         _exportAll.Click += ExportAll_Click;
+        _finish.Click += FinishPending_Click;
         _openFolder.Click += (_, _) => OpenInExplorer(_store.DirectoryPath);
         _prune.Click += Prune_Click;
         _remove.Click += Remove_Click;
@@ -160,6 +172,13 @@ public sealed class SourceBackupWindow : Window
         string UpdatedLabel, string SourceStateLabel);
 
     private BookRow? Selected => _books.SelectedItem as BookRow;
+
+    /// <summary>What the entry grid is showing, for a caller driving this window without a mouse.</summary>
+    internal IReadOnlyList<SourceBackupEntry> Entries =>
+        _entries.ItemsSource as IReadOnlyList<SourceBackupEntry> ?? [];
+
+    /// <summary>Selects one row, for a caller driving this window without a mouse.</summary>
+    internal void SelectEntry(SourceBackupEntry entry) => _entries.SelectedItem = entry;
 
     private void Reload()
     {
@@ -195,10 +214,118 @@ public sealed class SourceBackupWindow : Window
         var row = Selected;
         _entries.ItemsSource = row is null ? null : _store.Inventory().ListEntries(row.SourcePath);
         var hasEntries = row is not null && _entries.Items.Count > 0;
+        _restore.IsEnabled = hasEntries;
         _exportOne.IsEnabled = hasEntries;
         _exportAll.IsEnabled = hasEntries;
         _remove.IsEnabled = hasEntries;
         _prune.IsEnabled = row is not null;
+        _finish.IsEnabled = true;
+        var outstanding = SourceEditRecovery.Outstanding(_store.DirectoryPath).Count;
+        _finish.Content = outstanding == 0
+            ? "完成未完成的原文修改…"
+            : $"完成未完成的原文修改（{outstanding} 条）…";
+    }
+
+    /// <summary>
+    /// Puts the selected backup back onto the book.
+    ///
+    /// <para>Internal so a test drives this exact entry rather than a copy of it. The whole point of the
+    /// restore layer is that there is one way a source file gets written; a test that built its own
+    /// <see cref="RestoreTransaction"/> would be checking the layer, not the button.</para>
+    ///
+    /// <para>The state it starts from is read fresh from disk, because no workbench is open here. The
+    /// migration still runs and still reports which saved chapter identities could follow — it is the plan
+    /// it moves that is thinner, not the machinery.</para>
+    /// </summary>
+    internal async Task<RestoreResult?> RestoreSelectedAsync(RestoreTargetPolicy policy,
+        CancellationToken token = default)
+    {
+        if (_entries.SelectedItems.Count != 1 || _entries.SelectedItem is not SourceBackupEntry entry
+            || Selected is not { } book) return null;
+        if (!File.Exists(book.SourcePath))
+        {
+            _statusText.Text = "这本书的原文已经不在了，无法恢复。";
+            return null;
+        }
+
+        // Read from the entry rather than from the policy: a full-state restore of a version with no saved
+        // tree has to be refused by the transaction, and handing it null is how that refusal is reached.
+        var savedTree = policy == RestoreTargetPolicy.FullBookState
+            ? _store.ReadSnapshotTree(book.SourcePath, entry.Sha256)
+            : null;
+
+        try
+        {
+            IsEnabled = false;
+            var current = await SourceTransitionState.LoadFromAsync(book.SourcePath, token: token);
+            var result = await new RestoreTransaction(_store.DirectoryPath, book.SourcePath)
+                .ExecuteAsync(current, entry.Path, policy, savedTree: savedTree, token: token);
+            Reload();
+            _statusText.Text = result.Message
+                + (result.Succeeded ? "" : "（原文没有改动）");
+            return result;
+        }
+        catch (Exception error)
+        {
+            Reload();
+            _statusText.Text = "恢复未完成：" + error.Message;
+            return null;
+        }
+        finally { IsEnabled = true; }
+    }
+
+    private void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        if (_entries.SelectedItems.Count != 1 || _entries.SelectedItem is not SourceBackupEntry entry
+            || Selected is not { } book)
+        { InkDialog.Show(this, "请选择一份备份。", "恢复此版本"); return; }
+        if (!File.Exists(book.SourcePath))
+        { InkDialog.Show(this, "这本书的原文已经不在了，无法恢复。", "恢复此版本"); return; }
+
+        var dialog = new SourceRestoreWindow(book.SourceName, entry, entry.HasSavedTree) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _ = RestoreSelectedAsync(dialog.Policy);
+    }
+
+    /// <summary>
+    /// Finishes whatever a previous run left half-done, through the same call the main window makes on
+    /// startup. The button exists so this is reachable without restarting, and so a conflict the automatic
+    /// pass reported can be looked at from where the records are.
+    /// </summary>
+    internal async Task<SourceRecoveryReport> FinishPendingAsync(CancellationToken token = default)
+    {
+        try
+        {
+            IsEnabled = false;
+            var report = await SourceEditRecovery.RecoverAllAsync(_store.DirectoryPath, token: token);
+            Reload();
+            _statusText.Text = report.Describe()
+                + (report.NeedsAttention.Count == 0 ? ""
+                    : " " + string.Join(" ", report.NeedsAttention.Select(result => result.Message)));
+            return report;
+        }
+        catch (Exception error)
+        {
+            Reload();
+            _statusText.Text = "收尾未完成：" + error.Message;
+            return SourceRecoveryReport.Empty;
+        }
+        finally { IsEnabled = true; }
+    }
+
+    private async void FinishPending_Click(object sender, RoutedEventArgs e)
+    {
+        var outstanding = SourceEditRecovery.Outstanding(_store.DirectoryPath);
+        if (outstanding.Count == 0)
+        {
+            _statusText.Text = "没有未完成的原文修改。";
+            return;
+        }
+        if (InkDialog.Show(this,
+                $"有 {outstanding.Count} 条原文修改没有收尾。\n"
+                + "程序按磁盘上的实际内容判断：能补完的补完，作废的作废，对不上的留给人工核对。\n是否继续？",
+                "完成未完成的原文修改", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        await FinishPendingAsync();
     }
 
     private void ChangeLocation_Click(object sender, RoutedEventArgs e)

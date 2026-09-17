@@ -53,7 +53,7 @@ public class ChapterRepairApplierTests : IDisposable
         subject.Proposal.DefaultDecisions(mode);
 
     private ChapterRepairApplier Applier() => new(Path.Combine(_workspace, "事务记录"),
-        backupPathFor: (_, _) => Task.FromResult<string?>(Path.Combine(_workspace, "备份", "修复前.txt")));
+        backupPathFor: (_, _, _) => Task.FromResult<string?>(Path.Combine(_workspace, "备份", "修复前.txt")));
 
     // ── 预览：窗口上显示的数字必须就是接下来会发生的事 ──
 
@@ -121,6 +121,31 @@ public class ChapterRepairApplierTests : IDisposable
     }
 
     // ── EditSource：真的写文件 ──
+
+    [Fact]
+    public async Task The_appliers_own_snapshot_carries_the_tree_so_the_version_can_be_restored_whole()
+    {
+        // 不传 backupPathFor 时，应用器自己经备份层取快照，并且**把树一起交出去**。少了这一步，
+        // 恢复层里的「恢复原文与当时的章节树」就永远选不了 —— 每一份快照都只有字节。
+        var subject = await LoadAsync();
+        var root = Path.Combine(_workspace, "自带备份");
+        var applier = new ChapterRepairApplier(root);
+
+        var result = await applier.ApplyAsync(subject.Proposal, subject.Document,
+            Decisions(subject, RepairLandingMode.EditSource), RepairLandingMode.EditSource);
+        Assert.True(result.Changed, result.Message);
+
+        var store = new SourceBackupStore(root);
+        var snapshot = Assert.Single(store.Inventory().ListEntries(subject.BookPath),
+            entry => entry.Kind == SourceBackupKind.Snapshot);
+        Assert.True(snapshot.HasSavedTree, "应用器保存的快照里没有章节树。");
+
+        // 而且那份树确实是这次修复之前、用户编排过的那一棵。
+        var saved = store.ReadSnapshotTree(subject.BookPath, snapshot.Sha256);
+        Assert.NotNull(saved);
+        Assert.Equal(subject.OriginalSha, saved!.SourceSha256);
+        Assert.Equal(subject.Document.Entries.Count, saved.Tree.Entries.Count);
+    }
 
     [Fact]
     public async Task Edit_source_rewrites_the_book_and_moves_the_tree()
@@ -279,7 +304,7 @@ public class ChapterRepairApplierTests : IDisposable
                 deleteDuplicateFromSource: true))).ToArray();
 
         var applier = new ChapterRepairApplier(Path.Combine(_workspace, "自修复事务"),
-            backupPathFor: (_, _) => Task.FromResult<string?>(Path.Combine(_workspace, "自修复备份", "修复前.txt")));
+            backupPathFor: (_, _, _) => Task.FromResult<string?>(Path.Combine(_workspace, "自修复备份", "修复前.txt")));
         var proposal = RepairProposalFactory.Create(SelfRepairPlanner.BasisName,
             RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
                 document.RecognitionOptions, null), outcome.Plan);

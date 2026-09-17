@@ -70,22 +70,34 @@ public sealed record RepairApplicationResult(
 public sealed class ChapterRepairApplier
 {
     private readonly string _transactionRoot;
-    private readonly Func<string, CancellationToken, Task<string?>>? _backupPathFor;
+    private readonly Func<ChapterTreeDocument, ChapterTreePlan?, CancellationToken, Task<string?>> _backupPathFor;
     private readonly TimeProvider _clock;
 
     /// <summary>
-    /// <paramref name="backupPathFor"/> decides where the pre-edit copy goes. It is a callback rather than a
-    /// path because the backup layer owns that decision — see <see cref="SourceBackupStore"/> — and a
-    /// second answer here would be a second backup policy.
+    /// <paramref name="backupPathFor"/> decides where the pre-edit copy goes, and is handed <b>both</b> the
+    /// text and the tree the reader arranged.
+    ///
+    /// <para>The tree is part of it because a snapshot without one cannot later be restored as a full book
+    /// state — the interface can only offer 「恢复原文与当时的章节树」 for versions that saved both. While this
+    /// callback took a path and nothing else, the one caller there was had nothing to pass and every snapshot
+    /// came out bytes-only, so that option existed in the restore layer and could never be chosen.</para>
+    ///
+    /// <para>When it is null the backup layer is used with the transaction root as its directory — the same
+    /// folder the journal goes in. A second answer here would be a second backup policy.</para>
     /// </summary>
     public ChapterRepairApplier(string transactionRoot,
-        Func<string, CancellationToken, Task<string?>>? backupPathFor = null, TimeProvider? clock = null)
+        Func<ChapterTreeDocument, ChapterTreePlan?, CancellationToken, Task<string?>>? backupPathFor = null,
+        TimeProvider? clock = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(transactionRoot);
         _transactionRoot = Path.GetFullPath(transactionRoot);
-        _backupPathFor = backupPathFor;
+        _backupPathFor = backupPathFor ?? DefaultBackup;
         _clock = clock ?? TimeProvider.System;
     }
+
+    private Task<string?> DefaultBackup(ChapterTreeDocument document, ChapterTreePlan? tree,
+        CancellationToken token) =>
+        Task.FromResult<string?>(new SourceBackupStore(_transactionRoot).EnsureSnapshot(document, tree));
 
     /// <summary>
     /// Whether the plan can still be applied, and what it would do — from the repair outcome the confirmation
@@ -278,9 +290,6 @@ public sealed class ChapterRepairApplier
             return new RepairApplicationResult(false, mode,
                 "渲染出来的原文与现在完全相同，无需事务。", compilation);
 
-        var backupPath = _backupPathFor is null ? null : await _backupPathFor(document.SourcePath, token)
-            .ConfigureAwait(false);
-
         var before = new SourceTransitionState(
             document.SourcePath,
             original,
@@ -293,6 +302,11 @@ public sealed class ChapterRepairApplier
             LoadedHash = document.SourceSha256,
             RenderedHash = document.SourceSha256,
         };
+
+        // Taken before anything is written, and given the tree as well as the text: a snapshot with no tree
+        // cannot be restored as a full book state, so that option would never be offered for a version this
+        // program saved itself.
+        var backupPath = await _backupPathFor(document, before.Plan, token).ConfigureAwait(false);
 
         SourceTransitionResult? transition = null;
         ChapterTreePlan? finalPlan = null;

@@ -47,16 +47,22 @@ public class FaultInjectionTests : IDisposable
     private sealed record Crash(string BookPath, string OriginalSha, string NewSha, string TransactionId,
         string TransactionRoot, string BackupPath, SourceEditResult Result);
 
-    /// <summary>Runs a transaction that throws once it reaches <paramref name="crashAt"/>.</summary>
-    private async Task<Crash> CrashAtAsync(RepairJournalState crashAt)
+    /// <summary>
+    /// Runs a transaction that throws once it reaches <paramref name="crashAt"/>.
+    ///
+    /// <para><paramref name="name"/> exists so a test can crash <b>two</b> books into the same transaction
+    /// root: two interrupted books is the case the batch entry point is for, and it cannot be built from one
+    /// book with two journals, because a journal names its own source file.</para>
+    /// </summary>
+    private async Task<Crash> CrashAtAsync(RepairJournalState crashAt, string name = "书稿")
     {
-        var bookPath = Path.Combine(_workspace, "书稿.txt");
+        var bookPath = Path.Combine(_workspace, name + ".txt");
         await File.WriteAllTextAsync(bookPath, OriginalText, new UTF8Encoding(false));
         var document = SourceTextDocument.Load(bookPath);
         var originalSha = SourceFileHasher.HashOf(bookPath);
         var newSha = SourceFileHasher.HashOfRendered(document, RepairedText);
         var transactionRoot = Path.Combine(_workspace, "事务记录");
-        var backupPath = Path.Combine(_workspace, "备份", "原文.txt");
+        var backupPath = Path.Combine(_workspace, "备份", name + "-原文.txt");
 
         var transaction = new SourceEditTransaction(transactionRoot, bookPath,
             afterReplace: (_, _) => Task.CompletedTask)
@@ -255,5 +261,79 @@ public class FaultInjectionTests : IDisposable
         var recovered = await SourceEditRecovery.RecoverAsync(Path.Combine(_workspace, "事务记录"), "没有这个事务");
         Assert.False(recovered.Succeeded);
         Assert.Contains("找不到", recovered.Message);
+    }
+
+    // ── 批量入口：界面上的「完成未完成的原文修改」和启动时的自动收尾走的是同一个调用 ──────────────
+
+    [Fact]
+    public async Task An_empty_transaction_root_reports_nothing_to_finish()
+    {
+        var report = await SourceEditRecovery.RecoverAllAsync(Path.Combine(_workspace, "还没有事务"));
+
+        Assert.Empty(report.Results);
+        Assert.False(report.AnythingHappened);
+        Assert.Contains("没有未完成", report.Describe());
+    }
+
+    [Fact]
+    public async Task One_pass_finishes_every_unfinished_book()
+    {
+        // 两本书各自崩在不同的点上，一次恢复都要收尾 —— 这是窗口上的按钮与启动时自动收尾共用的入口。
+        var first = await CrashAtAsync(RepairJournalState.TempWritten, "第一本");
+        var second = await CrashAtAsync(RepairJournalState.StateMigrated, "第二本");
+
+        var report = await SourceEditRecovery.RecoverAllAsync(first.TransactionRoot);
+
+        Assert.Equal(2, report.Results.Count);
+        Assert.Equal(2, report.Completed.Count);
+        Assert.Empty(report.NeedsAttention);
+        Assert.Equal(first.NewSha, SourceFileHasher.HashOf(first.BookPath));
+        Assert.Equal(second.NewSha, SourceFileHasher.HashOf(second.BookPath));
+        Assert.False(new RepairJournalStore(first.TransactionRoot).HasPending());
+    }
+
+    [Fact]
+    public async Task Recovering_everything_twice_changes_nothing_the_second_time()
+    {
+        var crash = await CrashAtAsync(RepairJournalState.SourceReplaced);
+
+        await SourceEditRecovery.RecoverAllAsync(crash.TransactionRoot);
+        var once = SourceFileHasher.HashOf(crash.BookPath);
+        var second = await SourceEditRecovery.RecoverAllAsync(crash.TransactionRoot);
+
+        Assert.Empty(second.Results);
+        Assert.Equal(once, SourceFileHasher.HashOf(crash.BookPath));
+        Assert.Equal(crash.NewSha, once);
+    }
+
+    [Fact]
+    public async Task A_conflict_is_reported_as_unfinished_even_though_recovery_cannot_touch_it()
+    {
+        // Pending 刻意排除冲突（恢复对它无能为力），但一个只看 Pending 的窗口会在一条冲突记录一直
+        // 摆在那里时报告"没有未完成的事"。两个清单回答的是不同的问题，所以两个都要有。
+        var crash = await CrashAtAsync(RepairJournalState.SourceReplaced);
+        await File.WriteAllTextAsync(crash.BookPath, OriginalText + "别人加的一行\n", new UTF8Encoding(false));
+
+        await SourceEditRecovery.RecoverAllAsync(crash.TransactionRoot);
+
+        Assert.Empty(SourceEditRecovery.Pending(crash.TransactionRoot));
+        var outstanding = SourceEditRecovery.Outstanding(crash.TransactionRoot);
+        Assert.Single(outstanding);
+        Assert.Equal(RepairJournalState.Conflict, outstanding[0].State);
+    }
+
+    [Fact]
+    public async Task A_conflict_on_one_book_does_not_stop_the_other_from_being_finished()
+    {
+        var tangled = await CrashAtAsync(RepairJournalState.SourceReplaced, "被改过的");
+        await File.WriteAllTextAsync(tangled.BookPath, OriginalText + "别人加的一行\n", new UTF8Encoding(false));
+        var clean = await CrashAtAsync(RepairJournalState.TempWritten, "干净的");
+
+        var report = await SourceEditRecovery.RecoverAllAsync(tangled.TransactionRoot);
+
+        Assert.Equal(2, report.Results.Count);
+        Assert.Single(report.NeedsAttention);
+        Assert.Contains(report.NeedsAttention, result => result.TransactionId == tangled.TransactionId);
+        Assert.Equal(clean.NewSha, SourceFileHasher.HashOf(clean.BookPath));
     }
 }

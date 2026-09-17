@@ -46,11 +46,77 @@ public class SourceDiffTests
         var source = Text(from);
         var patch = SourceDiff.Patch(source, Text(to));
 
-        // 一删一插，而不是六行替换。
-        Assert.Equal(2, patch.Operations.Count);
-        Assert.Single(patch.Operations.OfType<DeleteOriginalLine>());
-        Assert.Single(patch.Operations.OfType<InsertLineAtAnchor>());
-        Assert.Equal(3, patch.Operations.OfType<DeleteOriginalLine>().Single().Line);
+        // 一个操作，命中那一行 —— 不是六行替换，也不是一删一插。
+        var replacement = Assert.IsType<ReplaceOriginalLine>(Assert.Single(patch.Operations));
+        Assert.Equal(3, replacement.Line);
+        Assert.Equal("第二章 中途", replacement.ExpectedOldText);
+        AssertRoundTrips(from, to);
+    }
+
+    [Fact]
+    public void A_changed_line_is_one_replacement_not_a_removal_plus_an_addition()
+    {
+        // 这条检查的不是"脚本够不够短"，而是坐标表的语义。一删一插会让那一行在新版本里没有对应行，
+        // 于是正文里出现一个洞 —— 实测中，正文被改过一句的那一章因此被判成"没有正文"，身份被丢掉。
+        var from = "第一章 起点\n正文一。\n第二章 中途\n正文二。\n";
+        var to = "第一章 起点\n正文一。\n第二章 中途\n正文二，改过一句。\n";
+
+        var source = Text(from);
+        var patch = SourceDiff.Patch(source, Text(to));
+
+        Assert.Empty(patch.Operations.OfType<DeleteOriginalLine>());
+        Assert.Empty(patch.Operations.OfType<InsertLineAtAnchor>());
+        var replacement = Assert.IsType<ReplaceOriginalLine>(Assert.Single(patch.Operations));
+        Assert.Equal(4, replacement.Line);
+
+        // 坐标表必须能回答"原来第 4 行去哪了"：答案是新文本的第 4 行，而且它确实被改写这一版认领了。
+        var rendered = SourcePatchRenderer.Render(source, patch);
+        var map = SourceCoordinateMap.Build(source, patch, rendered.Text);
+        Assert.Equal(4, map.TryMap(4));
+        Assert.True(map.IsReplaced(4));
+        AssertRoundTrips(from, to);
+    }
+
+    [Fact]
+    public void A_run_of_changed_lines_is_paired_line_by_line()
+    {
+        var from = "第一章 起点\n甲\n乙\n丙\n尾。\n";
+        var to = "第一章 起点\n甲改\n乙改\n丙改\n尾。\n";
+
+        var source = Text(from);
+        var patch = SourceDiff.Patch(source, Text(to));
+
+        // 三行各改一次，就是三次改写 —— 而不是"删三行、插三行"。
+        Assert.Equal([2, 3, 4], patch.Operations.OfType<ReplaceOriginalLine>().Select(r => r.Line).Order());
+        Assert.Empty(patch.Operations.OfType<DeleteOriginalLine>());
+        Assert.Empty(patch.Operations.OfType<InsertLineAtAnchor>());
+        AssertRoundTrips(from, to);
+    }
+
+    [Fact]
+    public void More_new_lines_than_dropped_ones_land_after_the_replacements()
+    {
+        // 一批新行比它换掉的旧行多：多出来的那几行必须排在改写之后。
+        // 锚在原来那个锚点上会让它们排到改写行**前面**，整段顺序就乱了 —— 这是配对最容易错的地方。
+        var from = "第一章 起点\n甲\n乙\n尾。\n";
+        var to = "第一章 起点\n甲改\n乙改\n丙新\n丁新\n尾。\n";
+
+        var source = Text(from);
+        var patch = SourceDiff.Patch(source, Text(to));
+
+        Assert.Equal([2, 3], patch.Operations.OfType<ReplaceOriginalLine>().Select(r => r.Line).Order());
+        Assert.Equal(2, patch.Operations.OfType<InsertLineAtAnchor>().Count());
+        AssertRoundTrips(from, to);
+    }
+
+    [Fact]
+    public void A_batch_of_ten_insertions_keeps_the_text_order()
+    {
+        // 同一个锚点上的多个插入，渲染顺序靠 OperationId 的序数比较决定，而 "ins-10" 在字典序里
+        // 排在 "ins-9" 前面 —— 一批十个是普通情况，不是边界。
+        var from = "标题\n尾行。\n";
+        var to = "标题\n" + string.Concat(Enumerable.Range(1, 12).Select(n => $"新{n}\n")) + "尾行。\n";
+
         AssertRoundTrips(from, to);
     }
 
