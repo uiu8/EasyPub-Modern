@@ -58,7 +58,7 @@ public class AutoRepairReportTests
 
         // Deselecting a row must be able to reach the action behind it. When nothing matches, the
         // checkbox looks interactive and silently does nothing — the failure this window exists to fix.
-        foreach (var item in outcome.Report.SelectMany(group => group.Items).Where(item => item.Kind is not null))
+        foreach (var item in outcome.Report.SelectMany(group => group.Items).Where(item => item.Selectable && item.Kind is not null))
         {
             var matches = plan!.Actions.Where(action => action.Kind == item.Kind && action.Line == item.Line).ToArray();
             Assert.True(matches.Length == 1,
@@ -68,8 +68,9 @@ public class AutoRepairReportTests
             Assert.Equal(matches[0].Recommended, plan.DefaultSelection.Contains(matches[0]));
         }
 
-        // A row nobody can select — an entry the directory never located — must not claim it can.
-        foreach (var item in outcome.Report.SelectMany(group => group.Items).Where(item => item.Kind is null))
+        // A row nobody can select — a chapter whose body is missing, or an entry the directory never
+        // located — must not claim it can.
+        foreach (var item in outcome.Report.SelectMany(group => group.Items).Where(item => !item.Selectable))
             Assert.DoesNotContain(plan!.Actions, action => action.Line == item.Line && action.Recommended);
     }
 

@@ -6,6 +6,17 @@ public enum ReferenceActionKind
     AddChapter,
     /// <summary>章节已存在，但标题与参考目录写法不同。</summary>
     Retitle,
+    /// <summary>
+    /// 参考目录有、章节树没有，而且这一段原文里根本没有标题行——只有一段正文。正文确实在，
+    /// 缺的只是"哪一行算标题"。默认不勾选：把正文里的某一行立成标题会改变成品的章节划分，
+    /// 必须由人看过再决定。可以收录，因为"被并进邻章的正文"和"真的没有正文"必须分开报。
+    /// </summary>
+    AdoptHeading,
+    /// <summary>
+    /// 参考目录有，但原文里这一章的位置既没有标题、也没有正文。软件不会补造正文，只如实报告。
+    /// 仅作提示，永远不可勾选。
+    /// </summary>
+    MissingBody,
     /// <summary>同一章在原文出现多次；参考目录只出现一次，可只保留与参考位置一致的一份。</summary>
     RemoveDuplicate,
     /// <summary>本地有、参考目录没有。只提示，永不自动处理。</summary>
@@ -70,8 +81,14 @@ public static class ReferencePlanner
 
     public static ReferencePlan Build(ChapterTreeDocument document, IReadOnlyList<ChapterTreeEntry> entries, ReferenceCatalog catalog, CancellationToken cancellationToken = default)
     {
-        var available = RepairIntegrity.Coverage(entries);
-        var lines = Enumerable.Range(1, document.LineCount).Select(index => available.Contains(index) ? document.SourceLine(index)?.Text ?? "" : "").ToArray();
+        // Every source line goes to the locator, including the ones the chapter tree already covers.
+        // Blanking them out was meant to stop a known heading from being matched a second time, and it
+        // did that — but it also made the *body* of a stretch whose headings were never recognised
+        // invisible: a run of paragraphs between two chapters reads as "no content here" to the
+        // locator, which then reaches for a heading far away and drags the whole tail of the book out
+        // of order. knownHeadings already says which lines are headings, so the locator can have the
+        // text as well.
+        var lines = Enumerable.Range(1, document.LineCount).Select(index => document.SourceLine(index)?.Text ?? "").ToArray();
         var knownHeadings = entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is not null
                 && e.RecognitionSource is not ("reference-volume" or "inferred-volume"))
             .GroupBy(e => e.TitleLineNumber!.Value).ToDictionary(g => g.Key, g => g.Last().Title);
@@ -87,9 +104,27 @@ public static class ReferencePlanner
             var volume = chapter.Volume is null ? "" : $"[{chapter.Volume}] ";
             if (chapter.Line is null)
             {
-                actions.Add(new(ReferenceActionKind.AddChapter, 0, chapter.Reference.Title,
-                    $"{volume}参考目录有此章，但原文中未找到对应标题行，需要人工核对，不会自动插入。",
-                    null, chapter.Reference, false));
+                // A chapter the locator could not pin down is one of three quite different things, and
+                // lumping them together is what made "not located" useless: the body may be sitting in
+                // the text with its heading lost (recoverable), or the chapter may genuinely be absent
+                // (not recoverable). Both used to be reported the same way, and the second kind used to
+                // be reported not at all.
+                var gap = NeighbourGapOf(location, chapter);
+                var heading = FindHeadingCandidate(document, entries, gap);
+                var occupied = GapHasOccupiedLines(entries, gap);
+                actions.Add(heading is { } found
+                    ? new(ReferenceActionKind.AdoptHeading, found.Line, chapter.Reference.Title,
+                        $"{volume}这一段原文没有标题行；第 {found.Line} 行「{TruncateTitle(found.Text)}」最像标题。" +
+                        "勾选后以该行为章节标题，正文保持原样、一行不动；不勾选则原文保持不动。",
+                        null, chapter.Reference, false)
+                    : occupied
+                        ? new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
+                            $"{volume}参考目录有此章，但它该在的位置被别的内容占着（原文这一段已归属其他章节）。" +
+                            "多半是源文件重复拼接或版本差异，需要人工核对哪一份才是这一章；软件不会自动挪动正文。",
+                            null, chapter.Reference, false)
+                        : new(ReferenceActionKind.MissingBody, 0, chapter.Reference.Title,
+                            $"{volume}参考目录有此章，但原文这一段里既没有标题行、也没有对应正文。软件不会补造正文，请核对来源与文件完整性。",
+                            null, chapter.Reference, false));
                 continue;
             }
             var line = chapter.Line.Value;
@@ -140,8 +175,93 @@ public static class ReferencePlanner
                 : $"参考目录含 {catalog.VolumeTitles.Count} 卷，原文中存在独立卷标题行，可另行建立卷层级。";
             actions.Add(new(ReferenceActionKind.VolumeNote, 0, string.Join("、", catalog.VolumeTitles), detail, null, null, false));
         }
+        // One chapter, one action. A chapter can produce both an AddChapter (a line agreeing on the
+        // number) and an AdoptHeading (a heading-looking line elsewhere in the gap), and offering both
+        // would put two rows in the change list for the same directory entry — a row the user can tick
+        // twice, producing two entries for one chapter. The located line wins: it was confirmed, the
+        // adopted one was guessed.
+        var located = actions.Where(action => action.Kind == ReferenceActionKind.AddChapter)
+            .Select(action => action.Title).ToHashSet(StringComparer.Ordinal);
+        if (located.Count > 0)
+            actions.RemoveAll(action => action.Kind == ReferenceActionKind.AdoptHeading && located.Contains(action.Title));
         return new(catalog, location, actions);
     }
+
+    /// <summary>
+    /// The lines a chapter could be hiding in: strictly between the chapters the locator did place,
+    /// before and after it in reference order.
+    /// </summary>
+    private static (int Lower, int Upper) NeighbourGapOf(ReferenceLocation location, LocatedChapter chapter)
+    {
+        var index = location.Chapters.ToList().FindIndex(candidate => ReferenceEquals(candidate, chapter));
+        var lower = 0;
+        var upper = int.MaxValue;
+        for (var probe = index - 1; probe >= 0; probe--)
+            if (location.Chapters[probe].Line is int before) { lower = before; break; }
+        for (var probe = index + 1; probe < location.Chapters.Count; probe++)
+            if (location.Chapters[probe].Line is int after) { upper = after; break; }
+        return (lower, upper);
+    }
+
+    /// <summary>
+    /// Finds the line inside a gap that could stand as the missing chapter's heading. Deliberately
+    /// strict — the line must be short and must not read as a sentence — because the result is offered
+    /// to the user as "this could be the title", and a wrong offer costs more than a missing one: the
+    /// body would be cut in the wrong place.
+    ///
+    /// A line already covered by another chapter's body is still a candidate. That is the normal shape
+    /// of this defect: when a heading goes unrecognised, the paragraph that carried it is simply
+    /// absorbed into the chapter above, so insisting on "no owner" would find nothing in exactly the
+    /// case the check exists for. Adopting it cuts the line back out of that chapter at apply time.
+    /// </summary>
+    private static (int Line, string Text)? FindHeadingCandidate(ChapterTreeDocument document,
+        IReadOnlyList<ChapterTreeEntry> entries, (int Lower, int Upper) gap)
+    {
+        // A heading the tree already has is not a candidate: recommending "第六十九章 …" for a missing
+        // 第七十七章 would put the same line in two chapters. Only lines that are body text today can
+        // be adopted as a heading.
+        var headings = entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is not null)
+            .Select(e => e.TitleLineNumber!.Value).ToHashSet();
+        var from = Math.Max(1, gap.Lower + 1);
+        var to = Math.Min(document.LineCount, gap.Upper - 1);
+        for (var line = from; line <= to; line++)
+        {
+            if (headings.Contains(line)) continue;
+            var text = document.SourceLine(line)?.Text.Trim() ?? "";
+            if (text.Length is < 2 or > 40) continue;
+            if (text.IndexOfAny(['。', '！', '？', '；']) >= 0) continue;
+            if (text.All(c => char.IsDigit(c) || char.IsWhiteSpace(c))) continue;
+            // The line has to look like a chapter heading to be worth offering as one. Aggregator
+            // releases put leave notices between chapters ("请假一天", "今天的更新也会晚一些") and those
+            // are short standalone lines too — recommending one as a title would invent a chapter out
+            // of an announcement. A number, or a 章/回 marker, is what a real heading has.
+            if (!text.Any(char.IsDigit) && text.IndexOfAny(['章', '回', '节']) < 0) continue;
+            return (line, text);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// True when the gap a missing chapter should occupy is already owned by other chapters. That is a
+    /// different finding from an empty stretch: the text is there, it just belongs somewhere else —
+    /// which is what a duplicated block in the source looks like from the directory's point of view.
+    /// Telling the two apart is the difference between "your file is incomplete" and "your file has a
+    /// repeated section", and only one of those is worth re-downloading the book for.
+    /// </summary>
+    private static bool GapHasOccupiedLines(IReadOnlyList<ChapterTreeEntry> entries, (int Lower, int Upper) gap)
+    {
+        // A gap can come out reversed when the placed neighbours themselves are out of order — the
+        // locator guarantees each chapter a line, not that the lines ascend. There is no stretch to
+        // inspect in that case, so it is not reported as occupied.
+        if (gap.Upper <= gap.Lower) return false;
+        var owned = RepairIntegrity.Coverage(entries);
+        for (var line = gap.Lower + 1; line < gap.Upper; line++)
+            if (owned.Contains(line)) return true;
+        return false;
+    }
+
+    /// <summary>Keeps a pasted paragraph from swallowing the detail line.</summary>
+    private static string TruncateTitle(string text) => text.Length <= 30 ? text : text[..30] + "…";
 
     /// <summary>
     /// Applies the selected actions and returns the rebuilt chapter tree. Titles come from the
@@ -175,6 +295,13 @@ public static class ReferencePlanner
             switch (action.Kind)
             {
                 case ReferenceActionKind.AddChapter when action.Line > 0 && allowed.Contains(action.Line):
+                    keep.TryAdd(action.Line, new(Guid.NewGuid().ToString("N"),
+                        useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(), 1, true, action.Line, []));
+                    break;
+                // A heading adopted from the body behaves exactly like a located one from here on: the
+                // line becomes a chapter boundary and the rebuilt pass hands it the text below it. The
+                // difference is only in how the line was chosen — the directory could not confirm it.
+                case ReferenceActionKind.AdoptHeading when action.Line > 0 && allowed.Contains(action.Line):
                     keep.TryAdd(action.Line, new(Guid.NewGuid().ToString("N"),
                         useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(), 1, true, action.Line, []));
                     break;
@@ -274,19 +401,38 @@ public static class ReferencePlanner
             var index = result.FindIndex(e => e.Id == action.EntryId);
             if (action.Kind == ReferenceActionKind.Retitle && useReferenceTitles && index >= 0)
                 result[index] = result[index] with { Title = action.Title };
-            else if (action.Kind == ReferenceActionKind.AddChapter && action.Line > 0
-                && !result.Any(e => e.TitleLineNumber == action.Line))
+            else if (action.Kind is ReferenceActionKind.AddChapter or ReferenceActionKind.AdoptHeading
+                && action.Line > 0 && !result.Any(e => e.TitleLineNumber == action.Line))
             {
-                index = result.FindIndex(e => e.ContentRanges.Any(r => r.StartLine <= action.Line && r.EndLine >= action.Line));
-                if (index < 0 || result[index].RecognitionSource == "manual") continue;
-                var owner = result[index];
-                var body = RepairIntegrity.Coverage([owner]);
-                if (owner.TitleLineNumber is int title) body.Remove(title);
-                var tail = body.Where(line => line > action.Line).ToArray();
-                result[index] = owner with { ContentRanges = RepairIntegrity.Ranges(body.Where(line => line < action.Line)) };
-                result.Insert(index + 1, new ChapterTreeEntry(Guid.NewGuid().ToString("N"),
-                    useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(),
-                    owner.IsFrontMatter ? 1 : owner.Level, true, action.Line, RepairIntegrity.Ranges(tail)) { RecognitionSource = "reference" });
+                // Both kinds insert a chapter at an existing source line. They differ only in where the
+                // line may come from: an AddChapter line was located, so it can be a heading that lies
+                // between two chapters and belongs to neither; an AdoptHeading line was guessed from
+                // the body, so it must be cut out of the chapter that currently carries it.
+                var owner = result.FindIndex(e => e.ContentRanges.Any(r => r.StartLine <= action.Line && r.EndLine >= action.Line));
+                if (owner < 0 && action.Kind == ReferenceActionKind.AdoptHeading) continue;
+                if (owner >= 0 && result[owner].RecognitionSource == "manual") continue;
+                var insertAt = owner + 1;
+                var level = 1;
+                if (owner >= 0)
+                {
+                    var carrying = result[owner];
+                    var body = RepairIntegrity.Coverage([carrying]);
+                    if (carrying.TitleLineNumber is int ownTitle) body.Remove(ownTitle);
+                    var tail = body.Where(line => line > action.Line).ToArray();
+                    result[owner] = carrying with { ContentRanges = RepairIntegrity.Ranges(body.Where(line => line < action.Line)) };
+                    level = carrying.IsFrontMatter ? 1 : carrying.Level;
+                    result.Insert(insertAt, new ChapterTreeEntry(Guid.NewGuid().ToString("N"),
+                        useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(),
+                        level, true, action.Line, RepairIntegrity.Ranges(tail)) { RecognitionSource = "reference" });
+                }
+                else
+                {
+                    // The located heading sits in no chapter's range, so it becomes one on its own; the
+                    // rebuilt pass hands it the text below it.
+                    result.Insert(Math.Min(insertAt, result.Count), new ChapterTreeEntry(Guid.NewGuid().ToString("N"),
+                        useReferenceTitles ? action.Title : document.SourceLine(action.Line)!.Text.Trim(),
+                        level, true, action.Line, []) { RecognitionSource = "reference" });
+                }
             }
             else if (action.Kind == ReferenceActionKind.RemoveDuplicate)
             {

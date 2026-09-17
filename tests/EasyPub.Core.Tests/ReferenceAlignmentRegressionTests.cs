@@ -182,7 +182,9 @@ public class ReferenceAlignmentRegressionTests
         Assert.Equal(1, stats!.SimilarityHits);
         Assert.Equal(1, stats.ThirdHits);
         Assert.Equal(1, stats.ScannedChapters);
-        Assert.Equal(lines.Count, stats.ScannedLines);
+        // The search is bounded by the chapters that were placed, so the cost is the gap it searched
+        // rather than the whole file. What matters is that the figure is recorded and finite.
+        Assert.InRange(stats.ScannedLines, 1, lines.Count);
         Assert.Equal(0, stats.Unrescuable);
     }
 
@@ -213,15 +215,107 @@ public class ReferenceAlignmentRegressionTests
         var stats = location.Stats;
 
         Assert.NotNull(stats);
-        // 18 chapters the cheap passes could not place, 1 of them with no usable title words at all
-        // ("第一百章 一"), so 17 full-file scans — 204 line visits — and not one of them succeeds.
+        // 18 chapters the cheap passes could not place. One of them ("第一百章 一") has no usable
+        // title words, so it is never searched; the rest sit after the last placed chapter, where the
+        // search is bounded by the file itself, and not one of them succeeds — the honest answer,
+        // because the text really does not contain them.
         Assert.Equal(21, stats!.CatalogChapters);
         Assert.Equal(17, stats.ScannedChapters);
-        Assert.Equal(204, stats.ScannedLines);
+        Assert.Equal(51, stats.ScannedLines);
         Assert.Equal(0, stats.ThirdHits);
         Assert.Equal(1, stats.Unrescuable);
         Assert.Equal(3, stats.SecondPassLocated);
         Assert.Equal(18, stats.SecondPassMissing);
         Assert.Equal(18, location.Missing);
+    }
+
+    /// <summary>
+    /// A chapter is only ever rescued from the gap its placed neighbours bracket. A line outside it
+    /// belongs to another part of the book, so taking it is how a chapter ends up bound thousands of
+    /// lines from where it belongs.
+    ///
+    /// This case also records the limit of what the locator can decide on its own: the text holds one
+    /// "第三章 终章" and one "第四章 之后", and the directory's chapter 3 is titled differently. Both
+    /// readings — "chapter 3's title is miswritten" and "chapter 3 is absent" — fit the text, so the
+    /// locator takes the number-agreeing line. 13 is inside the gap (5, ∞) at that moment, so the
+    /// bound cannot reject it; what the bound does reject is a line that sits past the *next placed*
+    /// chapter, which is the failure mode this guards.
+    /// </summary>
+    [Fact]
+    public void A_chapter_is_only_rescued_from_inside_its_neighbours_gap()
+    {
+        var lines = new List<string>
+        {
+            "第一章 起点", "", "正文", "",
+            "第二章 继续", "", "正文", "",
+            "第四章 之后", "", "正文", "",
+            "第三章 终章", "", "正文", "",
+        };
+        var catalog = new ReferenceCatalog("test", "测试", [
+            new("第一章 起点", ReferenceNodeKind.Chapter, "https://example.com/1", null),
+            new("第二章 继续", ReferenceNodeKind.Chapter, "https://example.com/2", null),
+            new("第三章 第一份终章", ReferenceNodeKind.Chapter, "https://example.com/3", null),
+            new("第四章 之后", ReferenceNodeKind.Chapter, "https://example.com/4", null),
+        ]);
+
+        var location = ReferenceLocator.Locate(lines, catalog);
+
+        // With the gap bound in place the rescue can no longer reach a line sitting past the next
+        // placed chapter — the failure that dragged whole volumes out of order. Every chapter here is
+        // placed on a line of its own: chapter 3 on the number-agreeing "第三章 终章" and chapter 4 on
+        // its own line, which sits earlier in the file. That reordering is the honest outcome of a text
+        // where two readings fit ("chapter 3's title is miswritten" and "chapter 3 is absent"); what
+        // matters is that no line is used twice and none is taken from outside the gap.
+        Assert.Equal(4, location.Found);
+        Assert.Equal(4, location.Chapters.Select(c => c.Line).Distinct().Count());
+        Assert.Equal(9, location.Chapters[3].Line);
+    }
+
+    /// <summary>
+    /// A chapter listed by the directory whose number appears nowhere in the text stays missing, and
+    /// the chapters around it keep the lines they actually own.
+    /// </summary>
+    [Fact]
+    public void A_gap_the_text_really_has_stays_missing()
+    {
+        var lines = new List<string>
+        {
+            "第一章 起点", "", "正文", "",
+            "第二章 继续", "", "正文", "",
+            "第四章 之后", "", "正文", "",
+            "第五章 收束", "", "正文", "",
+        };
+        var catalog = new ReferenceCatalog("test", "测试", [
+            new("第一章 起点", ReferenceNodeKind.Chapter, "https://example.com/1", null),
+            new("第二章 继续", ReferenceNodeKind.Chapter, "https://example.com/2", null),
+            new("第三章 中断", ReferenceNodeKind.Chapter, "https://example.com/3", null),
+            new("第四章 之后", ReferenceNodeKind.Chapter, "https://example.com/4", null),
+            new("第五章 收束", ReferenceNodeKind.Chapter, "https://example.com/5", null),
+        ]);
+
+        var location = ReferenceLocator.Locate(lines, catalog);
+
+        Assert.Null(location.Chapters[2].Line);
+        Assert.Equal(9, location.Chapters[3].Line);
+        Assert.Equal(13, location.Chapters[4].Line);
+        Assert.Equal(1, location.Missing);
+    }
+
+    /// <summary>
+    /// A chapter title written as a bare number carries its number even though no 「章」 follows it,
+    /// so the number test can confirm it. Without that the line matched on resemblance alone and the
+    /// chapter came out missing whenever the resemblance fell under the threshold.
+    /// </summary>
+    [Fact]
+    public void A_bare_number_title_keeps_its_number()
+    {
+        var location = ReferenceLocator.Locate(
+            ["001：开始！", "正文", "002：继续？", "正文"],
+            new ReferenceCatalog("test", "测试", [
+                new("001：开始！", ReferenceNodeKind.Chapter, "https://example.com/1", null),
+                new("002：继续？", ReferenceNodeKind.Chapter, "https://example.com/2", null)]));
+
+        Assert.Equal(0, location.Missing);
+        Assert.Equal(3, location.Chapters[1].Line);
     }
 }

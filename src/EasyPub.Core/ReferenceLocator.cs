@@ -40,13 +40,15 @@ public sealed record ReferenceLocationStats(
     int NumberHits,
     int WordsHits,
     int SimilarityHits,
-    int Unrescuable = 0)
+    int Unrescuable = 0,
+    int OutOfWindow = 0)
 {
     public int ThirdHits => NumberHits + WordsHits + SimilarityHits;
     public override string ToString() =>
         $"目录 {CatalogChapters} 章，标题候选行 {CandidateLines}；前两遍定位 {SecondPassLocated} 章、未定位 {SecondPassMissing} 章；" +
         $"兜底扫描 {ScannedChapters} 章 / {ScannedLines} 行，命中 {ThirdHits} 章（章号 {NumberHits} / 标题词 {WordsHits} / 相似度 {SimilarityHits}）" +
-        (Unrescuable > 0 ? $"；另 {Unrescuable} 章标题无词可搜，未扫描" : "");
+        (Unrescuable > 0 ? $"；另 {Unrescuable} 章标题无词可搜，未扫描" : "") +
+        (OutOfWindow > 0 ? $"；另 {OutOfWindow} 章在前后邻章之间没有可搜索区间，原文中确无此章" : "");
 }
 
 /// <summary>Per-stage cost of reference location, split so a slow book can be attributed to one stage.</summary>
@@ -172,9 +174,10 @@ public static class ReferenceLocator
                 .Select(pair => pair.Candidate)
                 .ToArray();
             rankedByChapter.Add(ranked);
-            // Strictly after the previous chapter when possible. This book contains repeated blocks,
-            // so a chapter's true line can sit before the cursor; falling back to the best remaining
-            // candidate keeps every reference chapter in the tree.
+            // Strictly after the previous chapter when possible. A repeated block means a chapter's true
+            // line can sit before the cursor — the copy is what `Lines` needs in order to be reported as
+            // a duplicate — so the fallback stays. What it may no longer do is reach past the chapter
+            // that follows: the gap bound in the third pass is where that is enforced.
             var agreeing = ranked.Where(candidate => NumberAgrees(key,candidate.Key)).ToArray();
             var exact = ranked.Where(candidate => candidate.Key.Canonical == key.Canonical).ToArray();
             var preferred = exact.Length > 0 ? exact : agreeing.Length > 0 ? agreeing : ranked;
@@ -190,28 +193,31 @@ public static class ReferenceLocator
             located.Add(new(node, node.VolumeTitle, chosen.Line, chosen.Text,
                 chosen.Key.Canonical == key.Canonical ? matches : []));
         }
-        // Second pass: a chapter that found no line after the cursor is placed between its located
-        // neighbours, so the rebuilt tree stays monotonic instead of appending it at the end.
+        // Second pass: a chapter the cursor walked past is placed inside the gap its *placed*
+        // neighbours bracket, which is the only place it can be. Before this it also accepted "the
+        // nearest remaining candidate on either side", and that is how a chapter whose own text is
+        // missing ended up sharing a line with a different volume's chapter of the same number.
         foreach (var index in pending)
         {
-            var previous = 0;
-            for (var probe = index - 1; probe >= 0; probe--)
-                if (located[probe].Line is { } before) { previous = before; break; }
-            var next = int.MaxValue;
-            for (var probe = index + 1; probe < located.Count; probe++)
-                if (located[probe].Line is { } after) { next = after; break; }
-            var available = rankedByChapter[index].Where(item => !used.Contains(item.Line)).ToArray();
-            var candidate = available.FirstOrDefault(item => item.Line > previous && item.Line < next)
-                ?? available.FirstOrDefault(item => item.Line > previous)
-                ?? available.OrderBy(item => Math.Abs(item.Line - previous)).FirstOrDefault();
+            var (previous, next) = NeighbourGap(located, index, lines.Count);
+            var candidate = rankedByChapter[index]
+                .Where(item => !used.Contains(item.Line) && item.Line > previous && item.Line < next)
+                .OrderBy(item => item.Line)
+                .FirstOrDefault();
             if (candidate is null) continue;
             used.Add(candidate.Line);
             located[index] = located[index] with { Line = candidate.Line, LocalTitle = candidate.Text };
         }
-        // Third pass: a reference chapter still unplaced gets a search over every remaining line.
-        // Sites pad titles with marketing suffixes ("（六千大章补更）"), which pushes the resemblance
-        // score below every threshold while the title itself is intact; and releases also carry
-        // mis-typed headings, which only a character-level comparison can find.
+        // Third pass: a reference chapter still unplaced gets a search over the lines between the
+        // chapters that *were* placed. Sites pad titles with marketing suffixes ("（六千大章补更）"),
+        // which pushes the resemblance score below every threshold while the title itself is intact;
+        // and releases also carry mis-typed headings, which only a character-level comparison can find.
+        //
+        // The neighbours are what makes the answer trustworthy. Searching the whole file let an
+        // unplaced chapter match the first line whose number agreed — in a book that restarts its
+        // numbering per volume that is a chapter from another volume, so it reported as located, the
+        // volume it belonged to reported as aligned, and every following chapter came out reordered.
+        // Missing is the honest answer when nothing between the neighbours matches.
         var forwardDone = System.Diagnostics.Stopwatch.GetTimestamp();
         var alreadyLocated = located.Count(chapter => chapter.Line is not null);
         TitleKey[]? lineKeys = null;
@@ -221,6 +227,7 @@ public static class ReferenceLocator
         var byWords = 0;
         var bySimilarity = 0;
         var unrescuable = 0;
+        var outOfWindow = 0;
         for (var index = 0; index < located.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -236,14 +243,19 @@ public static class ReferenceLocator
             // though the text was right there. Such a word is far too generic for a bare substring
             // hit, so for these an agreeing chapter number is required before the line is accepted.
             var shortTitle = words.Length < 3;
+            var (lower, upper) = NeighbourGap(located, index, lines.Count);
+            // An empty gap means the text really does not contain this chapter — the answer the report
+            // needs, rather than a line borrowed from elsewhere in the book.
+            if (lower + 1 >= upper) { outOfWindow++; continue; }
             // Every line's key, parsed once and reused for every still-unplaced chapter. Parsing
             // inside this loop would re-run the number regex once per chapter per line.
             lineKeys ??= ParseLineKeys(lines, volumePrefixes);
             scanned++;
-            // Search every line, not just the candidate set: a heading buried inside a long chapter
-            // may have no blank neighbour at all, and that is exactly how "skipped chapters" appear.
-            var (evidence, found) = SearchEveryLine(lines, lineKeys, used, key, words, shortTitle);
-            scannedLines += lines.Count;
+            // Search every line in the gap, not just the candidate set: a heading buried inside a long
+            // chapter may have no blank neighbour at all, and that is exactly how "skipped chapters"
+            // appear.
+            var (evidence, found) = SearchEveryLine(lines, lineKeys, used, key, words, shortTitle, lower + 1, upper);
+            scannedLines += upper - lower - 1;
             if (found < 0) continue;
             switch (evidence)
             {
@@ -265,7 +277,7 @@ public static class ReferenceLocator
             byNumber,
             byWords,
             bySimilarity)
-        { Unrescuable = unrescuable };
+        { Unrescuable = unrescuable, OutOfWindow = outOfWindow };
         return new(located, stats)
         {
             Timing = new(
@@ -281,17 +293,82 @@ public static class ReferenceLocator
         (long)System.Diagnostics.Stopwatch.GetElapsedTime(from, to).TotalMilliseconds;
 
     /// <summary>
-    /// Searches every remaining line for one still-unplaced chapter, strongest evidence first, and
-    /// reports which test accepted the line. Split out of <see cref="Locate"/> so the same search can
-    /// be measured and, if ever needed, reused — the loop itself is unchanged from the original.
+    /// Per-chapter candidate lines and their grades, in the order the first pass considers them.
+    /// Exists so a mislocation can be explained from evidence instead of reconstructed by reading the
+    /// ranking rules and hoping the reading is right.
+    /// </summary>
+    public static IReadOnlyList<(string Title, string[] Candidates)> RankCandidates(
+        IReadOnlyList<string> lines, ReferenceCatalog catalog)
+    {
+        var volumePrefixes = catalog.VolumeTitles
+            .Select(title => ReferenceOutline.ParseKey(title).Words)
+            .Where(words => words.Length >= 2)
+            .Distinct()
+            .OrderByDescending(words => words.Length)
+            .ToArray();
+        var candidates = new List<Candidate>();
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var text = lines[index].Trim();
+            if (text.Length is 0 or > MaximumTitleLength) continue;
+            var isolated = index == 0 || string.IsNullOrWhiteSpace(lines[index - 1])
+                || index == lines.Count - 1 || string.IsNullOrWhiteSpace(lines[index + 1]);
+            if (!isolated) continue;
+            var key = ReferenceOutline.ParseKey(text, volumePrefixes);
+            if (key.IsEmpty || !HeadingLike(text, key)) continue;
+            candidates.Add(new(index + 1, key, text));
+        }
+        var result = new List<(string, string[])>();
+        foreach (var node in catalog.Nodes.Where(n => n.Kind == ReferenceNodeKind.Chapter))
+        {
+            var key = ReferenceOutline.ParseKey(node.Title, volumePrefixes);
+            var ranked = candidates
+                .Select(candidate => (Candidate: candidate, Score: ReferenceOutline.MatchScore(key, candidate.Key)))
+                .Where(pair => pair.Score > 0)
+                .OrderByDescending(pair => NumberAgrees(key, pair.Candidate.Key))
+                .ThenByDescending(pair => pair.Score)
+                .ThenBy(pair => pair.Candidate.Line)
+                .Select(pair => $"行{pair.Candidate.Line}「{pair.Candidate.Text}」score={pair.Score} number={NumberAgrees(key, pair.Candidate.Key)} 参考Key=({key.Number}|{key.Words}) 本地Key=({pair.Candidate.Key.Number}|{pair.Candidate.Key.Words})")
+                .ToArray();
+            result.Add((node.Title, ranked));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The open interval an unplaced chapter must be found in: strictly between the nearest chapters
+    /// that *were* placed, before and after it in reference order. A line outside that gap belongs to
+    /// some other part of the book, so accepting it would put the chapter in the wrong place; an empty
+    /// gap means the text genuinely lacks the chapter.
+    /// </summary>
+    private static (int Lower, int Upper) NeighbourGap(IReadOnlyList<LocatedChapter> located, int index, int lineCount)
+    {
+        var lower = 0;
+        var upper = lineCount + 1;
+        for (var probe = index - 1; probe >= 0; probe--)
+            if (located[probe].Line is int before) { lower = before; break; }
+        for (var probe = index + 1; probe < located.Count; probe++)
+            if (located[probe].Line is int after) { upper = after; break; }
+        return (lower, upper);
+    }
+
+    /// <summary>
+    /// Searches the lines between two already-placed chapters for one still-unplaced chapter,
+    /// strongest evidence first, and reports which test accepted the line. Split out of
+    /// <see cref="Locate"/> so the same search can be measured and, if ever needed, reused.
+    /// <paramref name="lower"/> and <paramref name="upper"/> bound the search to the gap the chapter
+    /// belongs in; a chapter that is not in that gap is genuinely absent and must stay missing.
     /// </summary>
     private static (LocateEvidence Evidence, int Line) SearchEveryLine(
-        IReadOnlyList<string> lines, TitleKey[] lineKeys, HashSet<int> used, TitleKey key, string words, bool shortTitle)
+        IReadOnlyList<string> lines, TitleKey[] lineKeys, HashSet<int> used, TitleKey key, string words, bool shortTitle,
+        int lower, int upper)
     {
         var fallback = -1;
         var fuzzy = -1;
         var fuzzyScore = 0.0;
-        for (var line = 1; line <= lines.Count; line++)
+        var from = Math.Max(1, lower);
+        var to = Math.Min(lines.Count, upper - 1);
+        for (var line = from; line <= to; line++)
         {
             if (used.Contains(line)) continue;
             var text = lines[line - 1].Trim();
@@ -305,6 +382,11 @@ public static class ReferenceLocator
                 if (fallback < 0) fallback = line;
                 continue;
             }
+            // Below this point the evidence is resemblance, not identity, and prose resembles a title
+            // easily ("他想起那个约定" against 「那个约定」). Sentence punctuation is what separates
+            // them: a heading may carry 「，」 or 「：」 ("001：开始，然后呢"), but a line that ends a
+            // clause is a paragraph, and a paragraph is not allowed to stand in for a chapter title.
+            if (IsProseLine(text)) continue;
             // A title that merely grew or lost one character is still the same title. Anything
             // further apart is a different chapter and must stay missing rather than be guessed.
             if (Math.Abs(candidate.Words.Length - words.Length) > 1) continue;
@@ -314,6 +396,13 @@ public static class ReferenceLocator
         if (fallback >= 0) return (LocateEvidence.TitleWords, fallback);
         return (LocateEvidence.Similarity, fuzzy);
     }
+
+    /// <summary>
+    /// True when a line reads as a sentence rather than a heading. Deliberately narrow: only the
+    /// punctuation that ends a clause counts, because 「，」 and 「：」 are ordinary inside a title
+    /// ("001：开始，然后呢") while 「。」 「？」 「！」 「；」 are not.
+    /// </summary>
+    private static bool IsProseLine(string text) => text.IndexOfAny(['。', '！', '？', '；']) >= 0;
 
     private sealed record Candidate(int Line, TitleKey Key, string Text);
 

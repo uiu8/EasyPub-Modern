@@ -43,6 +43,10 @@ public sealed class RepairReviewWindow : Window
     private static readonly (ReferenceActionKind?, RepairChangeKind)[] GroupKeys =
     [
         (ReferenceActionKind.AddChapter, RepairChangeKind.AddedChapter),
+        // Sits beside AddChapter because it produces the same kind of change — a new entry in the tree
+        // — but it is a different decision: the heading this one adopts was not confirmed by the
+        // directory, so the row exists to be reviewed rather than trusted.
+        (ReferenceActionKind.AdoptHeading, RepairChangeKind.AddedChapter),
         (ReferenceActionKind.Retitle, RepairChangeKind.RetitledChapter),
         (ReferenceActionKind.DemoteExtra, RepairChangeKind.RemovedEntry),
         (ReferenceActionKind.KeepExtra, RepairChangeKind.RemovedEntry),
@@ -884,6 +888,8 @@ public sealed class RepairReviewWindow : Window
     private static string LabelOf((ReferenceActionKind?, RepairChangeKind) key) => key switch
     {
         (ReferenceActionKind.AddChapter, _) => "收录章节",
+        (ReferenceActionKind.AdoptHeading, _) => "疑似标题行（需你确认）",
+        (ReferenceActionKind.MissingBody, _) => "正文缺失",
         (ReferenceActionKind.Retitle, _) => "标题改按目录写法",
         (ReferenceActionKind.DemoteExtra, _) => "标题并回正文",
         (ReferenceActionKind.RemoveDuplicate, _) => "移除重复正文",
@@ -908,7 +914,7 @@ public sealed class RepairReviewWindow : Window
         (null, RepairChangeKind.RebuiltVolume) => "卷",
         (null, RepairChangeKind.RemovedLines) => "行",
         (null, RepairChangeKind.RemovedDuplicate or RepairChangeKind.ReassignedBody or RepairChangeKind.Reordered) => "处",
-        (ReferenceActionKind.RemoveDuplicate or ReferenceActionKind.DemoteExtra, _) => "处",
+        (ReferenceActionKind.RemoveDuplicate or ReferenceActionKind.DemoteExtra or ReferenceActionKind.AdoptHeading, _) => "处",
         _ => "章",
     };
 
@@ -916,6 +922,8 @@ public sealed class RepairReviewWindow : Window
     private static string BlurbOf((ReferenceActionKind?, RepairChangeKind) key) => key switch
     {
         (ReferenceActionKind.AddChapter, _) => "目录里有、原文中也找到了，勾选后收录为章节。取消勾选的不会收录。",
+        (ReferenceActionKind.AdoptHeading, _) => "这一段原文里没有标题行，只有正文——缺的是「哪一行算标题」。勾选后会以该行为章节标题切分正文，原文一行不动；不勾选原文保持原样。默认不勾选，请先看原文再决定。",
+        (ReferenceActionKind.MissingBody, _) => "参考目录有这些章，但原文这一段里标题和正文都没有。软件不会补造正文，这一组只报告、不能勾选。请核对来源与文件完整性。",
         (ReferenceActionKind.Retitle, _) => "章已存在，标题改用参考目录的写法。原文文字不变，只改标题。",
         (ReferenceActionKind.DemoteExtra, _) => "这些标题不再算章节，其下文字全部并回正文，一个字都不会丢。",
         (ReferenceActionKind.RemoveDuplicate, _) => "同一章在原文出现多次而目录只列一次。只保留与目录位置一致的一份，移除的每一行都会留档。",

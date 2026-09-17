@@ -132,6 +132,16 @@ public static class ReferenceOutline
     }
 
     /// <summary>
+    /// A chapter title written as a bare number ("001：开始！", "12. 归来"). The number is the whole
+    /// discrimination between such a heading and prose that happens to start with a number, and the
+    /// separator is what carries it: a dot or colon immediately after the digits. Digits inside a
+    /// sentence never match because the number has to start the line.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex BareNumberLead = new(
+        @"^\s*[【\[（(]?\s*(?<n>\d{1,4})\s*[.．:：、]\s*(?<t>\S.*)?$",
+        System.Text.RegularExpressions.RegexOptions.Compiled, TimeSpan.FromMilliseconds(200));
+
+    /// <summary>
     /// Splits a title into its number and its words. Numbering prefixes, known volume prefixes,
     /// punctuation, whitespace and Chinese/Arabic numeral variants are all normalised away so that
     /// "追忆杀戮时光（1）" and "追忆杀戮时光（一）" agree, and "第五篇 回归 序 王都（中）"
@@ -143,6 +153,17 @@ public static class ReferenceOutline
         var number = "";
         if (ChapterNumber.Match(text) is { Success: true } match && ParseNumeral(match.Groups["n"].Value) is { } value && value > 0)
             number = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // "001：开始！" states its number as plainly as "第一章 开始" does. Recognising such a line as a
+        // heading but leaving its number unread made the number test unusable for it, so the chapter
+        // had to be rescued by resemblance alone and went missing whenever that fell under the
+        // threshold — and every chapter left unplaced is one the last-resort pass then hunts for
+        // across the whole book.
+        else if (BareNumberLead.Match(text) is { Success: true } bare
+            && ParseNumeral(bare.Groups["n"].Value) is { } bareValue && bareValue > 0
+            && bare.Groups["t"].Success && bare.Groups["t"].Value.Any(char.IsLetter))
+        {
+            number = bareValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
         var words = ParseWords(Numbering.Replace(text, ""));
         if (volumePrefixes is not null && words.Length > 0)
             foreach (var prefix in volumePrefixes)

@@ -70,7 +70,8 @@ public class RepairReviewWindowTests
                 var boxes = Descendants<CheckBox>(window).ToArray();
                 // Every change the plan can bring about is on screen, with the action behind it, so the
                 // change list itself is what the user decides from — no category has to be opened first.
-                var expectedTotal = subject.Outcome.Report.SelectMany(group => group.Items).Count(item => item.Kind is not null);
+                var expectedTotal = subject.Outcome.Report.SelectMany(group => group.Items)
+                    .Count(item => item.Selectable && item.Kind is not null);
                 Assert.Equal(expectedTotal, boxes.Length);
                 Assert.Equal(plan.DefaultSelection.Count(), boxes.Count(box => box.IsChecked == true));
                 // Cancelling a row has to reach the action behind it, so the window exposes its own

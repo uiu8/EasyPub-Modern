@@ -17,6 +17,14 @@ public sealed record RepairReportItem(int Line, string Title, string Detail,
     /// "what changed" disagree, which is how a reader ends up staring at 286 unexplained changes.
     /// </summary>
     public bool Automatic { get; init; }
+
+    /// <summary>
+    /// False for a row that reports a finding without offering a choice — a chapter whose body is
+    /// missing has no action to take, and drawing a checkbox nothing can reach is the exact failure
+    /// the confirmation window exists to prevent. <see cref="Kind"/> still names the finding, so the
+    /// row can be grouped and explained; it just cannot be selected.
+    /// </summary>
+    public bool Selectable { get; init; } = true;
 }
 
 /// <summary>
@@ -349,6 +357,12 @@ public static class ChapterAutoRepair
 
         Add("补齐漏识别", ReferenceActionKind.AddChapter, "章",
             items => $"已在原文中定位并收录；例：第 {items[0].Line} 行「{items[0].Title}」");
+        // Reported apart from AddChapter on purpose: here the heading itself is missing and only the
+        // body survives, so adopting a line changes how the chapter is cut. AddChapter needs no such
+        // decision — the heading is right there and the directory confirms it. The example names the
+        // line rather than the title, because the title is the directory's and the line is the text's.
+        Add("疑似标题行（需你确认）", ReferenceActionKind.AdoptHeading, "处",
+            items => $"这一段原文没有标题行，正文还在；勾选后以该行作为章节标题，正文一行不动。例：第 {items[0].Line} 行将立为「{items[0].Title}」");
         Add("标题按目录改写", ReferenceActionKind.Retitle, "章",
             items => $"以参考目录写法为准；例：第 {items[0].Line} 行「{items[0].Title}」");
         Add("标题并回正文", ReferenceActionKind.DemoteExtra, "处", items => "移除所选标题边界，全部文字保留在正文中。");
@@ -390,10 +404,34 @@ public static class ChapterAutoRepair
                 spans.Select(span => new RepairReportItem(span.First, span.Title,
                     $"{span.First}–{span.Last}　随对齐自动建立") { Automatic = true }).ToArray()));
 
-        // Two groups, not one. An entry the directory numbered but the text does not show is a chapter
-        // worth looking for; an entry it never numbered is usually a leave notice the aggregator
-        // collected, and mixing 13 of the first with 251 of the second is what buried the 13. The
-        // numbered ones come first for the same reason: they are the only ones the user has to check.
+        // Four groups now, because "not located" covers two very different situations and merging them
+        // is what made the report unreadable. A chapter whose body is in the text but whose heading is
+        // gone can be reviewed (the AdoptHeading group above); one whose body is gone cannot, and
+        // saying so plainly is the only honest answer. The leave notices stay last: they are the
+        // majority on aggregator directories and nothing has to be done about them.
+        var noBody = plan.OfKind(ReferenceActionKind.MissingBody).ToArray();
+        if (noBody.Length > 0)
+        {
+            // The summary has to name both reasons, because they call for opposite responses: a
+            // stretch already owned by other chapters is a repeated or reordered source file, while an
+            // empty stretch is a genuinely incomplete one. Saying "the text has nothing here" for both
+            // is what sends a reader to re-download a file that was never incomplete.
+            var occupied = noBody.Count(action => action.Detail.Contains("被别的内容占着", StringComparison.Ordinal));
+            var empty = noBody.Length - occupied;
+            var reason = occupied > 0 && empty > 0
+                ? $"{occupied} 章的位置被别的内容占着（源文件重复拼接或版本差异），另 {empty} 章的位置确实没有文字。"
+                : occupied > 0
+                    ? "这些章的位置都被别的内容占着（源文件重复拼接或版本差异），需要人工核对哪一份才是这一章。"
+                    : "这些章的位置里既没有标题行、也没有正文。";
+            groups.Add(new("正文缺失（需人工核对）", noBody.Length, "章",
+                reason + "软件不会补造正文，也不会计较来源与文件完整性以外的事。",
+                // Kind is kept so the row can be grouped and explained, but Selectable is false: this
+                // group reports, it does not offer a choice. A checkbox with no action behind it is the
+                // exact failure the window exists to prevent.
+                noBody.Select(action => new RepairReportItem(0, action.Title, action.Detail,
+                    ReferenceActionKind.MissingBody, false) { Selectable = false }).ToArray()));
+        }
+
         var numbered = unmatched.Where(item => item.HasChapterNumber).ToArray();
         if (numbered.Length > 0)
             groups.Add(new("参考目录未匹配", numbered.Length, "章",
