@@ -2,9 +2,21 @@ using System.Text;
 
 namespace EasyPub.Core;
 
-/// <summary>How a transaction ended.</summary>
-public enum SourceEditOutcome
+/// <summary>
+/// Raised by <see cref="SourceEditTransaction.AfterStep"/> to stop a transaction at a known point.
+///
+/// <para>A distinct type rather than an <see cref="IOException"/> so the catching code can tell "the test
+/// interrupted this" from "the disk refused": both must leave the same journal behind, but only the second
+/// one means something is wrong with the machine.</para>
+/// </summary>
+public sealed class TransactionInterrupted(string state)
+    : Exception($"测试在「{state}」这一步之后中断了事务。")
 {
+    public string State { get; } = state;
+}
+
+/// <summary>How a transaction ended.</summary>
+public enum SourceEditOutcome{
     /// <summary>The source was replaced and everything after it completed.</summary>
     Committed,
     /// <summary>Nothing was replaced; the book is exactly as it was.</summary>
@@ -84,6 +96,18 @@ public sealed class SourceEditTransaction
     public string TransactionDirectory => _transactionDirectory;
     public string SiblingTempPath => _siblingTempPath;
 
+    /// <summary>
+    /// Called after every step, for tests that need to interrupt the sequence at a known point.
+    ///
+    /// <para>Six steps means six places a crash can land, and the recovery rules differ at each of them. The
+    /// only honest way to check that table is to actually stop there — in the middle of a real transaction,
+    /// on a real file — rather than to hand-build a journal and ask what should happen next. Throwing from
+    /// this hook is treated exactly like a step that failed.</para>
+    ///
+    /// <para>Null in production: nothing in the app sets it.</para>
+    /// </summary>
+    public Action<RepairJournalState>? AfterStep { get; init; }
+
     public async Task<SourceEditResult> ExecuteAsync(RepairExecutionManifest manifest,
         SourceTextDocument document, string renderedText, string? backupPath,
         CancellationToken token = default)
@@ -110,6 +134,8 @@ public sealed class SourceEditTransaction
 
         try
         {
+            AfterStep?.Invoke(journal.State);
+
             // 2. Backup first.
             if (backupPath is not null)
             {
@@ -117,6 +143,7 @@ public sealed class SourceEditTransaction
                 File.Copy(_sourcePath, backupPath, overwrite: true);
                 journal = journal.WithState(RepairJournalState.BackupCreated);
                 _journals.Save(journal);
+                AfterStep?.Invoke(journal.State);
             }
 
             // 3. Render beside the source, preserving the file's own encoding and BOM.
@@ -126,6 +153,7 @@ public sealed class SourceEditTransaction
             await File.WriteAllBytesAsync(_siblingTempPath, bytes, token).ConfigureAwait(false);
             journal = journal.WithState(RepairJournalState.TempWritten);
             _journals.Save(journal);
+            AfterStep?.Invoke(journal.State);
 
             // 4. The manifest must be durable before the source changes.
             if (manifest.ExpectedNewSha256 != newSha)
@@ -138,6 +166,7 @@ public sealed class SourceEditTransaction
             ReplaceAtomically();
             journal = journal.WithState(RepairJournalState.SourceReplaced);
             _journals.Save(journal);
+            AfterStep?.Invoke(journal.State);
 
             // 6. Everything after the replacement is bookkeeping. It is safe to re-run, which is what
             //    makes recovery from here a matter of carrying on rather than of guessing.
@@ -145,12 +174,16 @@ public sealed class SourceEditTransaction
                 await _afterReplace(newSha, token).ConfigureAwait(false);
             journal = journal.WithState(RepairJournalState.DocumentReloaded);
             _journals.Save(journal);
+            AfterStep?.Invoke(journal.State);
+
             journal = journal.WithState(RepairJournalState.StateMigrated);
             _journals.Save(journal);
+            AfterStep?.Invoke(journal.State);
 
             DeleteSiblingTemp();
             journal = journal.WithState(RepairJournalState.Committed);
             _journals.Save(journal);
+            AfterStep?.Invoke(journal.State);
 
             return new SourceEditResult(SourceEditOutcome.Committed,
                 $"已改动原文；备份：{backupPath ?? "（无）"}。", _transactionId, backupPath, newSha);
@@ -158,6 +191,17 @@ public sealed class SourceEditTransaction
         catch (OperationCanceledException)
         {
             return await AbandonAsync(journal, "已取消，原文未改动。").ConfigureAwait(false);
+        }
+        catch (TransactionInterrupted)
+        {
+            // The injected interruption. The journal is left exactly where the crash landed — that is the
+            // whole point of injecting one: recovery has to be asked what it makes of that state, so
+            // rewriting the state first would be answering its own question. Nothing in this path touches
+            // the source file, so the file still matches whatever the journal claims.
+            var replaced = journal.HasClaimedReplacement;
+            return new SourceEditResult(SourceEditOutcome.Failed,
+                replaced ? "事务在替换原文之后中断，事务记录已保留，可继续完成。" : "事务在改动原文之前中断，原文未改动。",
+                _transactionId, backupPath, replaced ? newSha : null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -241,14 +285,25 @@ public sealed class SourceEditTransaction
 /// <summary>
 /// Finishes a transaction that was interrupted.
 ///
-/// <para>Reads the journal to see how far it got, reads the file to see what actually happened, and then
-/// does the one thing the pair implies. It never re-plans and never re-interprets a decision: everything
-/// it needs is in the manifest, which was frozen before any of this started.</para>
+/// <para>Reads the journal to see how far it got, reads the file to see what actually happened, and then does
+/// the one thing the pair implies. It never re-plans and never re-interprets a decision: everything it needs
+/// is in the manifest, which was frozen before any of this started.</para>
+///
+/// <para>For states past the replacement it <b>carries the work forward</b> rather than only reporting what
+/// should happen. Reporting was the Phase 5a behaviour, and it left half the crash points needing a person to
+/// finish something the program already knew how to finish. Nothing here ever replaces the source again —
+/// the file already holds the version that was agreed to, and replacing it a second time is the one action
+/// that could destroy a change made outside this program.</para>
 /// </summary>
 public static class SourceEditRecovery
 {
+    /// <summary>
+    /// <paramref name="afterReplace"/> re-runs the bookkeeping that follows the replacement — the chapter
+    /// tree migration, in practice. It is only invoked for a crash that happened <b>before</b> that work
+    /// completed; the steps it performs are idempotent, so calling it once more cannot make things worse.
+    /// </summary>
     public static async Task<SourceEditResult> RecoverAsync(string transactionRoot, string transactionId,
-        CancellationToken token = default)
+        Func<CancellationToken, Task>? afterReplace = null, CancellationToken token = default)
     {
         var journals = new RepairJournalStore(transactionRoot);
         var journal = journals.Load(transactionId);
@@ -270,22 +325,147 @@ public static class SourceEditRecovery
                     "这次事务尚未改动原文，已作废它的记录。", transactionId, Recovery: decision);
 
             case RepairRecoveryAction.CleanUp:
+                DeleteLeftovers(transactionRoot, journal);
                 journals.Save(journal.WithState(RepairJournalState.Committed));
                 return new SourceEditResult(SourceEditOutcome.Committed,
-                    "这次事务已经完成。", transactionId, Recovery: decision);
+                    "这次事务已经完成，残留文件已清掉。", transactionId, Recovery: decision);
+
+            case RepairRecoveryAction.Finish:
+                // The file is the new version and the journal says the migration ran. All that is left is the
+                // temporary file, which is exactly what the step before "Committed" removes.
+                DeleteLeftovers(transactionRoot, journal);
+                journals.Save(journal.WithState(RepairJournalState.Committed));
+                return new SourceEditResult(SourceEditOutcome.Committed,
+                    "这次事务已经完成，已收尾。", transactionId, Recovery: decision);
+
+            case RepairRecoveryAction.ContinueReplace:
+            {
+                // The one square the recovery table lets a program finish on its own: the journal says the
+                // transaction never claimed to have crossed the boundary, and the file confirms it. The
+                // rendered bytes are already beside the source, so finishing is a rename — and the rename is
+                // checked against the version the journal recorded first, because a temporary file that is
+                // not the agreed version must not become the book.
+                //
+                // The manifest is deliberately not required here. A crash can land between writing the
+                // temporary file and writing the manifest, so demanding one would make this square
+                // impossible to finish — which would contradict the table that says it is the one square a
+                // program may finish on its own. The journal already carries both hashes, which is all the
+                // check needs.
+                var sibling = journal.SourcePath + "." + transactionId + ".easypub-tmp";
+                if (!File.Exists(sibling))
+                    return new SourceEditResult(SourceEditOutcome.Failed,
+                        "这次的临时文件已经不在了，无法继续完成替换。", transactionId, Recovery: decision);
+                if (!string.Equals(SourceFileHasher.HashOf(sibling), journal.ExpectedNewSha256,
+                        StringComparison.OrdinalIgnoreCase))
+                    return new SourceEditResult(SourceEditOutcome.Failed,
+                        "临时文件的内容不是这次事务记录的版本，已放弃，原文未改动。", transactionId,
+                        Recovery: decision);
+
+                try
+                {
+                    File.Move(sibling, journal.SourcePath, overwrite: true);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    return new SourceEditResult(SourceEditOutcome.Failed,
+                        "继续完成替换时失败：" + error.Message + "。原文未改动。", transactionId,
+                        Recovery: decision);
+                }
+
+                journals.Save(journal.WithState(RepairJournalState.SourceReplaced));
+                if (afterReplace is not null)
+                {
+                    try
+                    {
+                        await afterReplace(token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception error)
+                    {
+                        // The file is already the new version; say so rather than claim nothing happened.
+                        return new SourceEditResult(SourceEditOutcome.Failed,
+                            $"原文已改为新版本，但后续步骤失败：{error.Message}。事务记录已保留。",
+                            transactionId, NewSourceSha256: journal.ExpectedNewSha256, Recovery: decision);
+                    }
+                }
+                journals.Save(journal.WithState(RepairJournalState.DocumentReloaded));
+                journals.Save(journal.WithState(RepairJournalState.StateMigrated));
+                DeleteLeftovers(transactionRoot, journal);
+                journals.Save(journal.WithState(RepairJournalState.Committed));
+                return new SourceEditResult(SourceEditOutcome.Committed,
+                    decision.Reason + "（已补完）", transactionId,
+                    NewSourceSha256: journal.ExpectedNewSha256, Recovery: decision);
+            }
+
+            case RepairRecoveryAction.RollForward:
+            case RepairRecoveryAction.ReRunTransition:
+            {
+                // The replacement happened; the steps after it did not all finish. Re-run them — they are
+                // idempotent — and never touch the source file itself.
+                journal = journal.WithState(RepairJournalState.DocumentReloaded);
+                journals.Save(journal);
+                if (afterReplace is not null)
+                {
+                    try
+                    {
+                        await afterReplace(token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception error)
+                    {
+                        // The book is already the new version, so this is not a reason to claim nothing
+                        // happened — but the caller has to know the in-memory models did not catch up.
+                        journals.Save(journal);
+                        return new SourceEditResult(SourceEditOutcome.Failed,
+                            $"原文已经是新版本，但后续步骤再次失败：{error.Message}。事务记录已保留。",
+                            transactionId, Recovery: decision);
+                    }
+                }
+                journal = journal.WithState(RepairJournalState.StateMigrated);
+                journals.Save(journal);
+                DeleteLeftovers(transactionRoot, journal);
+                journals.Save(journal.WithState(RepairJournalState.Committed));
+                return new SourceEditResult(SourceEditOutcome.Committed,
+                    decision.Reason + "（已补完，原文未被二次改动）", transactionId,
+                    NewSourceSha256: journal.ExpectedNewSha256, Recovery: decision);
+            }
 
             case RepairRecoveryAction.Conflict:
                 journals.Save(journal.WithState(RepairJournalState.Conflict));
                 return new SourceEditResult(SourceEditOutcome.Failed, decision.Reason, transactionId,
                     Recovery: decision);
 
-            // The remaining actions all need the manifest, and all of them mean the file is either already
-            // the new version or safe to make so. Neither is done here: this method reports what should
-            // happen so the caller can decide, rather than writing during a diagnostic pass.
             default:
                 return new SourceEditResult(SourceEditOutcome.Failed,
-                    decision.Reason + "（需要按事务清单继续完成）", transactionId, Recovery: decision);
+                    decision.Reason + "（这一步需要人工处理）", transactionId, Recovery: decision);
         }
+    }
+
+    /// <summary>
+    /// Removes what a finished transaction left behind: the sibling temporary, and the working directory
+    /// holding the manifest and the rendered copy.
+    ///
+    /// <para>The journal itself is kept — it is the record of what happened. What goes is everything that
+    /// nothing needs once the transaction is committed.</para>
+    /// </summary>
+    private static void DeleteLeftovers(string transactionRoot, RepairJournal journal)
+    {
+        try
+        {
+            var sibling = journal.SourcePath + "." + journal.TransactionId + ".easypub-tmp";
+            if (File.Exists(sibling)) File.Delete(sibling);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+
+        try
+        {
+            var directory = Path.Combine(Path.GetFullPath(transactionRoot), journal.TransactionId);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>Every transaction this root still holds, for the window that reports unfinished work.</summary>
