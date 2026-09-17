@@ -129,7 +129,16 @@ public sealed class SourceBackupInventory(string root, string? easyPubVersion = 
         for (var index = 0; index < snapshots.Length; index++)
         {
             if (index < limit) { kept.Add(snapshots[index].Path); continue; }
-            try { File.Delete(snapshots[index].Path); removed.Add(snapshots[index].Path); }
+            try
+            {
+                File.Delete(snapshots[index].Path);
+                // The tree file belongs to the bytes beside it. Leaving it behind would strand a snapshot
+                // that a later reader would count as restorable while its bytes are gone.
+                var tree = SourceBackupLayout.SnapshotTreePath(
+                    BookFolderOf(snapshots[index].Path), snapshots[index].Sha256);
+                if (File.Exists(tree)) File.Delete(tree);
+                removed.Add(snapshots[index].Path);
+            }
             catch (IOException) { kept.Add(snapshots[index].Path); }
             catch (UnauthorizedAccessException) { kept.Add(snapshots[index].Path); }
         }
@@ -195,6 +204,7 @@ public sealed class SourceBackupInventory(string root, string? easyPubVersion = 
             easyPubVersion ?? existing?.EasyPubVersion)
         {
             RetentionLimit = existing?.RetentionLimit ?? SourceBackupRetention.DefaultSnapshotLimit,
+            FullStateSnapshotCount = CountFullStateSnapshots(folder),
         };
         try
         {
@@ -218,8 +228,15 @@ public sealed class SourceBackupInventory(string root, string? easyPubVersion = 
             ? Path.GetFileNameWithoutExtension(path).ToUpperInvariant()
             : SafeHash(path);
         return new SourceBackupEntry(sourcePath, path, kind, sha, info.Length,
-            new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero));
+            new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero))
+        {
+            HasSavedTree = SourceBackupLayout.HasSnapshotTree(BookFolderOf(path), sha),
+        };
     }
+
+    /// <summary>The book's backup folder, given a file inside <c>snapshots/</c> or <c>baseline/</c>.</summary>
+    private static string BookFolderOf(string filePath) =>
+        Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? "") ?? "";
 
     private static string SafeHash(string path)
     {
@@ -237,6 +254,15 @@ public sealed class SourceBackupInventory(string root, string? easyPubVersion = 
     {
         var snapshots = Path.Combine(folder, SourceBackupLayout.SnapshotsFolder);
         return Directory.Exists(snapshots) ? Directory.EnumerateFiles(snapshots, "*.bak").Count() : 0;
+    }
+
+    /// <summary>How many snapshots carry a chapter tree, so the window knows a full-state restore is on offer.</summary>
+    private static int CountFullStateSnapshots(string folder)
+    {
+        var snapshots = Path.Combine(folder, SourceBackupLayout.SnapshotsFolder);
+        return Directory.Exists(snapshots)
+            ? Directory.EnumerateFiles(snapshots, "*.tree.json").Count()
+            : 0;
     }
 
     private static DateTimeOffset LastTouched(SourceBackupManifest book) =>

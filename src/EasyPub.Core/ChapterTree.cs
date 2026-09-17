@@ -89,6 +89,28 @@ public sealed class ChapterTreeDocument
             throw new NotSupportedException("章节树目前用于 TXT 书稿；EPUB 的目录会在导入时自动读取。");
 
         var bytes = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        return Load(fullPath, bytes, chapterPattern, hierarchy, encodingMode, existingPlan, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads a chapter tree from bytes that are already in hand.
+    ///
+    /// <para>Added for <see cref="RestoreTransaction"/>: it recognises the text of a <b>backup</b>, which is a
+    /// `.bak` file, and the path-based entry point refuses anything that is not a `.txt`. Copying the backup
+    /// to a temporary `.txt` to get around that would write a book-sized file to disk for no reason, and would
+    /// leave it behind whenever the process died mid-restore.</para>
+    /// </summary>
+    public static ChapterTreeDocument Load(
+        string sourcePath,
+        byte[] bytes,
+        string? chapterPattern = null,
+        TocHierarchyOptions? hierarchy = null,
+        TextEncodingMode encodingMode = TextEncodingMode.Auto,
+        ChapterTreePlan? existingPlan = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        var fullPath = Path.GetFullPath(sourcePath);
         var sourceHash = Convert.ToHexString(SHA256.HashData(bytes));
         var hierarchyOptions = hierarchy ?? new TocHierarchyOptions();
         var editingDocument = ChapterEditingDocument.FromBytes(

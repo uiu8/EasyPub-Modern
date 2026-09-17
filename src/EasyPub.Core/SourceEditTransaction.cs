@@ -62,11 +62,14 @@ public sealed class SourceEditTransaction
     private readonly string _transactionDirectory;
     private readonly string _siblingTempPath;
     private readonly Func<string, CancellationToken, Task>? _afterReplace;
+    private readonly TimeProvider _clock;
 
     public SourceEditTransaction(string transactionRoot, string sourcePath,
-        string? transactionId = null, Func<string, CancellationToken, Task>? afterReplace = null)
+        string? transactionId = null, Func<string, CancellationToken, Task>? afterReplace = null,
+        TimeProvider? clock = null)
     {
-        _transactionId = transactionId ?? DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-"
+        _clock = clock ?? TimeProvider.System;
+        _transactionId = transactionId ?? _clock.GetUtcNow().ToString("yyyyMMdd-HHmmss") + "-"
             + Guid.NewGuid().ToString("N")[..8];
         _sourcePath = Path.GetFullPath(sourcePath);
         _journals = new RepairJournalStore(transactionRoot);
@@ -99,9 +102,10 @@ public sealed class SourceEditTransaction
             return Refused("这次修改不会改变原文的任何字节，因此没有创建事务。");
 
         Directory.CreateDirectory(_transactionDirectory);
+        var startedAt = _clock.GetLocalNow();
         var journal = new RepairJournal(RepairJournal.CurrentSchemaVersion, _transactionId, _sourcePath,
             manifest.BaseVersion.BaseSourceSha256, newSha, RepairJournalState.Prepared,
-            DateTimeOffset.Now, DateTimeOffset.Now);
+            startedAt, startedAt);
         _journals.Save(journal);
 
         try

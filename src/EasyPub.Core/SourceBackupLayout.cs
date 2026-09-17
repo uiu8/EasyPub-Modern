@@ -33,6 +33,24 @@ public static class SourceBackupLayout
     public static string SnapshotPath(string folder, string sha256) =>
         Path.Combine(folder, SnapshotsFolder, sha256.ToUpperInvariant() + ".bak");
 
+    /// <summary>
+    /// One snapshot's saved chapter tree, for <see cref="RestoreTargetPolicy.FullBookState"/>.
+    ///
+    /// <para>Reserved here in Phase 2 and written in Phase 5. The layout is fixed now rather than later
+    /// because a backup folder written by an older version has to keep being readable: adding a sibling file
+    /// is a change an old reader ignores, while moving the folder around is one it cannot survive.</para>
+    /// </summary>
+    public static string SnapshotTreePath(string folder, string sha256) =>
+        Path.Combine(folder, SnapshotsFolder, sha256.ToUpperInvariant() + ".tree.json");
+
+    /// <summary>One snapshot's saved recognition settings. Optional even for a full-state snapshot.</summary>
+    public static string SnapshotRecognitionPath(string folder, string sha256) =>
+        Path.Combine(folder, SnapshotsFolder, sha256.ToUpperInvariant() + ".recognition.json");
+
+    /// <summary>True when this snapshot carries a tree, i.e. it can be restored as a full book state.</summary>
+    public static bool HasSnapshotTree(string folder, string sha256) =>
+        File.Exists(SnapshotTreePath(folder, sha256));
+
     public static string ManifestPath(string folder) => Path.Combine(folder, ManifestFileName);
 
     public static string ReceiptsDirectory(string folder) => Path.Combine(folder, ReceiptsFolder);
@@ -60,6 +78,15 @@ public sealed record SourceBackupManifest(
     /// <summary>Longest retained snapshots; the baseline is never counted or removed.</summary>
     public int RetentionLimit { get; init; } = SourceBackupRetention.DefaultSnapshotLimit;
 
+    /// <summary>
+    /// How many of <see cref="SnapshotCount"/> also carry a chapter tree.
+    ///
+    /// <para>Recorded rather than discovered by listing the folder, because the window has to be able to say
+    /// whether "恢复到当时的完整书稿状态" is on offer before the reader clicks it. A folder that predates this
+    /// field reports 0 and offers source-only restores, which is what it can actually do.</para>
+    /// </summary>
+    public int FullStateSnapshotCount { get; init; }
+
     /// <summary>A folder with no manifest is one an older version made; it is adopted, not rejected.</summary>
     public bool IsAdopted => CreatedAt == default;
 }
@@ -73,6 +100,15 @@ public sealed record SourceBackupEntry(
     long SizeBytes,
     DateTimeOffset SavedAt)
 {
+    /// <summary>
+    /// True when this snapshot also carries the chapter tree that went with its bytes, i.e. it can be
+    /// restored as a full book state rather than only as text.
+    /// </summary>
+    public bool HasSavedTree { get; init; }
+
+    /// <summary>What the window shows beside the size when a full-state restore is possible.</summary>
+    public string? TreeLabel => HasSavedTree ? "含章节树" : null;
+
     public string KindLabel => Kind switch
     {
         SourceBackupKind.Baseline => "首次原文",

@@ -116,7 +116,17 @@ public sealed class SourceBackupStore(string directory)
             .OrderByDescending(File.GetLastWriteTimeUtc).ToArray();
     }
 
-    public string EnsureSnapshot(ChapterTreeDocument document)
+    public string EnsureSnapshot(ChapterTreeDocument document) => EnsureSnapshot(document, null);
+
+    /// <summary>
+    /// Records the source as it is now, optionally together with the chapter tree that goes with it.
+    ///
+    /// <para>Passing the tree — the one the reader arranged, not the one recognition produced — is what makes
+    /// <see cref="RestoreTargetPolicy.FullBookState"/> possible for this version. The `.tree.json` file is
+    /// written <b>after</b> the bytes are safely in place and its failure is not fatal: a snapshot without a
+    /// tree still restores the text, which is strictly better than no snapshot.</para>
+    /// </summary>
+    public string EnsureSnapshot(ChapterTreeDocument document, ChapterTreePlan? tree)
     {
         var bytes = File.ReadAllBytes(document.SourcePath);
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
@@ -136,12 +146,50 @@ public sealed class SourceBackupStore(string directory)
         {
             if (!SHA256.HashData(File.ReadAllBytes(path)).SequenceEqual(SHA256.HashData(bytes))) throw;
         }
+
+        if (tree is not null)
+            SourceFullStateStore.Write(SourceBackupLayout.SnapshotTreePath(folder, hash),
+                new SourceFullStateSnapshot(hash, document.LineCount, tree));
+
         EnsureManifest(document.SourcePath);
         // Retention runs after the new snapshot is safely in place, so a failure here can only ever
         // leave too many backups — never too few. It carries this store's limit, not the default:
         // reading the default here silently ignored the configured number.
         Inventory().Prune(document.SourcePath, SnapshotRetentionLimit);
         return path;
+    }
+
+    /// <summary>
+    /// The chapter tree saved beside one version, or null when that version has none.
+    ///
+    /// <para>Null is the honest answer for a snapshot made before full-state snapshots existed, or by a
+    /// source-only pass. The caller then offers a source-only restore instead of pretending.</para>
+    /// </summary>
+    public SourceFullStateSnapshot? ReadSnapshotTree(string sourcePath, string sha256)
+    {
+        var folder = Folder(sourcePath);
+        var snapshot = SourceFullStateStore.Read(SourceBackupLayout.SnapshotTreePath(folder, sha256));
+        // A tree whose recorded hash is not the one asked for belongs to another version. Re-binding it would
+        // move every line number in it by however much the two versions differ.
+        return snapshot is not null && string.Equals(snapshot.SourceSha256, sha256, StringComparison.OrdinalIgnoreCase)
+            ? snapshot
+            : null;
+    }
+
+    /// <summary>Which of a book's snapshots can be restored as a full book state.</summary>
+    public bool HasSnapshotTree(string sourcePath, string sha256) =>
+        SourceBackupLayout.HasSnapshotTree(Folder(sourcePath), sha256);
+
+    /// <summary>Whether this backup root can offer a full-state restore for a book at all.</summary>
+    public bool CanRestoreFullState(string sourcePath) =>
+        ListSnapshotHashes(sourcePath).Any(hash => HasSnapshotTree(sourcePath, hash));
+
+    private IEnumerable<string> ListSnapshotHashes(string sourcePath)
+    {
+        var directory = Path.Combine(Folder(sourcePath), SourceBackupLayout.SnapshotsFolder);
+        if (!Directory.Exists(directory)) return [];
+        return Directory.EnumerateFiles(directory, "*.bak")
+            .Select(path => Path.GetFileNameWithoutExtension(path).ToUpperInvariant());
     }
 
     /// <summary>Writes the folder's index from what is on disk. Never throws into a backup path.</summary>
