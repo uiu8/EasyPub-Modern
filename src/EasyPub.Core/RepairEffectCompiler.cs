@@ -22,11 +22,22 @@ public static class RepairEffectCompiler
     /// <paramref name="chapterNumber"/> is the chapter number the reference gives this action, when it has
     /// one; it is what a heading inserted into the text would say. When the directory does not number the
     /// entry there is no heading to write, so the action cannot be performed on the text at all.
+    ///
+    /// <paramref name="removedLines"/> is what the repair takes out of the finished book; it is what turns
+    /// "this chapter owns some text" into a stated assignment. Passing it is what lets the two actions that
+    /// move text be described at all — see <see cref="BodyAssignmentCalculator"/>.
     /// </summary>
     public static RepairEffect Describe(ReferenceAction action, int? chapterNumber = null,
-        BodyAssignment? ownership = null, Func<int, string?>? lineText = null)
+        BodyAssignment? ownership = null, Func<int, string?>? lineText = null,
+        RepairEffectContext? context = null)
     {
         var title = action.Title ?? "";
+        // 搬动文字的那两个动作，归属要靠整棵树的边界算出来。算得出就用算出来的，
+        // 算不出（没有上下文）就仍然说自己不知道。
+        if (ownership is null && context is not null && action.Line > 0
+            && action.Kind is ReferenceActionKind.RemoveDuplicate or ReferenceActionKind.DemoteExtra)
+            ownership = context.OwnershipAfter(action);
+
         switch (action.Kind)
         {
             // 参考目录有、章节树没有，而原文里标题行已经定位到。收录：只改树，不动一个字。
@@ -126,11 +137,11 @@ public static class RepairEffectCompiler
 
     /// <summary>Every effect an action could have, for the table the confirmation window shows.</summary>
     public static IReadOnlyList<RepairEffect> DescribeAll(RepairProposal proposal,
-        Func<int, string?>? lineText = null)
+        Func<int, string?>? lineText = null, RepairEffectContext? context = null)
     {
         var effects = new List<RepairEffect>(proposal.Actions.Count);
         foreach (var action in proposal.Actions)
-            effects.Add(Describe(action, ChapterNumberOf(action), lineText: lineText));
+            effects.Add(Describe(action, ChapterNumberOf(action), lineText: lineText, context: context));
         return effects;
     }
 
@@ -164,4 +175,67 @@ public static class RepairEffectCompiler
     /// </summary>
     public static string HeadingTextFor(ReferenceAction action) =>
         action.Reference?.Title ?? action.Title ?? "";
+}
+
+/// <summary>
+/// What the compiler needs from outside to answer "who owns the text afterwards".
+///
+/// <para>Two actions move text — dropping a duplicate copy and folding a stray heading back into the body —
+/// and neither can answer that question on its own: the answer depends on where the surviving chapter's
+/// boundaries land once the lines are gone. Rather than let the compiler guess, the caller says which
+/// lines are going away and this works the rest out from the boundaries.</para>
+///
+/// <para>Before this existed those two actions were reported as "ownership unknown", which was honest but
+/// made them unusable in <c>EditSource</c>. Now they are usable where the answer can be computed, and
+/// still say "unknown" where it cannot.</para>
+/// </summary>
+public sealed class RepairEffectContext
+{
+    private readonly IReadOnlyList<ChapterTreeEntry> _entries;
+    private readonly ReferencePlan _plan;
+
+    public RepairEffectContext(ChapterTreeDocument document, ReferencePlan plan)
+    {
+        _entries = document.Entries;
+        _plan = plan;
+        LineCount = document.LineCount;
+    }
+
+    public int LineCount { get; }
+
+    /// <summary>
+    /// The lines one action takes out of the finished book. For a duplicate copy that is every located
+    /// copy's span except the one being kept; for a heading folded back it is nothing — the text stays,
+    /// only the boundary goes.
+    /// </summary>
+    public IReadOnlySet<int> RemovedBy(ReferenceAction action)
+    {
+        if (action.Kind != ReferenceActionKind.RemoveDuplicate) return new HashSet<int>();
+        var located = _plan.Location.Chapters
+            .FirstOrDefault(chapter => ReferenceEquals(chapter.Reference, action.Reference));
+        if (located is null) return new HashSet<int>();
+        // The kept copy is the one the action names; the others leave the finished book.
+        return located.Lines.Where(line => line != action.Line).ToHashSet();
+    }
+
+    /// <summary>
+    /// Which lines the chapter behind <paramref name="action"/> owns once this action has run.
+    ///
+    /// <para>Everything the freed lines belonged to is recomputed from the surviving boundaries, so the
+    /// answer matches what the rebuilt tree will actually hold rather than what it held before.</para>
+    /// </summary>
+    public BodyAssignment OwnershipAfter(ReferenceAction action)
+    {
+        if (action.Line <= 0) return BodyAssignment.Empty;
+        var removed = RemovedBy(action);
+        var allowed = RepairIntegrity.Coverage(_entries);
+        var boundaries = _entries
+            .Where(entry => !entry.IsFrontMatter && entry.TitleLineNumber is not null)
+            .Select(entry => entry.TitleLineNumber!.Value)
+            .Order()
+            .ToArray();
+        var next = boundaries.FirstOrDefault(line => line > action.Line);
+        if (next == 0) next = LineCount + 1;
+        return BodyAssignmentCalculator.ForChapter(action.Line, next, LineCount, allowed, removed);
+    }
 }
