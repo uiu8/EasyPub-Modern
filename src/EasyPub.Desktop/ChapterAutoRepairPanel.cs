@@ -125,7 +125,12 @@ public partial class ChapterEditorWindow
             progress?.Close();
             IsEnabled = true;
 
-            if (!outcome.CatalogFound)
+            // 没有取得参考目录时，只有**真的无事可做**才去要目录。
+            //
+            // 这条判断在 Phase 7 之前是不需要的：那时无目录就必然没有方案。现在无目录时统一入口会交给
+            // 自修复方案（树自身能看出的问题，比如重复标题），把一个有内容的方案挡在目录对话框后面，
+            // 等于告诉用户"什么都做不了"，而实际上是有的。
+            if (!outcome.CatalogFound && (outcome.Plan?.Actions.Count ?? 0) == 0)
             {
                 SetReviewResult(outcome.Verdict);
                 // Nothing to confirm without a directory, so the caller's own dialog is where the

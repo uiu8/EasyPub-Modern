@@ -256,6 +256,47 @@ public class ChapterRepairApplierTests : IDisposable
         Assert.Equal(SourceFileHasher.HashOf(subject.BookPath), result.State!.RenderedHash);
     }
 
+    [Fact]
+    public async Task A_self_repair_writes_the_text_when_there_is_no_catalog()
+    {
+        // 无目录时的「改原文」：这是 Phase 7 要开的那条路。
+        // 重复标题是不依赖外部目录就能判定的问题，所以自修复方案在 EditSource 下应该真的删掉多余的行。
+        var book = Path.Combine(_workspace, "自修复书稿.txt");
+        await File.WriteAllTextAsync(book,
+            "第一章 起点\n正文一\n第一章 起点\n正文二\n第二章 继续\n正文三\n", new UTF8Encoding(false));
+        var document = await ChapterTreeDocument.LoadAsync(book);
+        var outcome = ChapterAutoRepair.Prepare(document, catalog: null);
+
+        Assert.False(outcome.CatalogFound);
+        Assert.NotNull(outcome.Plan);
+        // 重复标题的第二问："并从原文删除这一份"。它的策略是 ExplicitOptIn —— 默认只从成品里排除副本，
+        // 动读者的文件必须被明确要求。这里就是窗口上那个开关所做的事。
+        var chosen = outcome.Plan!.Actions.Where(outcome.Plan.DefaultSelection.Contains).ToArray();
+        Assert.NotEmpty(chosen);
+        var decisions = chosen.Select(action => new RepairDecision(
+            RepairActionIdentity.Compute(action), Selected: true,
+            SourceEffectPolicies.Decide(action.Kind, RepairLandingMode.EditSource,
+                deleteDuplicateFromSource: true))).ToArray();
+
+        var applier = new ChapterRepairApplier(Path.Combine(_workspace, "自修复事务"),
+            backupPathFor: (_, _) => Task.FromResult<string?>(Path.Combine(_workspace, "自修复备份", "修复前.txt")));
+        var proposal = RepairProposalFactory.Create(SelfRepairPlanner.BasisName,
+            RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
+                document.RecognitionOptions, null), outcome.Plan);
+        var preview = applier.Preview(proposal, document, decisions, RepairLandingMode.EditSource);
+        Assert.True(preview.CanApply, preview.Message);
+        Assert.True(preview.SourceWillChange);
+        // 重复的那一行（原文第 3 行）会被删掉。
+        Assert.Contains(3, preview.AffectedLines);
+
+        var result = await applier.ApplyAsync(proposal, document, decisions, RepairLandingMode.EditSource);
+        Assert.True(result.Changed, result.Message);
+
+        var after = SourceTextDocument.Load(book);
+        Assert.Equal(5, after.Lines.Count);
+        Assert.Equal(1, after.Lines.Count(line => line.Text == "第一章 起点"));
+    }
+
     private static string SampleRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

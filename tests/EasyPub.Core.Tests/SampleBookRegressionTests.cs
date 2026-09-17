@@ -104,19 +104,35 @@ public class SampleBookRegressionTests
     }
 
     /// <summary>
-    /// 无目录时统一入口不产生任何修复项。这是当前的**真实能力边界**，不是缺陷：
-    /// 自助修复（本地启发式）目前还在另外几条链路里，Phase 7 才并进统一入口。
-    /// 断言它，是为了让"哪天它开始有输出了"成为一个需要解释的变化。
+    /// 无目录时统一入口交给自修复方案（Phase 7 落地）。
+    ///
+    /// 这条断言原本记的是"无目录时什么都不做 —— 这是当前的真实能力边界，Phase 7 才并进统一入口"。
+    /// Phase 7 做的就是把它并进来，所以这里改成记录**新**的边界，并保留原来的意图：
+    /// 变化必须是被解释过的，而不是悄悄发生的。
+    ///
+    /// 边界的新形状有两半，两半都要钉住：
+    ///
+    ///   1. 仍然 <c>CatalogFound = false</c>、<c>Catalog = null</c>：确实没有目录，界面不能给出
+    ///      只有目录才能支撑的承诺。
+    ///   2. <c>Plan</c> 不再为 null：树自身能看出的问题（这本书的 32 组同名标题）现在有方案可应用。
     /// </summary>
     [Fact]
-    public async Task Without_a_directory_the_unified_entry_reports_nothing_to_do()
+    public async Task Without_a_directory_the_entry_offers_what_the_book_shows_about_itself()
     {
         var (document, _) = await LoadAsync();
         var outcome = ChapterAutoRepair.Prepare(document, null);
+
+        // 没有目录这件事本身没有变。
         Assert.False(outcome.CatalogFound);
-        Assert.Empty(outcome.Report);
-        Assert.Null(outcome.Plan);
+        Assert.Null(outcome.Catalog);
         Assert.Equal(0, outcome.RemovedLines);
+
+        // 而方案不再为空：自修复只发不依赖外部目录就能判定的动作 —— 这本书上就是重复标题。
+        Assert.NotNull(outcome.Plan);
+        Assert.NotEmpty(outcome.Plan.Actions);
+        Assert.All(outcome.Plan.Actions,
+            action => Assert.Equal(ReferenceActionKind.RemoveDuplicate, action.Kind));
+        Assert.Contains("本书自身", outcome.Verdict, StringComparison.Ordinal);
     }
 
     /// <summary>

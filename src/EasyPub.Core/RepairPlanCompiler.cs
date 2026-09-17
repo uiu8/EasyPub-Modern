@@ -70,8 +70,9 @@ public static class RepairPlanCompiler
         var compileProblems = new List<RepairCompileProblem>();
         var decisionsById = input.Decisions.ToDictionary(decision => decision.ActionId, StringComparer.Ordinal);
 
-        foreach (var (action, effect) in effects)
+        foreach (var (action, initialEffect) in effects)
         {
+            var effect = initialEffect;
             var actionId = RepairActionIdentity.Compute(action);
             var decision = decisionsById.GetValueOrDefault(actionId);
             if (decision is null) continue;
@@ -80,6 +81,23 @@ public static class RepairPlanCompiler
             {
                 // The mode says the TXT is not touched. Nothing more to compile for this action.
                 continue;
+            }
+
+            // An action whose source effect is opt-in has <b>two</b> answers, and Describe states the
+            // conservative one: "drop the duplicate copy from the finished book, leave the text alone".
+            // When the user asks for the stronger answer — the lines really leaving the TXT — the effect is
+            // stated by DescribeDuplicateDeletion instead, which needs the located copies named.
+            //
+            // Without this branch the compiler saw "promised a source edit, projected no operation" and
+            // refused the whole plan, so a reader who ticked "并从原文删除这一份" was told the repair could
+            // not be applied at all.
+            if (effect.Source is SourceContentUnchanged
+                && decision.SourceEffect == SourceEffectDecision.ApplyRequired
+                && SourceEffectPolicies.NeedsExplicitOptIn(action.Kind))
+            {
+                var removed = context.RemovedBy(action);
+                if (removed.Count > 0)
+                    effect = RepairEffectCompiler.DescribeDuplicateDeletion(action, removed.Order().ToArray());
             }
 
             if (effect.Source is SourceContentIndeterminate)

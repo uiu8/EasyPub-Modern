@@ -234,12 +234,26 @@ public static class ChapterAutoRepair
         var localEntries=entries.Where(e=>!e.IsFrontMatter && e.RecognitionSource is not ("reference-volume" or "inferred-volume")).ToArray();
         var restarts=FindVolumeRestarts(localEntries.Select(e=>e.Title).ToArray());
         if(catalog is null)
+        {
+            // No directory to align against. That used to mean "nothing to apply at all", which was never
+            // a capability limit — it was a missing source of judgement. The tree does show problems without
+            // any outside help, so this builds the plan a book can produce from itself.
+            //
+            // CatalogFound stays false and Catalog stays null: no directory was found, and saying otherwise
+            // would make the window offer directory actions that cannot exist. What changes is that Plan is
+            // no longer null, so both landing modes have something real to carry out.
+            var selfPlan = SelfRepairPlanner.Build(document, token);
+            var selfVerdict = selfPlan.Actions.Count == 0
+                ? (discoveryError is null
+                    ? "未取得参考目录，无法判断完整性；本书自身也没有查出可修的问题。可粘贴书籍网址或导入目录后再试。"
+                    : $"目录获取失败：{discoveryError}。本书自身也没有查出可修的问题，可导入目录后重试。")
+                : $"未取得参考目录，只在本书自身查出 {selfPlan.Actions.Count} 项可修之处"
+                  + "（重复标题等不依赖目录的问题）；完整性无法判断，可粘贴书籍网址或导入目录后再试。";
             return new(document.SourcePath,ExtractBookName(document.SourcePath),false,0,0,
                 entries.Count(e=>e.RecognitionSource is "reference-volume" or "inferred-volume"),localEntries.Length,0,0,
-                restarts.Count,false,discoveryError is null
-                    ? "未取得参考目录，无法判断完整性。请在「目录辅助修复」粘贴书籍网址或导入目录；当前章节树保持原样。"
-                    : "目录获取失败："+discoveryError+"。可在「目录辅助修复」导入目录后重试。",Entries:entries)
-            { Timing = Finish(catalogMs, 0, 0, null) };
+                restarts.Count,false,selfVerdict,Entries:entries)
+            { Timing = Finish(catalogMs, 0, 0, null), Plan = selfPlan };
+        }
         var plan=ReferencePlanner.Build(document,entries,catalog,token);
         var planMs = _pass?.ElapsedMilliseconds ?? 0;
         token.ThrowIfCancellationRequested();

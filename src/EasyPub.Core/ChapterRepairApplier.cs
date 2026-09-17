@@ -137,7 +137,10 @@ public sealed class ChapterRepairApplier
         if (outcome.Plan is null) return null;
         var version = RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
             document.RecognitionOptions, null);
-        return RepairProposalFactory.Create("ReferenceCatalog", version, outcome.Plan, outcome.Catalog);
+        // The basis says where the plan came from, so a receipt can tell "aligned against a downloaded
+        // directory" from "derived from the book itself". They are different claims about the same repair.
+        var basis = outcome.CatalogFound ? "ReferenceCatalog" : SelfRepairPlanner.BasisName;
+        return RepairProposalFactory.Create(basis, version, outcome.Plan, outcome.Catalog);
     }
 
     /// <summary>
@@ -182,10 +185,7 @@ public sealed class ChapterRepairApplier
         // 2. Can the decisions be carried out at all? An action promised as a source edit that cannot
         //    produce one fails the whole plan rather than landing in the tree only.
         var compilation = Compile(proposal, document, decisions, mode, buildVolumeLevels);
-        var check = RepairDecisionCompiler.Check(proposal, decisions,
-            action => RepairSourcePatchCompiler.Project(RepairActionIdentity.Compute(action),
-                RepairEffectCompiler.Describe(action, RepairEffectCompiler.ChapterNumberOf(action),
-                    lineText: line => document.SourceLine(line)?.Text)).Count > 0);
+        var check = RepairDecisionCompiler.Check(proposal, decisions, action => CanEditSource(action, document));
         if (!compilation.CanApply)
             return RepairApplicationPreview.Blocked(mode, version, compilation.Describe(), compilation.Problems);
 
@@ -335,6 +335,30 @@ public sealed class ChapterRepairApplier
         IReadOnlyList<RepairDecision> decisions, RepairLandingMode mode, bool buildVolumeLevels) =>
         RepairPlanCompiler.Compile(new RepairCompileInput(proposal, document, decisions, mode,
             UseReferenceTitles: true, BuildVolumeLevels: buildVolumeLevels));
+
+    /// <summary>
+    /// Whether a source edit can be compiled for one action.
+    ///
+    /// <para>Two ways an action can reach the TXT, and asking only the first one was a defect:
+    /// <see cref="RepairEffectCompiler.Describe"/> covers the actions whose effect is stated per action
+    /// (retitling, folding a heading back), while a duplicate copy's physical deletion is stated by
+    /// <see cref="RepairEffectCompiler.DescribeDuplicateDeletion"/> — a separate entry point, because the
+    /// lines to delete have to be named rather than inferred. Asking <c>Describe</c> alone therefore answered
+    /// "cannot edit the source" for every <see cref="SourceEffectPolicy.ExplicitOptIn"/> kind, and the whole
+    /// plan was refused: a user who asked for a duplicate to leave the TXT was told the repair could not be
+    /// applied at all.</para>
+    /// </summary>
+    private static bool CanEditSource(ReferenceAction action, ChapterTreeDocument document)
+    {
+        var effect = RepairEffectCompiler.Describe(action, RepairEffectCompiler.ChapterNumberOf(action),
+            lineText: line => document.SourceLine(line)?.Text);
+        if (RepairSourcePatchCompiler.Project(RepairActionIdentity.Compute(action), effect).Count > 0)
+            return true;
+
+        // The explicit-opt-in kinds are the ones whose removal effect is computed elsewhere, from the located
+        // copies rather than from the action alone.
+        return SourceEffectPolicies.NeedsExplicitOptIn(action.Kind);
+    }
 
     /// <summary>
     /// The tree the book has after an edit, built from the tree the user confirmed rather than re-recognised.
