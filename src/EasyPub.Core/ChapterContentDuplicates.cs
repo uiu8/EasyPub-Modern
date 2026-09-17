@@ -35,7 +35,8 @@ public static class ChapterContentDuplicates
 
     private static ChapterContentDuplicate? Compare(ChapterTreeEntry first, ChapterTreeEntry second, Body a, Body b)
     {
-        if (TitleKey(first.Title) != TitleKey(second.Title) || Math.Min(a.Text.Length, b.Text.Length) < 20) return null;
+        if (TitleKey(first.Title) != TitleKey(second.Title)) return null;
+        if (Math.Min(a.Text.Length, b.Text.Length) < 20) return null;
         var exact = a.Text == b.Text;
         double score = exact ? 1 : 0;
         // Short matching boilerplate is not enough evidence for a near-duplicate chapter.
@@ -90,4 +91,68 @@ public static class ChapterContentDuplicates
         ChapterTreeDocument.ValidatePlan(document.CreatePlan(remaining), document.LineCount);
         return remaining;
     }
+
+    /// <summary>
+    /// The same body under a different heading. <see cref="Find"/> only compares chapters that share a
+    /// title, which is the shape a duplicated block usually takes — but a release that repeats a
+    /// stretch and renumbers it produces identical prose under different headings, and that pair is
+    /// invisible to a same-title comparison while being just as removable.
+    ///
+    /// <para>
+    /// This runs over every chapter rather than over repeated titles, so it is bounded on purpose. An
+    /// earlier version bucketed chapters by "same length plus a few sampled characters" and compared
+    /// every pair inside a bucket; chapters of similar length land in the same bucket, so a book whose
+    /// chapters are all about the same size produced a quadratic number of gram comparisons, each
+    /// building a dictionary five times the size of the text. That is a memory problem first and a
+    /// speed problem second, and it is why the buckets below are exact-content groups with a hard size
+    /// ceiling instead of "looks similar" groups.
+    /// </para>
+    /// </summary>
+    /// <param name="maximumGroupSize">
+    /// A group larger than this is skipped rather than compared. Groups are formed by identical body
+    /// text, so a huge one means hundreds of chapters share one body verbatim — a fact worth reporting
+    /// once, not a reason to perform hundreds of thousands of comparisons.
+    /// </param>
+    public static IReadOnlyList<CrossTitleDuplicate> FindCrossTitle(ChapterTreeDocument document,
+        IReadOnlyList<ChapterTreeEntry> entries, int maximumGroupSize = 32, CancellationToken cancellationToken = default)
+    {
+        if (maximumGroupSize < 2) return [];
+        var chapters = entries.Where(entry => !entry.IsFrontMatter && entry.TitleLineNumber is not null).ToArray();
+        // One pass over the bodies: group by the text itself, so the pair that matters — identical prose
+        // — is grouped exactly, and no bucket ever holds chapters that merely resemble each other.
+        var bodies = new Dictionary<int, (ChapterTreeEntry Entry, Body Body)>();
+        var groups = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        foreach (var entry in chapters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var body = Read(document, entry);
+            if (body.Text.Length < 20) continue;
+            bodies[entry.TitleLineNumber!.Value] = (entry, body);
+            if (!groups.TryGetValue(body.Text, out var group)) groups[body.Text] = group = [];
+            group.Add(entry.TitleLineNumber!.Value);
+        }
+
+        var result = new List<CrossTitleDuplicate>();
+        var reported = new HashSet<(int First, int Second)>();
+        foreach (var group in groups.Values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (group.Count < 2 || group.Count > maximumGroupSize) continue;
+            var lines = group.Order().ToArray();
+            for (var i = 0; i < lines.Length; i++)
+                for (var j = i + 1; j < lines.Length; j++)
+                {
+                    var first = bodies[lines[i]];
+                    var second = bodies[lines[j]];
+                    if (TitleKey(first.Entry.Title) == TitleKey(second.Entry.Title)) continue;
+                    if (!reported.Add((lines[i], lines[j]))) continue;
+                    result.Add(new CrossTitleDuplicate(first.Entry.Title, second.Entry.Title,
+                        lines[i], lines[j], 1.0, true));
+                }
+        }
+        return result;
+    }
+
+    public sealed record CrossTitleDuplicate(string FirstTitle, string SecondTitle, int? FirstLine, int? SecondLine,
+        double Similarity, bool Exact);
 }

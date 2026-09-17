@@ -111,6 +111,24 @@ public static class ChapterReviewAnalyzer
             // but never consumes a gap or a missing-heading diagnosis.
             foreach (var old in raw.Where(i => i.LineNumber == second.TitleLineNumber && i.Code is "chapter_duplicate" or "chapter_number_order")) consumed.Add(old);
         }
+        // The same prose under two different headings. A same-title comparison cannot see this pair,
+        // and a release that repeats a stretch and renumbers it produces exactly that — so the finding
+        // belongs next to the duplicate it is, not in a category of its own.
+        if (!referenceAligned)
+            foreach (var pair in ChapterContentDuplicates.FindCrossTitle(document, entries, cancellationToken: cancellationToken))
+            {
+                var first = entries.FirstOrDefault(e => e.TitleLineNumber == pair.FirstLine);
+                var second = entries.FirstOrDefault(e => e.TitleLineNumber == pair.SecondLine);
+                if (first is null || second is null) continue;
+                if (!Unverified(first.Id) && !Unverified(second.Id)) continue;
+                var description = pair.Exact ? "正文完全相同（忽略空白）" : $"正文相似度 {pair.Similarity:P1}";
+                var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_cross_title_duplicate",
+                    $"“{first.Title}”（第 {pair.FirstLine} 行）与“{second.Title}”（第 {pair.SecondLine} 行）标题不同、{description}。"
+                    + "多半是源文件重复拼接后改了标题；请核对哪一份该留，软件不会自动删除、也不会按内容替换标题。",
+                    PreflightTargetKind.Chapters, pair.SecondLine);
+                groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id],
+                    new[] { pair.FirstLine, pair.SecondLine }.OfType<int>().ToArray(), [issue]));
+            }
         var numeric = NumericHeadingRule.Compile(document.RecognitionOptions.NumericHeadingPattern);
         bool IsNumeric(ChapterTreeEntry entry) => !entry.IsFrontMatter && entry.RecognitionSource is not ("manual" or "pattern")
             && entry.TitleLineNumber is int line && NumericHeadingRule.Matches(numeric, document.SourceLine(line)?.Text ?? "");

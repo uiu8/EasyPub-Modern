@@ -269,7 +269,7 @@ public static class ChapterAutoRepair
         var aligned=catalog.Titles.Count-missing.Length;
         var verdict=$"已对齐 {aligned}/{catalog.Titles.Count} 章；未定位 {missing.Length} 章；保留目录外 {foundLines.Count} 章；待核对重复 {review} 项"+
             (inferred ? $"；{volumes} 卷为章号重启推断，请核对" : $"；{volumes} 卷");
-        var report = BuildReport(plan, rebuilt, unmatched, foundLines);
+        var report = BuildReport(document, plan, rebuilt, unmatched, foundLines);
         // Shown first, because it changes what every other line means.
         if (DescribeCatalogMismatch(catalog, localEntries) is { } mismatch)
             report = new[] { new RepairReportGroup("来源与文件对不上", 1, "项", mismatch, []) }
@@ -326,8 +326,8 @@ public static class ChapterAutoRepair
     }
 
     private static IReadOnlyList<RepairReportGroup> BuildReport(
-        ReferencePlan plan, IReadOnlyList<ChapterTreeEntry> rebuilt, IReadOnlyList<UnmatchedChapter> unmatched,
-        IReadOnlyCollection<int> extraLines)
+        ChapterTreeDocument document, ReferencePlan plan, IReadOnlyList<ChapterTreeEntry> rebuilt,
+        IReadOnlyList<UnmatchedChapter> unmatched, IReadOnlyCollection<int> extraLines)
     {
         var groups = new List<RepairReportGroup>();
         void Add(string label, ReferenceActionKind kind, string unit, Func<ReferenceAction[], string> summary)
@@ -368,6 +368,21 @@ public static class ChapterAutoRepair
         Add("标题并回正文", ReferenceActionKind.DemoteExtra, "处", items => "移除所选标题边界，全部文字保留在正文中。");
         Add("移除重复正文", ReferenceActionKind.RemoveDuplicate, "处",
             items => $"参考目录只出现一次，多余的那份已从成品移除；例：第 {items[0].Line} 行「{items[0].Title}」");
+
+        // The same prose under two different headings: a same-title comparison cannot see it, and the
+        // reference directory cannot either — both entries look like separate chapters there. Reported
+        // as a finding rather than an action, because deciding which copy is the real one needs the text.
+        {
+            var crossTitle = ChapterContentDuplicates.FindCrossTitle(document, rebuilt)
+                .Where(pair => pair.FirstLine is not null && pair.SecondLine is not null).ToArray();
+            if (crossTitle.Length > 0)
+                groups.Add(new("标题不同、正文相同的章节", crossTitle.Length, "对",
+                    "这些章的标题不同，正文却一致。多半是源文件重复拼接后改了标题；请核对哪一份该留，软件不会自动删除。",
+                    crossTitle.Select(pair => new RepairReportItem(pair.SecondLine!.Value,
+                        $"{pair.FirstTitle} ↔ {pair.SecondTitle}",
+                        $"第 {pair.FirstLine} 行与第 {pair.SecondLine} 行{(pair.Exact ? "正文完全相同" : $"正文相似度 {pair.Similarity:P1}")}")
+                        { Selectable = false }).ToArray()));
+        }
 
         // Counted from the rebuilt tree, not from the plan's actions: the plan sees the tree as it was
         // before headings without a chapter number were folded back into the body, so it reports more
@@ -556,3 +571,4 @@ public static class ChapterAutoRepair
         return (cut > 0 ? name[..cut] : name).Trim();
     }
 }
+
