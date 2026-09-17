@@ -278,6 +278,10 @@ public partial class ChapterEditorWindow
         _referenceCatalog = null;
         _referenceCatalogLoaded = false;
         _breakpointSignature = null;
+        // 目录的逐章定位只取决于原文行和目录本身，不取决于当前树；但版本一换，它描述的就是另一本书了。
+        _catalogLocation = null;
+        _catalogLocationLoaded = false;
+        _catalogLocationFailure = null;
         RefreshCatalogState();
     }
 

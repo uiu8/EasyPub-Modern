@@ -17,8 +17,21 @@ public static class ReferenceCatalogInput
     public static void SaveCatalog(string hash, ReferenceCatalog catalog, string query = "", int minimumLines = 3) =>
         Save(hash, new(query, catalog.Source, string.Join(Environment.NewLine, catalog.Nodes.Select(n => n.Title)), minimumLines)
         { Catalog = catalog });
-    public static string SettingsPath(string hash) => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "EasyPub Modern", "Catalogs", hash + ".json");
+    public static string SettingsPath(string hash) => Path.Combine(CatalogsRoot(), hash + ".json");
+
+    /// <summary>
+    /// The folder saved directories live in.
+    ///
+    /// <para>Overridable by environment for the same reason the backup root is: a run must be able to keep
+    /// its books' directories out of the folder the reader actually uses, and must not read the ones already
+    /// there. Without it, anything that saves a directory for a throwaway book writes into
+    /// <c>%LOCALAPPDATA%</c> and has to remember to delete it again.</para>
+    /// </summary>
+    private static string CatalogsRoot() =>
+        Environment.GetEnvironmentVariable("EASYPUB_REFERENCE_CATALOGS_PATH") is { Length: > 0 } custom
+            ? Path.GetFullPath(custom)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "EasyPub Modern", "Catalogs");
 
     public static CatalogPreferences? Load(string hash)
     {
