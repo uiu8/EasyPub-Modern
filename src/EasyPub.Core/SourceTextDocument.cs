@@ -38,6 +38,12 @@ public sealed record SourceTextDocument(
     ///
     /// <para>CRLF is tested before CR so a CRLF file is not read as a CR file with stray LFs, and the
     /// final line is allowed to have no terminator at all.</para>
+    ///
+    /// <para>The default encoding is a UTF-8 that emits <b>no</b> byte-order mark, not
+    /// <see cref="Encoding.UTF8"/>. That property returns an instance whose <c>GetPreamble</c> is the BOM,
+    /// so a renderer that asks the encoding what to write in front of the text would add three bytes the
+    /// file never had — and the resulting hash would not match the one computed from the text alone. A
+    /// real replace was caught by exactly that mismatch.</para>
     /// </summary>
     public static SourceTextDocument Parse(string text, Encoding? encoding = null, byte[]? preamble = null)
     {
@@ -62,7 +68,8 @@ public sealed record SourceTextDocument(
         if (start < text.Length) lines.Add(new SourceTextLine(text[start..], null));
         else if (lines.Count == 0) lines.Add(new SourceTextLine("", null));
 
-        return new SourceTextDocument(lines, encoding ?? Encoding.UTF8, preamble ?? [], DetermineDefaultNewLine(lines));
+        return new SourceTextDocument(lines, encoding ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            preamble ?? [], DetermineDefaultNewLine(lines));
     }
 
     /// <summary>
