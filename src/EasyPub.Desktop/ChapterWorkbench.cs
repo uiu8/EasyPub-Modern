@@ -79,6 +79,25 @@ public partial class ChapterEditorWindow
         RefreshSourceButton.FontWeight = _sourceChanged ? FontWeights.Bold : FontWeights.Normal;
         ChapterTree.IsEnabled = !_sourceChanged;
         if (_sourceChanged) UndoButton.IsEnabled = RedoButton.IsEnabled = false;
+        RefreshContextBar();
+    }
+
+    /// <summary>
+    /// 刷新工作台顶部那三行事实。
+    ///
+    /// <para>三行**不能互相推导**：有目录 ≠ 树是按目录改的（可以先按目录修完树再清掉目录记录，
+    /// 也可以只获取目录却从不使用），原文是否被外部改过又是第三件。快照从权威来源捕
+    /// （<see cref="ChapterRepairContextFactory.Capture"/>），这里只读地显示，不再自己推断。</para>
+    /// </summary>
+    private void RefreshContextBar()
+    {
+        if (ContextCatalogText is null || _document is null) return;
+        var snapshot = ChapterRepairContextFactory.Capture(_document, _provenance, _sourceChanged);
+        ContextCatalogText.Text = snapshot.CatalogLine;
+        ContextTreeText.Text = snapshot.TreeLine;
+        ContextSourceText.Text = snapshot.SourceChanged
+            ? "已在程序之外变化 —— 章节位置可能失效，请先刷新原文"
+            : "正常";
     }
 
     private void UpdateRuleGuidance()

@@ -125,7 +125,34 @@
                 <Button x:Name="RedoButton" Content="重做" Click="Redo_Click" IsEnabled="False" ToolTip="重做（Ctrl+Y）"/>
                 <Button x:Name="WorkbenchMoreButton" Content="整理工具 ▾" Click="WorkbenchMore_Click" Margin="0"/>
             </WrapPanel>
-            <TextBlock x:Name="WorkflowHintText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"/>
+            <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                <!--
+                  三行事实。**它们不能互相推导，所以显示三行而不是一个模式标签：**
+                  「有目录」与「树是按目录改的」是两件事（可以先按目录修完树再清掉目录记录，
+                  也可以只获取目录却从不使用），而「原文是否被外部改过」又是第三件。
+                  一个「修复依据」开关只能说出其中一件，于是总有一半是假的。
+                -->
+                <Border x:Name="ContextBar" Background="{DynamicResource SubtleSurfaceBrush}" CornerRadius="7" Padding="10,7">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="参考目录" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="ContextCatalogText" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="当前章节树" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="ContextTreeText" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="原文版本" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="ContextSourceText" FontSize="11" TextWrapping="Wrap"/>
+                    </Grid>
+                </Border>
+                <TextBlock x:Name="WorkflowHintText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"/>
+            </StackPanel>
             <Border x:Name="StructureSuggestionBanner" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed" Margin="0,10,0,0" Padding="10" Background="{DynamicResource RaisedSurfaceBrush}" CornerRadius="8">
                 <StackPanel>
                     <TextBlock x:Name="StructureSuggestionText" TextWrapping="Wrap"/>
