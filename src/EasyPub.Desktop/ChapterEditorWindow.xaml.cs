@@ -25,6 +25,17 @@ public partial class ChapterEditorWindow : Window
     private ChapterTreeNode? _selectedNode;
     private bool _refreshingSuggestions;
     private bool _detectUnrecognized;
+
+    /// <summary>
+    /// 这棵树经历过什么 —— **唯一**能回答"当前树是怎么来的"的事实来源。
+    ///
+    /// <para>不能用 <c>RecognitionSource</c> 现推：工作台手工编辑会把它覆盖成 <c>manual</c>，
+    /// 于是一棵 reference-derived 树上 <c>reference</c> 标记会越来越少甚至消失，而它其实还是目录树。</para>
+    ///
+    /// <para>也不能用 <c>ChapterTreePlan.ReferenceCatalog</c>：保存时**无条件**写入它，
+    /// 所以"获取目录、只看不用"也会让它非空 —— 它证明的只是"保存过一份目录"。</para>
+    /// </summary>
+    private PersistedTreeProvenance _provenance = PersistedTreeProvenance.Unknown;
     private int _nextSuggestionIndex;
     private string _numericPattern = NumericHeadingRule.DefaultPattern;
     public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();
@@ -62,6 +73,9 @@ public partial class ChapterEditorWindow : Window
                 _confirmedGroups[pair.Key] = pair.Value;
             if (savedPlan.ReferenceCatalog is { } reference)
             { _referenceCatalog = reference; _referenceCatalogLoaded = true; }
+            // provenance 与已确认提醒一样，是**绑定在这个原文版本上**的：换了一份原文就没有意义。
+            // 旧项目没有这个字段 → Unknown，UI 显示「来源未知（旧项目）」，**不去猜**。
+            _provenance = savedPlan.Provenance ?? PersistedTreeProvenance.Unknown;
         }
         VisibleRoots = new ChapterDisplayCollection();
         VisibleRoots.Synchronize(Roots);
@@ -347,6 +361,7 @@ public partial class ChapterEditorWindow : Window
                 HeadingNumberCorrections = _headingNumberCorrections == GlobalNumericDefaults.HeadingNumberCorrections ? null : _headingNumberCorrections,
                 ReferenceCatalog = SavedReference(),
                 ConfirmedReviews = new Dictionary<string, ChapterReviewGroup>(_confirmedGroups),
+                Provenance = _provenance,
             };
             ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
             _allowClose = true;

@@ -340,6 +340,40 @@ public class SourceVersionTransitionTests : IDisposable
     }
 
     [Fact]
+    public async Task The_tree_provenance_follows_the_book_to_its_new_hash()
+    {
+        // provenance 是**逐字段重建 plan** 时最容易漏掉的东西：SourceVersionTransition.BuildPlan
+        // 手工复制每一个字段，漏掉一个就等于它在原文迁移之后**静默消失**。
+        //
+        // 而它一旦消失，一棵目录树在迁移之后就会被当成"本地识别" —— 状态条显示错的来源，
+        // 用户没有任何办法发现。这条测试钉住那个窄例外：事务算法不改，但迁移必须把新状态带过去。
+        var (path, state) = await LoadAsync();
+        var original = state.Source;
+        var patch = ReplacePatch(original, 3, "第二章 改过的标题");
+        var rendered = SourcePatchRenderer.Render(original, patch);
+
+        var marked = state with
+        {
+            // Plan 才是迁移真正搬运的那个对象；RecognitionTree 只是识别结果，不带 provenance。
+            Plan = state.RecognitionTree!.CreatePlan(state.RecognitionTree.Entries) with
+            {
+                Provenance = PersistedTreeProvenance.FromCatalog("https://example.invalid/目录"),
+            },
+        };
+        var oldCatalogPath = ReferenceCatalogInput.SettingsPath(state.RecognitionTree!.SourceSha256);
+
+        await File.WriteAllBytesAsync(path, SourceFileHasher.BytesOf(original, rendered.Text));
+        var result = await SourceVersionTransition.AfterReplaceAsync(
+            marked, patch, rendered.Text, path, oldCatalogPath: oldCatalogPath);
+
+        Assert.True(result.Succeeded, result.Message);
+        var moved = result.State.Plan?.Provenance;
+        Assert.NotNull(moved);
+        Assert.Equal(TreeBaseOrigin.Reference, moved!.BaseOrigin);
+        Assert.Equal("https://example.invalid/目录", moved.AppliedCatalogFingerprint);
+    }
+
+    [Fact]
     public async Task Every_migrated_body_line_comes_from_the_line_it_claims()
     {
         // 这一条是整层最核心的不变量：迁移后每个条目的每一行，都必须来自该条目自己原来的正文。

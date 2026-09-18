@@ -44,6 +44,18 @@ public sealed record ChapterTreePlan(
     public string? HeadingNumberCorrections { get; init; }
     public ReferenceCatalog? ReferenceCatalog { get; init; }
     public IReadOnlyDictionary<string, ChapterReviewGroup>? ConfirmedReviews { get; init; }
+
+    /// <summary>
+    /// 这棵树**经历过什么** —— 与 <see cref="ReferenceCatalog"/> 语义完全不同，**别用后者推断**。
+    ///
+    /// <para><see cref="ReferenceCatalog"/> 只证明"这本书保存过一份目录"（保存时无条件写入）；
+    /// 树到底是不是按它改的，只有这个字段知道。</para>
+    ///
+    /// <para>旧项目没有这个字段，所以它是可空的；读的时候用
+    /// <see cref="PersistedTreeProvenance.Unknown"/> 兜底（UI 显示「来源未知（旧项目）」），
+    /// 而不是拿目录字段猜。</para>
+    /// </summary>
+    public PersistedTreeProvenance? Provenance { get; init; }
 }
 
 public sealed record ChapterTreeSourceLine(int LineNumber, string Text);

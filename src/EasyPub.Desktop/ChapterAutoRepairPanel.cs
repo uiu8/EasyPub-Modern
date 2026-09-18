@@ -17,12 +17,19 @@ public partial class ChapterEditorWindow
     /// pre-repair file, so a repair that had just written the TXT left the window claiming "原文已变化 · 刷新"
     /// about the program's own edit.</para>
     /// </summary>
-    internal void ApplyRepairEntries(ChapterTreeDocument document)
+    internal void ApplyRepairEntries(ChapterTreeDocument document, string? catalogFingerprint = null)
     {
         // A snapshot written in the old numbering cannot be replayed onto the new one, so the history goes
         // with the version it belongs to.
         var changedSource = !string.Equals(document.SourceSha256, _document.SourceSha256, StringComparison.OrdinalIgnoreCase);
         _document = document;
+        // 这棵树刚刚被**目录方案**改过 —— 来源标记必须跟着走。它是唯一能回答"当前树是怎么来的"的
+        // 事实来源：RecognitionSource 装不下它（手工编辑会覆盖 reference 标记），而
+        // ChapterTreePlan.ReferenceCatalog 只证明"保存过一份目录"。
+        //
+        // 标记放在这里而不是调用点，是因为两个落地模式都经过这个方法 —— 漏掉任一处，
+        // 那棵树在版本迁移之后就会被当成"本地识别"。
+        _provenance = PersistedTreeProvenance.FromCatalog(catalogFingerprint);
         _sourceChanged = false;
         _baselineSource = TryLoadBaseline(document.SourcePath, _encodingMode);
         if (changedSource) { _undo.Clear(); _redo.Clear(); _confirmedGroups.Clear(); }
@@ -213,7 +220,7 @@ public partial class ChapterEditorWindow
                 var backup = store.EnsureSnapshot(snapshot, snapshotPlan);
                 var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
                 if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
-                ApplyRepairEntries(_document.WithEntries(applied));
+                ApplyRepairEntries(_document.WithEntries(applied), outcome.Catalog?.Source);
                 SetReviewResult(outcome.Verdict + "。可撤销。备份：" + backup
                     + (receipt is null ? "" : "；移除清单：" + receipt));
                 return;
@@ -231,7 +238,7 @@ public partial class ChapterEditorWindow
             var movedDocument = ReloadAfterEdit(result, snapshot);
             if (outcome.Catalog is { } usedCatalog)
                 ReferenceCatalogInput.SaveCatalog(movedDocument.SourceSha256, usedCatalog);
-            ApplyRepairEntries(movedDocument);
+            ApplyRepairEntries(movedDocument, outcome.Catalog?.Source);
             SetReviewResult(outcome.Verdict + "。" + result.Message);
         }
         catch (OperationCanceledException) { SetReviewResult("目录修复已取消，当前章节树保持不变。"); }

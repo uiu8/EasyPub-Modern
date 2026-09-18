@@ -689,6 +689,9 @@ public sealed class RebindSavedPlanStep : SourceTransitionStep
             // The reviews were confirmed against the old line numbers and cannot be carried over. Leaving
             // this null rather than renumbering them is the point.
             ConfirmedReviews = null,
+            // **必须显式复制 provenance。** 这里是逐字段重建 plan，漏掉一个字段 = 那个字段在原文
+            // 迁移之后**静默消失**。这正是「事务算法不改，但迁移必须把新状态带过去」那个窄例外。
+            Provenance = state.Plan.Provenance,
         };
 
         try
