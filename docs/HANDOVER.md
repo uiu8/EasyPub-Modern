@@ -421,47 +421,69 @@ RepairPlanCompiler.Compile(plan, decisions, mode)
 
 ## 8. 已知缺陷与未解之谜
 
-### 8.1 ⚠️ 「120 章」之谜（**本次调查，未完全解决**）
+### 8.1 ⚠️ 「120 章」/「560 vs 468」之谜（**查过两轮，未解决，但范围已锁死**）
 
-**现象**：走查六卷样书时，修复后确认窗说「已对齐 437/480 章；未定位 43 章」，
-紧接着报告窗口说「参考目录里有 **120** 章在章节树中没有」。
+**现象**：走查六卷样书时，主界面显示「章节树 已识别 **560** 项」，
+而 Core 加载同一份文件得到 `Entries.Count = 468`。
 
-**我查到什么（都是实测）**：
+**而 `ChapterCandidateCount` 的定义是**：
 
-| 实验 | 结果 |
-|---|---|
-| Core 完整修复后再算 absent | **absent = 43 = `outcome.Missing`** ✅ 一致，没有矛盾 |
-| 只应用 77 项（模拟走查时的部分勾选） | absent = **51**，不是 120 |
-| 只应用一半 | absent = 51 |
-| 用设置文件里的旧正则识别 | 仍然是 **468** 条目（样书标题「第X章」两种正则都能匹配） |
-| 逐个把设置里的字段换成旧值 | **没有一个字段**改变条目数 |
-
-**结论**：Core 层面 `absent` 与 `Missing` **完全一致**，而且部分应用只能把 43 抬到 51。
-**120 只可能来自"走查时那棵树与 Core 加载的树不同"。**
-
-**而这有一个硬证据**：
-
-```
-走查时主界面显示：章节树 已识别 560 项
-Core 加载同一份文件：Entries.Count = 468
+```csharp
+document.Entries.Count(entry => entry.TitleLineNumber.HasValue)
 ```
 
-`ChapterCandidateCount` 的定义是 `document.Entries.Count(e => e.TitleLineNumber.HasValue)` ——
-**有标题行号的条目不可能多于全部条目**。所以 **560 和 468 不可能来自同一个 document**。
+**有标题行号的条目不可能多于全部条目。** 所以 **560 和 468 不可能来自同一个 document**。
 
-**所以真正的问题是：主界面导入书稿时加载的那棵树，与 `ChapterTreeDocument.LoadAsync` 得到的不是同一棵。**
+#### 已经排除的（全部实测）
 
-**下一步该怎么查**（给接手的人）：
+| 假设 | 实验 | 结果 |
+|---|---|---|
+| 两个判据不同导致 120 | Core 完整修复后再算 absent | **absent = 43 = `outcome.Missing`** —— 一致，无矛盾 |
+| 走查时只勾了部分动作 | 只应用 77 项 / 一半 | absent = **51**，不是 120 |
+| 设置里的旧正则 | 用 `LegacyPattern` 等三套正则识别 | **461 / 462 / 468**，没有一个接近 560 |
+| 设置里其他字段 | 逐个换成旧值 | **没有一个字段**改变条目数 |
+| `hierarchy` 参数 | 传"绝不可能匹配"的正则、传 `Enabled=false` | **都是 468** |
 
-1. 从 `MainWindow` 的导入路径追进去，看它用哪个方法加载文档（可能是 `ChapterTreeDocumentCache`）
-2. 对比那条路径与 `ChapterTreeDocument.LoadAsync` 用的识别选项
-3. **最快的手段**：设 `EASYPUB_INTERACTION_LOG`，导入一次样书，读日志里的 `Entries.Count`
-4. 别忘了一个可能：主界面显示的 560 也许是**别的东西**（某个候选计数），而不是 `Entries.Count` ——
-   先确认 `ChapterCandidateCount` 在导入路径上到底被赋了什么
+**结论：Core 层面任何参数组合都给不出 560。560 来自主界面那条路径，与识别选项无关。**
+
+#### ⚠️ 查这件事时撞到的一个真实陷阱（**值得单独记住**）
+
+**`ChapterTreeDocument.Load/LoadAsync` 的 `hierarchy` 参数，对样书不起作用。**
+
+传 `Enabled = false`（关闭分层识别）或传一条绝不可能匹配的 `Level2Pattern`，
+条目数**都是 468**。原因在 `ChapterTree.cs:151`：
+
+```csharp
+var candidates = editingDocument.Candidates
+    .Where(candidate => candidate.Kind != ChapterCandidateKind.NumericTitle)
+    .ToDictionary(candidate => candidate.LineNumber);
+...
+var level = MatchLevel(line.Text, levelPatterns);
+if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) continue;
+```
+
+**条目的主来源是 `ChapterEditingDocument.Candidates`，`levelPatterns` 只是补充。**
+而 Candidates 由**另一个参数** `chapterPattern` 决定。
+
+**这意味着**：改 `TocHierarchyOptions.Level1Pattern/Level2Pattern` 这类设置，
+在"候选已经覆盖了所有标题行"的书上**完全没有效果** —— 而界面上不会有任何提示。
+
+**排查这类"设置不生效"的问题时，先确认你改的参数是不是真正的来源。**
+
+#### 下一步该怎么查（给接手的人）
+
+1. **从 `MainWindow` 的导入路径追进去**，看它到底调用哪个方法加载文档
+   （`MainWindow.xaml.cs:46` 有 `_chapterDocumentCache`，`:1078` 有 `ChapterPattern = …`）
+2. **最快的手段**：设 `EASYPUB_INTERACTION_LOG`，导入一次样书，读日志
+3. **先确认 560 是什么**：它可能根本不是 `Entries.Count`，而是某个候选计数。
+   `ChapterCandidateCount` 在导入路径上被赋了什么值，是这条线的第一个问题
+4. 对比"主界面导入"与 `ChapterTreeDocument.LoadAsync` 两条路径的**全部**参数
 
 **为什么这件事重要**：如果主界面真的用不同的规则识别，那么
-**用户在导入时看到的章节结构，与他在工作台里编辑的、与最终转换用的，可能不是同一棵树**。
-那是比数字对不上严重得多的问题。
+**用户在导入时看到的章节结构、他在工作台里编辑的、以及最终转换用的，可能不是同一棵树**。
+那比"数字对不上"严重得多。
+
+**目前只能说：这个假设没有被证实，也没有被排除。**
 
 ### 8.2 旧默认值升级机制（v1.61.0 新增，机制本身仍需扩展）
 
