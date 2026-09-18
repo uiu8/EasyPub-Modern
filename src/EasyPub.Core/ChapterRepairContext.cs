@@ -67,6 +67,16 @@ public sealed record ChapterRepairContextSnapshot(
             return Tree.ManualEditCount > 0 ? $"{origin} + 手工修改 {Tree.ManualEditCount} 项" : origin;
         }
     }
+
+    /// <summary>
+    /// 不知道上下文时的快照（报告窗口只有一条 issue，没有文档也没有章节树）。
+    ///
+    /// <para>它**如实说"没有可取用的目录"**，而不是猜一个"可能有"。猜高会让界面显示一份
+    /// 并不存在的目录，猜低会让用户以为可以去获取 —— 两种都是假状态。</para>
+    /// </summary>
+    public static ChapterRepairContextSnapshot Unknown { get; } = new(
+        CatalogAvailability.None, null, 0,
+        TreeStateSummary.From(PersistedTreeProvenance.Unknown), false);
 }
 
 /// <summary>

@@ -88,14 +88,21 @@ public partial class ChapterEditorWindow
     /// <para>三行**不能互相推导**：有目录 ≠ 树是按目录改的（可以先按目录修完树再清掉目录记录，
     /// 也可以只获取目录却从不使用），原文是否被外部改过又是第三件。快照从权威来源捕
     /// （<see cref="ChapterRepairContextFactory.Capture"/>），这里只读地显示，不再自己推断。</para>
+    ///
+    /// <para>捕出来的快照同时**留给问题卡用**：<see cref="IssueResolutionPolicy"/> 要靠它区分
+    /// "有目录但本次还没选用"与"已经按目录对齐过"，而那两句话必须不同。这里缓存而不是让问题卡
+    /// 自己捕，是因为 <see cref="ChapterRepairContextFactory.Capture"/> 会读磁盘上的目录记录 ——
+    /// 每次选中变化都读一遍文件是不可接受的。</para>
     /// </summary>
     private void RefreshContextBar()
     {
+        _context = _document is null
+            ? ChapterRepairContextSnapshot.Unknown
+            : ChapterRepairContextFactory.Capture(_document, _provenance, _sourceChanged);
         if (ContextCatalogText is null || _document is null) return;
-        var snapshot = ChapterRepairContextFactory.Capture(_document, _provenance, _sourceChanged);
-        ContextCatalogText.Text = snapshot.CatalogLine;
-        ContextTreeText.Text = snapshot.TreeLine;
-        ContextSourceText.Text = snapshot.SourceChanged
+        ContextCatalogText.Text = _context.CatalogLine;
+        ContextTreeText.Text = _context.TreeLine;
+        ContextSourceText.Text = _context.SourceChanged
             ? "已在程序之外变化 —— 章节位置可能失效，请先刷新原文"
             : "正常";
     }

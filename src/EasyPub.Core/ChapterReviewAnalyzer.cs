@@ -47,6 +47,11 @@ public static class ChapterReviewAnalyzer
         // 六类本地提醒就全部重新打开 —— 而他不知道那是自己那次编辑造成的。
         SuppressionDecision Decide(string code, FindingScope scope) =>
             FindingSuppressionPolicy.Decide(code, scope, verification);
+        // 一个码属于哪一类，全软件只有 IssueResolutionPolicy 一处定义。这里不再自己算 ——
+        // 原来这里的归因与报告窗口那份并不一致（chapter_number_gap 在这里被归成
+        // 「编号与层级」/「误识别」，在表里它是「漏识别」）。
+        static string CategoryOf(string code) =>
+            IssueCategory.ForCode(code) ?? ReviewCategories.Other;
         // **这里不再过滤。** 六类以前在这里被逐行滤掉，另外几类在各自的调用点被全局滤掉 ——
         // 四处对"哪些 finding 能被动用目录证据推翻"的判断并不一致（内容类被误伤，而
         // chapter_number_gap 本该照常报告）。现在抑制只在 Add(...) 里发生一次。
@@ -72,7 +77,7 @@ public static class ChapterReviewAnalyzer
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_unnumbered",
                 $"异常长章中发现 {candidates.Count()} 处疑似无编号标题。可在目录辅助修复中调整行数阈值、获取参考目录并预览补建；不会自动拆分正文。",
                 PreflightTargetKind.Chapters, first.Line);
-            AddScope(issue, ReviewCategories.Missing, [first.OwnerId], lines, [issue]);
+            AddScope(issue, [first.OwnerId], lines, [issue]);
         }
         foreach (var gap in MissingChapterHeadings.Find(document, entries, cancellationToken).GroupBy(c => c.NextLine))
         {
@@ -82,7 +87,7 @@ public static class ChapterReviewAnalyzer
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_heading_typo",
                 $"跳章区间发现 {candidates.Length} 个疑似漏识别标题：" + string.Join("；", candidates.Select(c => $"第 {c.Line} 行：{c.Original} → {c.Title}")),
                 PreflightTargetKind.Chapters, candidates[0].Line);
-            AddScope(issue, ReviewCategories.Missing, owners, lines, [issue]);
+            AddScope(issue, owners, lines, [issue]);
         }
         if (FindNumericChapters(document, entries, cancellationToken) is { } suggestion)
         {
@@ -90,7 +95,7 @@ public static class ChapterReviewAnalyzer
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "numeric_chapters_suspected",
                 $"未识别到章节，但发现 {suggestion.Lines.Count} 处疑似数字章节（每章至少 {suggestion.MinimumBodyLines} 行非空正文）。可在章节工作台核对原文后，一键识别本书；不会修改全局设置。",
                 PreflightTargetKind.Chapters, first);
-            groups.Add(new(issue, ReviewCategories.Missing, entries.Where(e => e.IsFrontMatter).Select(e => e.Id).ToArray(), suggestion.Lines, [issue]));
+            groups.Add(new(issue, CategoryOf(issue.Code), entries.Where(e => e.IsFrontMatter).Select(e => e.Id).ToArray(), suggestion.Lines, [issue]));
         }
         if (ChapterStructureSuggestion.Find(document, entries) is { } structure) groups.Add(structure);
         // **不再按"是否已验证"预过滤**：正文重复属于"目录证据推翻不了"的一类 ——
@@ -112,7 +117,7 @@ public static class ChapterReviewAnalyzer
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_content_duplicate",
                 $"同名章节“{second.Title}”：{description}；正文 {pair.FirstLines} / {pair.SecondLines} 行，{pair.FirstCharacters} / {pair.SecondCharacters} 字符。可对比后选择删除一份，原始 TXT 不变。",
                 PreflightTargetKind.Chapters, second.TitleLineNumber);
-            groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id], new[] { first.TitleLineNumber, second.TitleLineNumber }.OfType<int>().ToArray(), [issue]));
+            groups.Add(new(issue, CategoryOf(issue.Code), [first.Id, second.Id], new[] { first.TitleLineNumber, second.TitleLineNumber }.OfType<int>().ToArray(), [issue]));
             // The content comparison supersedes duplicate-title / same-number noise at this copy,
             // but never consumes a gap or a missing-heading diagnosis.
             foreach (var old in raw.Where(i => i.LineNumber == second.TitleLineNumber && i.Code is "chapter_duplicate" or "chapter_number_order")) consumed.Add(old);
@@ -132,7 +137,7 @@ public static class ChapterReviewAnalyzer
                 $"“{first.Title}”（第 {pair.FirstLine} 行）与“{second.Title}”（第 {pair.SecondLine} 行）标题不同、{description}。"
                 + "多半是源文件重复拼接后改了标题；请核对哪一份该留，软件不会自动删除、也不会按内容替换标题。",
                 PreflightTargetKind.Chapters, pair.SecondLine);
-            groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id],
+            groups.Add(new(issue, CategoryOf(issue.Code), [first.Id, second.Id],
                 new[] { pair.FirstLine, pair.SecondLine }.OfType<int>().ToArray(), [issue]));
         }
         var numeric = NumericHeadingRule.Compile(document.RecognitionOptions.NumericHeadingPattern);
@@ -142,22 +147,22 @@ public static class ChapterReviewAnalyzer
         // 只有 FindingSuppressionPolicy 一个定义处。
         //
         // 注意局部函数**不能重载**（它们是局部变量，同名即冲突），所以下面两个入口取不同的名字。
-        void AddScope(ConversionPreflightIssue issue, string category, IReadOnlyList<string> ids,
+        void AddScope(ConversionPreflightIssue issue, IReadOnlyList<string> ids,
             IReadOnlyList<int> lines, IEnumerable<ConversionPreflightIssue> related)
         {
             var originals = related.ToArray();
             // 先消费 related，再决定显不显示 —— 否则被抑制的那一组会把它的关联条目漏成碎片。
             foreach (var item in originals) consumed.Add(item);
             if (Decide(issue.Code, new FindingScope(ids, lines)).IsSuppressed) return;
-            groups.Add(new(issue, category, ids, lines, originals));
+            groups.Add(new(issue, CategoryOf(issue.Code), ids, lines, originals));
         }
-        void Add(ConversionPreflightIssue issue, string category, IEnumerable<ChapterTreeEntry> nodes, IEnumerable<ConversionPreflightIssue> related)
+        void Add(ConversionPreflightIssue issue, IEnumerable<ChapterTreeEntry> nodes, IEnumerable<ConversionPreflightIssue> related)
         {
             var members = nodes.ToArray();
             var originals = related.ToArray();
             var lines = members.Select(n => n.TitleLineNumber).Concat(originals.Select(i => i.LineNumber)).Append(issue.LineNumber)
                 .OfType<int>().Distinct().Order().ToArray();
-            AddScope(issue, category, members.Select(n => n.Id).ToArray(), lines, originals);
+            AddScope(issue, members.Select(n => n.Id).ToArray(), lines, originals);
         }
         // Scan the complete flattened order; require same parent and leaves, not filtered neighbors.
         for (var i = 1; i < entries.Count; i++)
@@ -178,7 +183,7 @@ public static class ChapterReviewAnalyzer
                 var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "numeric_body_group",
                     $"普通章节之间有 {members.Length} 个连续数字条目，多数正文很短，疑似正文列举（请核对原文）",
                     PreflightTargetKind.Chapters, members[0].TitleLineNumber);
-                Add(issue, ReviewCategories.Misrecognized, members, related);
+                Add(issue, members, related);
             }
             i = end;
         }
@@ -193,16 +198,9 @@ public static class ChapterReviewAnalyzer
                 var same = entries.Where(n => !n.IsFrontMatter && parentIds[n.Id] == parentIds[node.Id]
                     && n.Level == node.Level && n.Title.Trim() == node.Title.Trim()).ToArray();
                 var lines = same.Select(n => n.TitleLineNumber).ToHashSet();
-                Add(issue, ReviewCategories.Duplicate, same, raw.Where(r => r.Code == "chapter_duplicate" && lines.Contains(r.LineNumber)));
+                Add(issue, same, raw.Where(r => r.Code == "chapter_duplicate" && lines.Contains(r.LineNumber)));
                 continue;
             }
-            var category = issue.Code switch
-            {
-                "volume_number_duplicate" or "chapter_level_gap" => ReviewCategories.Structure,
-                "chapter_unrecognized" => ReviewCategories.Missing,
-                "chapter_number_order" or "chapter_number_gap" => node is not null && IsNumeric(node) ? ReviewCategories.Misrecognized : ReviewCategories.Structure,
-                _ => ReviewCategories.Other
-            };
             var associated = node is null ? Array.Empty<ChapterTreeEntry>() : new[] { node };
             if (issue.Code == "volume_number_duplicate")
             {
@@ -211,7 +209,7 @@ public static class ChapterReviewAnalyzer
                 if (first.Success && int.TryParse(first.Groups[1].Value, out var line)
                     && entries.FirstOrDefault(n => n.TitleLineNumber == line) is { } origin) associated = new[] { origin }.Concat(associated).ToArray();
             }
-            Add(issue, category, associated, [issue]);
+            Add(issue, associated, [issue]);
         }
         // Group repeated order warnings for review, without changing recognition or dropping
         // any original evidence. Scope remains the same parent and level.
@@ -224,7 +222,7 @@ public static class ChapterReviewAnalyzer
             var first = batch.OrderBy(g => g.Issue.LineNumber).First();
             var issue = first.Issue with { Code = "chapter_numbering_variants",
                 Message = $"同一层级有 {batch.Length} 处编号顺序差异，已合并展示。可能涉及编号重启、体系混用或顺序调整；不据此认定缺章，也不自动改号。请选择原文位置逐项核对。" };
-            groups.Add(new(issue, ReviewCategories.Structure, batch.SelectMany(g => g.NodeIds).Distinct().ToArray(),
+            groups.Add(new(issue, CategoryOf(issue.Code), batch.SelectMany(g => g.NodeIds).Distinct().ToArray(),
                 batch.SelectMany(g => g.Lines).Distinct().Order().ToArray(), batch.SelectMany(g => g.RelatedIssues).ToArray()));
         }
         // What the directory knows and the tree does not. Everything above reads the text on its own:
@@ -249,7 +247,7 @@ public static class ChapterReviewAnalyzer
                     + "这些章要么原文里确实没有（软件不会补造正文），要么没被识别到；请对照原文核对，"
                     + "需要补建的入口在「目录辅助修复」。本项只提示，不会修改章节树。",
                     PreflightTargetKind.Chapters, 0);
-                groups.Add(new(issue, ReviewCategories.Missing, [], [], [issue]));
+                groups.Add(new(issue, CategoryOf(issue.Code), [], [], [issue]));
             }
         }
         var ordered = groups.OrderBy(g => g.Issue.LineNumber ?? int.MaxValue).ToArray();

@@ -46,6 +46,6 @@ public static class ChapterStructureSuggestion
         var issue = new ConversionPreflightIssue(doc.SourcePath, PreflightSeverity.Warning, "chapter_structure_suggested",
             $"建议预览结构整理：{resets} 处同组编号重置、{falseVolumes} 处疑似卷边界、{extras} 处额外章头。可先逐处修复漏识别标题；整理方案需预览后应用。\n"
                 + string.Join("\n", evidence.Select(e => e.Reason)), PreflightTargetKind.Chapters, lines.FirstOrDefault());
-        return new(issue, ReviewCategories.Structure, evidence.Select(e => e.Entry.Id).Distinct().ToArray(), lines, [issue]);
+        return new(issue, IssueCategory.ForCode(issue.Code) ?? ReviewCategories.Structure, evidence.Select(e => e.Entry.Id).Distinct().ToArray(), lines, [issue]);
     }
 }

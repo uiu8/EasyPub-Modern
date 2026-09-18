@@ -122,19 +122,14 @@ public sealed record PreflightIssueRow(
 
     public bool CanNavigate => Issue is not null;
     public string Category => Issue is null ? "全部" : IssueCategory.For(Issue);
-    public string ActionLabel => Issue is null ? "—" : Issue.Code switch
-    {
-        "chapter_structure_suggested" => "预览结构整理",
-        "chapter_number_gap" => "核对跳章区间",
-        "chapter_number_order" => "核对编号与顺序",
-        "chapter_heading_typo" => "预览补建章节",
-        "chapter_duplicate" => "比较重复章节",
-        "chapter_content_duplicate" => "对比并删除重复正文",
-        "chapter_repeated_sequence" => "核对重复拼接区段",
-        "chapter_unnumbered" => "预览补建无编号标题",
-        _ when Issue.Target == PreflightTargetKind.TextCleanup && Issue.Severity == PreflightSeverity.Information => "查看清理计划",
-        _ => ReadinessEvaluator.ActionLabel(Issue.Target),
-    };
+
+    /// <summary>
+    /// 按钮说什么，由 <see cref="IssueResolutionPolicy"/> 算出的动作决定 —— 不再是一张
+    /// 与工作台各自维护的 code 表。两个表面现在推荐**同一个动作**，只是措辞不同：
+    /// 这里只能跳转，所以说「在工作台…」。
+    /// </summary>
+    public string ActionLabel => Issue is null ? "—" : PreflightCta.For(Issue);
+
     public static PreflightIssueRow From(ConversionPreflightIssue issue) => new(
         issue.Severity == PreflightSeverity.Error ? "需修正" : issue.Severity == PreflightSeverity.Warning ? "待核对" : "信息",
         string.IsNullOrWhiteSpace(issue.InputPath) ? "批量任务" : Path.GetFileName(issue.InputPath),

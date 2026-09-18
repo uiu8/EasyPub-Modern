@@ -112,7 +112,11 @@ public sealed class MainWindowLayoutTests
             combo.SelectedItem = ReviewCategories.Missing;
             // Choosing one category is a drill-down, so those rows stay individual and actionable.
             var row = grid.Items.Cast<PreflightIssueRow>().Single(item => item.Issue!.Code == "chapter_number_gap");
-            Assert.Equal("核对跳章区间", row.ActionLabel);
+            // 报告窗口手里只有一条 issue，没有文档 —— 所以它**无从知道本地有没有可补建的候选**。
+            // 它因此不替工作台承诺用哪种手段（以前写的是「核对跳章区间」，那还只是不够具体；
+            // 改成一律说"去获取目录"就会撒谎，因为很多跳章其实是本地漏识别）。工作台拿到真实
+            // 证据后会自己重算按钮，那里的文案才是「补建本组 N 个…」或「获取参考目录并对照…」。
+            Assert.Equal("在工作台核对原文", row.ActionLabel);
             Assert.Equal(42, row.Issue!.LineNumber);
             combo.SelectedItem = "全部问题";
             var information = Assert.IsType<CheckBox>(window.FindName("WorkflowIncludeInformation"));

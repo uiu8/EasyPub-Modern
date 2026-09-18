@@ -133,6 +133,33 @@ public partial class ChapterEditorWindow
 
     private string ReviewCategory(ConversionPreflightIssue issue) => ReviewGroup(issue)?.Category ?? ReviewCategories.Other;
 
+    /// <summary>
+    /// 这条提醒在当前上下文下的建议 —— **唯一语义来源**。
+    ///
+    /// <para>卡片上的按钮文案与点下去执行的那条分支必须读**同一个结果**。以前它们各自
+    /// switch 一遍问题码，于是出现说法与做法不符：按钮写着「编辑成品标题…」而点下去打开的是
+    /// 正文对比窗，写着「到原文定位并核对…」而点下去把选中行建立成了章节。</para>
+    ///
+    /// <para>上下文取缓存的快照（<c>_context</c>），不是现捕 —— 捕获过程要读磁盘上的目录记录，
+    /// 而这里在每次选中变化时都会被调用。</para>
+    /// </summary>
+    private ResolutionAdvice AdviceFor(ConversionPreflightIssue? issue, ChapterReviewGroup? group)
+    {
+        if (issue is null) return ResolutionAdvice.None("未选择提醒。");
+        var facts = new IssueResolutionFacts(
+            // 工作台手里有文档，所以这一项**总是"查过"**（true / false 都确定，不会是"没查过"）。
+            // 短路只为省掉对无关问题码的全文扫描。
+            HasLocalHeadingCandidate: issue.Code == "chapter_number_gap" && FindLocalHeadingCandidates().Count > 0,
+            HasSuggestedTitle: SuggestedTitle() is not null,
+            CanSplitSelectedLine: OperationSelection().Length > 0 && CanSplitSelectedLine());
+        return IssueResolutionPolicy.Evaluate(
+            group ?? new ChapterReviewGroup(issue, ReviewCategory(issue), [], [], []), _context, facts);
+    }
+
+    /// <summary>跳章区间里本地能补建的候选。与"批量补建全书"读的是同一个搜索结果。</summary>
+    private IReadOnlyList<MissingChapterHeading> FindLocalHeadingCandidates() =>
+        MissingChapterHeadings.Find(_document, Flatten().Select(node => node.ToEntry()).ToArray(), HeadingRepairOptions);
+
     private ChapterTreeNode[] CurrentNumericGroup(ConversionPreflightIssue? issue) =>
         issue is { Code: "numeric_body_group" } && ReviewGroup(issue) is { } group
             ? Flatten().Where(n => group.NodeIds.Contains(n.Id)).ToArray() : [];
@@ -633,13 +660,24 @@ public partial class ChapterEditorWindow
         ReviewExplanation.ToolTip = ReviewDetailsText.Text;
         var numericGroup = CurrentNumericGroup(issue);
         var targets = count == 1 && OnlyCurrentIssueCheck.IsChecked != true && numericGroup.Length > 1 ? numericGroup : selected;
-        var restore = count > 1 || issue?.Code == "numeric_body_group";
+        // 算一次，文案与执行都用它。**两处各算一遍正是错配的来源** —— 以前这里按类别拼字符串，
+        // 而 ReviewAction_Click 按问题码分派，两边对同一条提醒的"该做什么"从来没有被核对过。
+        var resolution = AdviceFor(issue, group);
+        var restore = count > 1 || resolution.Recommended?.Intent == ResolutionIntent.RestoreAsBody;
         ReviewActionButton.Content = restore ? targets.Length > 1 ? $"还原{(count > 1 ? "已选" : "本组")} {targets.Length} 处为正文" : "还原为上一章正文"
-            : issue?.Code == "chapter_duplicate" ? "检查并清理本组…"
-            : ChapterIssueAction.ForGeneric(category, issue?.Code, count > 0 && CanSplitSelectedLine(), SuggestedTitle());
+            : ChapterIssueAction.CtaFor(resolution.Recommended, SuggestedTitle());
+        // 按钮的说明就是这条建议自己的解释 —— 它随上下文变（有目录 / 没目录 / 原文已变），
+        // 不再是一句写死的固定文案。第二条路也一并说出来：一条提醒常常有两个诚实的出口，
+        // 只显示被推荐的那个会让用户以为没有别的选择。
+        var alternative = resolution.AvailableActions.FirstOrDefault(a => a.Intent != resolution.RecommendedIntent);
+        ReviewActionButton.ToolTip = resolution.Recommended is { } chosen
+            ? chosen.Explanation + (alternative is null ? "" : $"\n\n另一条路：{ChapterIssueAction.CtaFor(alternative)}")
+            : null;
         var plan = PlanBatchAction(targets, merge: true);
-        // "从选中行建立章节" needs a row; everything else on this path carries its own subject or only navigates.
-        var needsSelection = category == ReviewCategories.Missing && count == 0;
+        // 只有"把选中行建立成章节"需要先选中一行；其余动作各自带着自己的对象，或者只导航。
+        // 以前这里按**类别**判断（漏识别一律要求先选中），于是"目录里有、树里没有"这种
+        // 根本不需要选中行的提醒也被禁用了按钮。
+        var needsSelection = resolution.Recommended?.Intent == ResolutionIntent.PromoteSelectedLine && count == 0;
         ReviewActionButton.IsEnabled = !_sourceChanged && !needsSelection
             && (restore ? count > 0 && plan.Any(p => p.Reason is null) : true);
         ActionScopeText.Text = restore ? DescribeBatchPlan(plan) : count == 1 ? $"当前章节：{_selectedNode?.Title}" : "请选择左侧章节。";
@@ -650,47 +688,70 @@ public partial class ChapterEditorWindow
     {
         if (!ReviewActionButton.IsEnabled || _sourceChanged) return;
         var issue = CurrentReviewIssue();
-        if (issue?.Code == "chapter_unnumbered") { CatalogAssist_Click(sender, e); return; }
-        if (issue?.Code == "chapter_repeated_sequence" && ReviewGroup(issue) is { } sequence)
+        // **与卡片文案读同一个 advice。** 这一句是这次重构的全部意义：按钮说什么，
+        // 这一下就做什么。以前这里是另一套按问题码的 switch，与拼按钮文案的那套从未被核对过。
+        var intent = AdviceFor(issue, ReviewGroup(issue)).Recommended?.Intent ?? ResolutionIntent.Unknown;
+        var before = _undo.Count;
+        var numericGroup = OperationSelection().Length == 1 && OnlyCurrentIssueCheck.IsChecked != true ? CurrentNumericGroup(issue) : [];
+        if (numericGroup.Length > 1) SetOperationSelection(numericGroup);
+        if (OperationSelection().Length > 1) Merge_Click(sender, e);
+        else switch (intent)
         {
-            var first = sequence.Lines.First();
-            NavigateToSourceLine(_selectedNode?.TitleLineNumber == first ? issue.LineNumber!.Value : first);
-            return;
-        }
-        if (issue?.Code == "chapter_content_duplicate") { CompareDuplicateContents(ReviewGroup(issue)); return; }
-        if (issue?.Code == "chapter_structure_suggested") { RecoverStructure_Click(sender, e); return; }
-        if (issue?.Code == "chapter_heading_typo") { RepairMissingHeadings(issue.LineNumber); return; }
-        if (issue?.Code == "chapter_number_gap")
-        {
-            // The same exits the card offers: build the headings the text does contain, or go and compare
-            // against the directory. Never fall through to an edit that cannot restore a missing chapter.
-            var entries = Flatten().Select(node => node.ToEntry()).ToArray();
-            var fixable = MissingChapterHeadings.Find(_document, entries, HeadingRepairOptions);
-            if (_selectedNode?.TitleLineNumber is int line && fixable.Any(candidate => candidate.NextLine == line))
+            case ResolutionIntent.RestoreAsBody:
+                Merge_Click(sender, e);
+                break;
+            case ResolutionIntent.CleanDuplicateTitles:
+                CleanDuplicateTitles(ReviewGroup(issue)?.NodeIds.ToHashSet());
+                break;
+            case ResolutionIntent.PromoteSelectedLine:
+                Split_Click(sender, e);
+                break;
+            case ResolutionIntent.ApplySuggestedTitle:
+                CorrectNumber_Click(sender, e);
+                break;
+            case ResolutionIntent.EditTreeTitle:
+                if (_selectedNode is not null) EditTitle(_selectedNode);
+                break;
+            case ResolutionIntent.RepairMissingHeadings:
             {
+                // 选中的行本身就在候选里时只补它，否则补全区间 —— 这是"本组"与"全书"的区别。
+                var candidates = FindLocalHeadingCandidates();
+                var line = _selectedNode?.TitleLineNumber is int selected && candidates.Any(c => c.NextLine == selected)
+                    ? selected : (int?)null;
                 RepairMissingHeadings(line);
                 return;
             }
-            if (fixable.Count > 0) { RepairMissingHeadings(null); return; }
-            if (SavedReference() is not null) { ShowReviewFeedback("本书已有参考目录，树上已标出目录里有、源文件里找不到的章节。"); return; }
-            FetchCatalog_Click(sender, e);
-            return;
+            case ResolutionIntent.RepairUnnumberedHeadings:
+            case ResolutionIntent.AdoptCatalogChapters:
+                CatalogAssist_Click(sender, e);
+                return;
+            case ResolutionIntent.RecoverStructure:
+                RecoverStructure_Click(sender, e);
+                return;
+            case ResolutionIntent.CompareDuplicateBodies:
+                CompareDuplicateContents(ReviewGroup(issue));
+                return;
+            case ResolutionIntent.ReviewHierarchy:
+                ReviewMore_Click(sender, e);
+                return;
+            case ResolutionIntent.ReRecognizeAsNumeric:
+                await RecognizeSuggestedNumericChaptersAsync(normalizeTitles: true);
+                return;
+            case ResolutionIntent.AcquireCatalog:
+                FetchCatalog_Click(sender, e);
+                return;
+            case ResolutionIntent.NavigateToSource:
+            {
+                // 重复区段有两个开头：第一次先去前段，再点一次去后段。
+                var lines = ReviewGroup(issue)?.Lines ?? [];
+                var first = lines.Count > 0 ? lines[0] : issue?.LineNumber ?? 0;
+                if (first > 0)
+                    NavigateToSourceLine(_selectedNode?.TitleLineNumber == first && issue?.LineNumber is int other ? other : first);
+                return;
+            }
+            default:
+                break;
         }
-        if (issue?.Code == "numeric_chapters_suspected")
-        {
-            await RecognizeSuggestedNumericChaptersAsync(normalizeTitles: true);
-            return;
-        }
-        var category = issue is null ? null : ReviewCategory(issue);
-        var before = _undo.Count;
-        var group = OperationSelection().Length == 1 && OnlyCurrentIssueCheck.IsChecked != true ? CurrentNumericGroup(issue) : [];
-        if (group.Length > 1) SetOperationSelection(group);
-        if (OperationSelection().Length > 1 || issue?.Code == "numeric_body_group") Merge_Click(sender, e);
-        else if (issue?.Code == "chapter_duplicate") CleanDuplicateTitles(ReviewGroup(issue)?.NodeIds.ToHashSet());
-        else if (issue?.Code is "volume_number_duplicate" or "chapter_level_gap") { ReviewMore_Click(sender, e); return; }
-        else if (category == ReviewCategories.Missing) Split_Click(sender, e);
-        else if (SuggestedTitle() is not null) CorrectNumber_Click(sender, e);
-        else if (_selectedNode is not null) EditTitle(_selectedNode);
         if (_undo.Count > before && _resultMessage is null) SetReviewResult("修改已完成，原始 TXT 不变。核对下方原文后再前往下一组。");
         UpdateReviewVisibility();
         UpdateActionButtons();

@@ -2,8 +2,12 @@ namespace EasyPub.Core;
 
 /// <summary>
 /// The single classification axis for chapter review. A category names the problem the reader has
-/// to judge, not the code that detected it. Button behaviour is dispatched by issue code — never by
+/// to judge, not the code that detected it. Button behaviour is dispatched by
+/// <see cref="IssueResolutionPolicy"/> from the issue code plus the current context — never by
 /// category — so renaming or merging a category can never silently disable an action.
+///
+/// <para>哪一个码属于哪一类，只有 <see cref="IssueResolutionPolicy.All"/> 一处定义
+/// （经 <see cref="IssueCategory"/> 暴露）。这里只提供五个类别名本身。</para>
 /// </summary>
 public static class ReviewCategories
 {

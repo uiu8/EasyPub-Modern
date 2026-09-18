@@ -36,6 +36,14 @@ public partial class ChapterEditorWindow : Window
     /// 所以"获取目录、只看不用"也会让它非空 —— 它证明的只是"保存过一份目录"。</para>
     /// </summary>
     private PersistedTreeProvenance _provenance = PersistedTreeProvenance.Unknown;
+
+    /// <summary>
+    /// 工作台顶部那三行事实的快照，由 <c>RefreshContextBar</c> 捕一次后缓存。
+    ///
+    /// <para>问题卡要靠它区分"磁盘上有目录但本次还没选用"与"已经按目录对齐过" ——
+    /// 同一句建议在这两种情况下必须不同。缓存的原因见 <c>RefreshContextBar</c> 的注释。</para>
+    /// </summary>
+    private ChapterRepairContextSnapshot _context = ChapterRepairContextSnapshot.Unknown;
     private int _nextSuggestionIndex;
     private string _numericPattern = NumericHeadingRule.DefaultPattern;
     public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();

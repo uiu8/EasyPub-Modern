@@ -27,7 +27,7 @@ public static class ChapterRepeatedSequences
                 + "\n疑似源文件重复拼接，不是正常分卷的证据。先定位两段前后章节、核对完整性，再逐对选择保留；不自动移动、删除或补写内容。";
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_repeated_sequence", message,
                 PreflightTargetKind.Chapters, second.TitleLineNumber);
-            result.Add(new(issue, ReviewCategories.Duplicate, members.Select(e => e.Id).ToArray(), members.Select(e => e.TitleLineNumber!.Value).Distinct().Order().ToArray(), [issue]));
+            result.Add(new(issue, IssueCategory.ForCode(issue.Code) ?? ReviewCategories.Duplicate, members.Select(e => e.Id).ToArray(), members.Select(e => e.TitleLineNumber!.Value).Distinct().Order().ToArray(), [issue]));
         }
         return result;
     }
