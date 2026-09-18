@@ -96,7 +96,11 @@ public partial class ChapterEditorWindow
         };
         top.Children.Add(status);
         var footer = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        var saveSettings = new Button { Content = "保存本书目录" };
+        var saveSettings = new Button
+        {
+            Content = "记住这份目录",
+            ToolTip = "把当前选定或粘贴的目录存到本书名下，下次打开自动使用。不改原始 TXT。"
+        };
         var cancel = new Button { Content = "关闭", IsCancel = true };
         footer.Children.Add(saveSettings); footer.Children.Add(cancel); DockPanel.SetDock(footer, Dock.Bottom); panel.Children.Add(footer);
         // 扫描阈值不再是本对话框的界面元素：它只影响自助扫描，而自助扫描已并入统一入口。
@@ -166,7 +170,8 @@ public partial class ChapterEditorWindow
                 if (found.Count > 0) sources.SelectedIndex = 0;
                 status.Text = found.Count == 0
                     ? "未获取到可用目录，不能据此判断缺章。请粘贴书籍网址／编号，或导入目录文字；番茄同目录下载记录可自动识别。"
-                    : $"已获取 {found.Count} 个候选，请核对来源及目录，再点击「依据参考目录调整章节树」。";
+                    : $"已获取 {found.Count} 个候选。请核对来源与章数：点「预览章节调整…」就用这一份（不落盘），"
+                      + "点「记住这份目录」才会存下来供下次自动使用。";
             }
             catch (OperationCanceledException) { status.Text = "获取已取消或超时，可使用备用导入。"; }
             catch (Exception ex) { status.Text = "获取失败：" + ex.Message; }
@@ -189,7 +194,10 @@ public partial class ChapterEditorWindow
                   + string.Join("、", others.Take(3).Select(other => $"{HostOf(other.Source)} {other.Titles.Count} 章"))
                   + (others.Length > 3 ? $" 等 {others.Length} 个" : "") + "。";
             sourceNote.Text = $"来源：{catalog.Source}\n页面：{catalog.PageTitle} · {catalog.Titles.Count} 条目录 · 当前已有标题匹配 {matches} 项。仅供参考，不代表全文完整。" + comparison;
-            try { Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { status.Text = "目录已读取，但未保存：" + ex.Message; }
+            // **选中不等于确认。** 这里以前直接 Save()，而上面 Network() 会"自动选中第一个候选" ——
+            // 两件事连起来就是"程序替用户选定并保存了第一份目录"，而用户从没说过要它。
+            // 现在这里只预览：落盘留给「记住这份目录」（下次自动用），或者干脆不落盘 ——
+            // 点「预览章节调整…」用的是当场这份目录（见 outline.Click）。
         };
         auto.Click += async (_, _) => await Network(true); fetch.Click += async (_, _) => await Network(false);
         cancelNetwork.Click += (_, _) => request?.Cancel();
