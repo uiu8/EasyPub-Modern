@@ -421,71 +421,176 @@ RepairPlanCompiler.Compile(plan, decisions, mode)
 
 ## 8. 已知缺陷与未解之谜
 
-### 8.1 ⚠️ 「120 章」/「560 vs 468」之谜（**查过两轮，未解决，但范围已锁死**）
+### 8.1 ⚠️ 主界面与分析用的**不是同一棵树**（已查明，**未修**）
 
-**现象**：走查六卷样书时，主界面显示「章节树 已识别 **560** 项」，
-而 Core 加载同一份文件得到 `Entries.Count = 468`。
+**这是目前已知最严重的缺陷。** 它不报错、不影响转换结果，但**界面上显示的所有数字都可能对应另一棵树**。
 
-**而 `ChapterCandidateCount` 的定义是**：
+#### 现象与根因
+
+走查时主界面显示「章节树 已识别 **560** 项」，而 Core 加载同一份文件得到 `Entries.Count = 468`。
+
+**根因是一行**：
 
 ```csharp
-document.Entries.Count(entry => entry.TitleLineNumber.HasValue)
+// ConversionPreflightInspector.cs:88
+var options = request.Options ?? ConversionOptions.LegacyDefault;
 ```
 
-**有标题行号的条目不可能多于全部条目。** 所以 **560 和 468 不可能来自同一个 document**。
+```csharp
+// ConversionRequest.cs:17
+public static ConversionOptions LegacyDefault { get; } = new() { ChapterPattern = HeadingSyntax.LegacyPattern };
+```
 
-#### 已经排除的（全部实测）
+**`request.Options` 为 null 时，静默回退到一套 2015 年的宽松正则**：
 
-| 假设 | 实验 | 结果 |
-|---|---|---|
-| 两个判据不同导致 120 | Core 完整修复后再算 absent | **absent = 43 = `outcome.Missing`** —— 一致，无矛盾 |
-| 走查时只勾了部分动作 | 只应用 77 项 / 一半 | absent = **51**，不是 120 |
-| 设置里的旧正则 | 用 `LegacyPattern` 等三套正则识别 | **461 / 462 / 468**，没有一个接近 560 |
-| 设置里其他字段 | 逐个换成旧值 | **没有一个字段**改变条目数 |
-| `hierarchy` 参数 | 传"绝不可能匹配"的正则、传 `Enabled=false` | **都是 468** |
+```
+^\s*[第卷][0123456789一二三四五六七八九十零〇百千两]*[章回部节集卷].*
+```
 
-**结论：Core 层面任何参数组合都给不出 560。560 来自主界面那条路径，与识别选项无关。**
+它比现代默认正则宽松得多（连「第一章回」都吃，也不排除"回头/回来/回事"）。
 
-#### ⚠️ 查这件事时撞到的一个真实陷阱（**值得单独记住**）
+#### 实测证据（交互日志，2026-09-18）
+
+设 `EASYPUB_INTERACTION_LOG` 后导入样书，日志里那一条：
+
+```
+outcome · 识别书稿
+      文件 = 缺陷样书-走查副本.txt
+      条目 = 561                                    ← 不是 468
+      有标题行号 = 560                               ← 界面上那个「560 项」
+      行数 = 2503                                   ← 同一份文件，没读错
+      分层 = True
+      章正则 = ^\s*[第卷][0123456789…]*[章回部节集卷].*   ← ★ 不是「(默认)」
+      级别2正则 = ^\s*第[…]+[章回].*                    ← ★ 还是旧值
+```
+
+#### 后果
+
+**用户在导入时看到的那棵树，不是他在工作台里编辑、也不是最终转换会用的那棵。**
+
+- 「建议处理 155」基于 **561** 那棵树
+- 「待核对 155 组」基于 **561** 那棵树
+- 而样书基线测试锁的是 **468** 那棵树（44 组）
+- 报告窗口那句「参考目录里有 **120** 章在章节树中没有」，描述的也是那棵旧正则的树
+
+**排查时排除过的**（都是实测）：Core 完整修复后 `absent = 43 = outcome.Missing`（本来就一致）；
+只应用部分动作 absent 只到 51；三套 `chapterPattern` 给 461/462/468；逐字段换旧值无一改变条目数。
+**结论：Core 层面任何参数组合都给不出 560 —— 它只来自那条 `?? LegacyDefault`。**
+
+#### 怎么修（**三种做法，需要产品决定，未实现**）
+
+1. **自动分析传 `Options`**（与转换一致）—— 最一致，把"分析与转换用同一棵树"变成结构保证
+2. **把 `LegacyDefault.ChapterPattern` 换成现代默认** —— 一行改动，**但有副作用**：
+   `LegacyEpubWriter` / `LegacyMobiWriter` / `LegacyTextParser` / `PublicationChangeReceipt` / `BookPreviewService`
+   都在用 `LegacyDefault`。**那几个 `Legacy*` 名字里的 "Legacy" 指的是输出格式兼容 EasyPub v1.50，
+   不是"用旧正则"** —— 改它会顺带改掉它们的识别行为
+3. **`Options` 为 null 时直接报错**，逼调用方显式给出 —— 最安全但可能打破若干现有路径
+
+**推荐 1。**
+
+#### ⚠️ 顺带撞到的一个真实陷阱
 
 **`ChapterTreeDocument.Load/LoadAsync` 的 `hierarchy` 参数，对样书不起作用。**
 
-传 `Enabled = false`（关闭分层识别）或传一条绝不可能匹配的 `Level2Pattern`，
-条目数**都是 468**。原因在 `ChapterTree.cs:151`：
+传 `Enabled = false`（关闭分层识别）或一条绝不可能匹配的 `Level2Pattern`，条目数**都是 468**。
+原因在 `ChapterTree.cs:151`：
 
 ```csharp
-var candidates = editingDocument.Candidates
-    .Where(candidate => candidate.Kind != ChapterCandidateKind.NumericTitle)
-    .ToDictionary(candidate => candidate.LineNumber);
-...
+var candidates = editingDocument.Candidates ...              // ← 条目的主来源
 var level = MatchLevel(line.Text, levelPatterns);
-if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) continue;
+if (level == 0 && !candidates.TryGetValue(...)) continue;    // ← levelPatterns 只是补充
 ```
 
-**条目的主来源是 `ChapterEditingDocument.Candidates`，`levelPatterns` 只是补充。**
-而 Candidates 由**另一个参数** `chapterPattern` 决定。
+**Candidates 由另一个参数 `chapterPattern` 决定。**
 
-**这意味着**：改 `TocHierarchyOptions.Level1Pattern/Level2Pattern` 这类设置，
-在"候选已经覆盖了所有标题行"的书上**完全没有效果** —— 而界面上不会有任何提示。
+**也就是说：改 `TocHierarchyOptions.Level1/2Pattern` 这类设置，在"候选已覆盖全部标题行"的书上
+完全没有效果，而界面不会有任何提示。** 排查"设置不生效"的问题时，**先确认你改的参数是不是真正的来源**。
 
-**排查这类"设置不生效"的问题时，先确认你改的参数是不是真正的来源。**
+**这一条与 §8.2 是同一个病根：系统里对"什么算标题"有不止一个答案。**
 
-#### 下一步该怎么查（给接手的人）
+### 8.2 ⚠️ 标题语义是**硬编码**的，而"什么算标题"是可配的
 
-1. **从 `MainWindow` 的导入路径追进去**，看它到底调用哪个方法加载文档
-   （`MainWindow.xaml.cs:46` 有 `_chapterDocumentCache`，`:1078` 有 `ChapterPattern = …`）
-2. **最快的手段**：设 `EASYPUB_INTERACTION_LOG`，导入一次样书，读日志
-3. **先确认 560 是什么**：它可能根本不是 `Entries.Count`，而是某个候选计数。
-   `ChapterCandidateCount` 在导入路径上被赋了什么值，是这条线的第一个问题
-4. 对比"主界面导入"与 `ChapterTreeDocument.LoadAsync` 两条路径的**全部**参数
+**这是这个项目最根本的架构裂缝，而且它不报错。**
 
-**为什么这件事重要**：如果主界面真的用不同的规则识别，那么
-**用户在导入时看到的章节结构、他在工作台里编辑的、以及最终转换用的，可能不是同一棵树**。
-那比"数字对不上"严重得多。
+#### 事实：两件事必须一致，但只有一件可配
 
-**目前只能说：这个假设没有被证实，也没有被排除。**
+| 问题 | 在哪决定 | 可配吗 |
+|---|---|---|
+| **什么算一个章节标题** | `TocHierarchyOptions.Level1/2/3Pattern`、`ConversionOptions.ChapterPattern` | ✅ 用户可配，界面里就有 |
+| **怎么从标题里读出编号** | `HeadingSyntax.ChapterNumber`、`HeadingSyntax.Numbering` | ❌ **常量，写死的** |
 
-### 8.2 旧默认值升级机制（v1.61.0 新增，机制本身仍需扩展）
+`HeadingSyntax.cs:31-33`：
+
+```csharp
+internal static readonly Regex ChapterNumber = new(@"(?:第\s*)?(?<n>[一二三…0-9]+)\s*[章回节]", …);
+internal static readonly Regex Numbering     = new(NumberPrefix + @"[章回节卷部篇集]", …);
+```
+
+**它只认 `第?<数字>[章回节]`。**
+
+#### 影响面：`ParseKey` 是 13 处的公共依赖
+
+`ReferenceOutline.ParseKey(title)` → `TitleKey(Number, Words)` → `Canonical = Number + "|" + Words`。
+**全系统靠它把标题变成可比较的键**：
+
+| 用在哪 | 文件 |
+|---|---|
+| 目录对齐 | `ReferenceLocator.cs`（8 处） |
+| 重复判定（比 `Words`） | `ChapterDiagnostics.cs:78,89` |
+| 缺章判定（比 `Canonical`） | `ChapterReviewAnalyzer.cs:236,238` |
+| planner（比 `Words` / 判 `Number` 空） | `ReferencePlan.cs`（6 处） |
+| 卷重启检测（`int.TryParse(Number)`） | `ChapterAutoRepair.cs:150` |
+| 对齐回归 | `ReferenceAlignment.cs`（4 处） |
+
+#### 换个正则会发生什么：**不崩，静默降级**
+
+以用户配 `^第\d+话`（"话"而不是"章"）为例：
+
+| 环节 | 结果 |
+|---|---|
+| **识别** | ✅ 正常 —— 用户的 `Level2Pattern` 说了算，树识别出 `第12话 xxx` |
+| **`ParseKey` 拆编号** | ❌ `ChapterNumber` 不认"话" → `Number = ""`；`Numbering` 也不认 → `Words = "第12话xxx"` |
+| **对齐 / 缺章判定** | ⚠️ **可能仍然工作** —— 目录和树**两边用同一套错误解析**，`Canonical` 仍对得上（自洽） |
+| **重复检测** | ⚠️ 同上，自洽 |
+| **卷重启检测** | ❌ **失效** —— `ChapterAutoRepair:150` 的 `int.TryParse` 拿到空串 → `continue` |
+| **"无编号"判定** | ❌ **误判** —— `ReferencePlan:199` 用 `Number.Length == 0` 判断，于是每一章都被当成无编号，可能触发 `DemoteExtra` |
+| **跳章区间找候选** | ❌ **失效** —— `MissingChapterHeadings` 按编号格式找候选，认不出"话" |
+| **跳章提示** | ❌ 失效（`ChapterBreakpoints` 同样靠编号） |
+
+**最危险的是这个形状**：它不报错、不崩溃、界面上没有任何提示 —— 只是有几个功能悄悄不再起作用。
+用户会以为"这本书没问题"，实际是"这个功能没工作"。
+
+**§8.1 那个 120 是同一类问题**：不是算错，是**用错了词表**，而且没人告诉你。
+
+#### 更麻烦的：系统里同时存在三套"什么算标题"的答案
+
+```
+HeadingSyntax.LegacyPattern     旧宽松正则（第X章回部节集卷 都吃）
+HeadingSyntax.ChapterPattern    现代默认
+用户的 TocHierarchyOptions      可配
+```
+
+**而"什么算编号"只有一套，且不可配。两者不一致时，没有任何检查会拦下来。**
+
+#### 三个候选方案（**尚未决定，也没有实现**）
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| **A（最小、最诚实）** | 加**一致性检查**：当用户的识别规则能匹配、但 `ChapterNumber` 解析不出编号时，在识别结果上给一条明确提醒，列出"哪些功能因此不可用" | 不改任何现有行为，只把静默失效变成看得见的提醒 |
+| **B（彻底）** | 把编号解析也做成可配（跟 `Level2Pattern` 一起定义 `(?<n>…)` 捕获组） | 工程量不小，且 `Level2Pattern` 现在没有强制捕获组 |
+| **C** | 给 `ChapterNumber` 加常见变体（话/集/篇…） | 成本低但治标，下次遇到新格式还是一样 |
+
+**推荐 A 先做。** 它同时能覆盖 §8.1 那类"用错词表"的问题。
+
+#### ⚠️ 上面那张影响表是**读代码得出的，没有实测**
+
+**"配 `^第\d+话` 之后会怎样"我没有真的跑过。** 要把它变成实测值，只需要一本用别的格式的小书
+（几行就够）跑一遍 `ChapterReviewAnalyzer` + `ParseKey`。
+
+**接手的人如果要做这一块，第一件事就是造那个样本，把上表验证一遍** ——
+这个项目的历史反复证明：读代码得到的"应该会怎样"经常是错的（§11.1）。
+
+### 8.3 旧默认值升级机制（v1.61.0 新增，机制本身仍需扩展）
 
 `TocHierarchyOptions.SupersededDefaults` 是一张"旧默认值 → 新默认值"的表，
 在 `AppSettingsStore.Load()` 里应用。
@@ -496,7 +601,7 @@ if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) c
 **现状**：表里只有两条（`Level1Pattern` / `Level2Pattern` 的一个旧版本）。
 **每次改任何默认值，都应该往这张表里加一条。**
 
-### 8.3 其他已知缺陷
+### 8.4 其他已知缺陷
 
 | # | 缺陷 | 位置 | 影响 |
 |---|---|---|---|
@@ -508,7 +613,7 @@ if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) c
 | 6 | `RepairEffectCompiler.Indeterminate(string _)` 丢弃参数 | Core | 诊断信息丢失 |
 | 7 | `SnapshotRecognitionPath` 从未被写入 | Core | 某个恢复路径可能退化 |
 
-### 8.4 两个"看着像 bug 但不是"的地方
+### 8.5 两个"看着像 bug 但不是"的地方
 
 - **`chapter_content_duplicate` 归到"需要你核对"而不是"本地就能修"** ——
   对比窗只是辅助，**留哪一份必须人定**。这是刻意的。
@@ -669,11 +774,19 @@ pwsh tools/publish-atomgit.ps1 -Version 1.61.0 -Codename next-step   # 可选
 
 ### 11.6 没做完的事（按我判断的优先级）
 
-1. **§8.1 的「120 章」/ 560 vs 468** —— 这可能是"主界面与工作台用的不是同一棵树"，
-   如果是，严重程度高于其他所有
-2. 第 3 条状态测试（要可注入的目录来源）
-3. 修复后 absent 的判据与 locator 的判据统一（现在是两套：canonical key vs locator）
-4. 界面真的人工走查一遍 —— **这件事只有人能做**
+**⚠️ 下面第 1、2 条已经查明根因但没有修。** 它们是这个项目当前最要紧的两件事。
+
+1. **§8.1 —— 主界面与分析用的不是同一棵树（已查明根因，未修）**
+   一行 `request.Options ?? ConversionOptions.LegacyDefault` 让界面上所有数字对应另一棵树。
+   用户在导入时看到的结构、他在工作台里编辑的、最终转换用的，可能三者不一致。
+   **严重程度高于其他所有。** 推荐修法见 §8.1。
+2. **§8.2 —— 标题语义硬编码（诊断完成，修复方案未定）**
+   "什么算标题"可配，"怎么读出编号"不可配，两者不一致时**静默降级**。
+   推荐先做方案 A（一致性检查），它同时能覆盖第 1 条那类"用错词表"的问题。
+3. 第 3 条状态测试（要可注入的目录来源）
+4. 修复后 absent 的判据与 locator 的判据统一（现在是两套：canonical key vs locator）
+5. **界面真的人工走查一遍** —— **这件事只有人能做**，而且它已经教过我们两次
+   （按钮名与实际执行不符、进来不知道点哪里）
 
 ---
 
@@ -687,4 +800,10 @@ pwsh tools/publish-atomgit.ps1 -Version 1.61.0 -Codename next-step   # 可选
 | `docs/rust-rewrite/` | 650 个交互入口的调用链盘点（动机已放弃，映射仍有参考价值） |
 | `docs/screenshots/` | 26 张界面截图 |
 
-**如果时间只够读两节，读 §8.1（那个未解之谜）和 §11.1（为什么不能相信文档）。**
+**如果时间只够读两节，读 §8.1（两棵树）和 §8.2（硬编码的标题语义）。**
+
+**它们是同一个病根的两面：系统里对"什么算一个章节标题"有不止一个答案 ——
+一个可配、一个写死、还有一个在 `Options` 为 null 时悄悄顶上来。
+两处都不报错，只让界面上显示的数字对应另一棵树。**
+
+**第三个该读的是 §11.1：这个项目的历史文档反复被实测推翻，所以别信"应该会怎样"。**
