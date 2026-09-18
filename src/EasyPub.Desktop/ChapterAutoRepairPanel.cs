@@ -147,13 +147,16 @@ public partial class ChapterEditorWindow
             var sink = report is null
                 ? ProgressOn(Dispatcher, text => { if (stage is not null) stage.Text = text; })
                 : ProgressOn(Dispatcher, report);
-            // 取目录是**显式的一步**：只有它读磁盘与联网。以前这件事藏在 RepairAsync 内部
-            // （传 reference: null 就等于"请自动决定依据"），同一个按钮因此有四种结果。
-            // 现在由调用方在这里决定何时取、拿到什么、拿不到怎么办。
-            // 用户已经从目录面板给了目录时不再去取。
+            // 依据**只读本书已保存的目录，不联网**。这是主按钮能"按依据变名"的前提：
+            // 按钮上写的依据，必须在点下去之前就是真的。
+            //
+            // 联网取目录是「选择参考目录…」那个按钮的事，而且它会**换掉依据** ——
+            // 一个会改变按钮含义的动作，不能藏在按钮自己里面。以前正是这么藏的：
+            // 同一个「预览目录修复」会依次读保存的目录、联网抓、抓不到再退回自修复，
+            // 于是它有四种结果，而用户点之前一种都看不出来（§1.1）。
             var acquisition = reference is { } given
                 ? CatalogAcquisition.Given(given)
-                : await ChapterAutoRepair.AcquireCatalogAsync(snapshot.SourcePath, snapshot, sink, cancellation.Token);
+                : ChapterAutoRepair.ReadSavedCatalog(snapshot);
             // 显式声明成基类型：两个分支是不同的 sealed record，三元表达式自己推不出共同类型。
             RepairRequest request = acquisition.Catalog is { } found
                 ? new ReferenceRepairRequest(found)
@@ -165,18 +168,20 @@ public partial class ChapterEditorWindow
             progress?.Close();
             IsEnabled = true;
 
-            // 没有取得参考目录时，只有**真的无事可做**才去要目录。
+            // **无方案时不再自动弹目录对话框**（设计文档 §6 情况 C）。
             //
-            // 这条判断在 Phase 7 之前是不需要的：那时无目录就必然没有方案。现在无目录时统一入口会交给
-            // 自修复方案（树自身能看出的问题，比如重复标题），把一个有内容的方案挡在目录对话框后面，
-            // 等于告诉用户"什么都做不了"，而实际上是有的。
-            if (!outcome.CatalogFound && (outcome.Plan?.Actions.Count ?? 0) == 0)
+            // 以前这里是"没有目录 + 没有方案 → 直接打开核对面板"，等于把"目录"当成唯一出路。
+            // 但方案为空有两个完全不同的原因，要说不同的话：
+            //   · 已有目录 → 按目录核对后，树与原文确实没有需要改动的地方；
+            //   · 没有目录 → 只查了"树自身能看出的问题"，缺章与漏识别标题**根本没被检查**。
+            // 后者尤其不能含糊：不说清的话，用户会以为"没问题"，而实际上是"问题没查"。
+            if ((outcome.Plan?.Actions.Count ?? 0) == 0)
             {
-                SetReviewResult(outcome.Verdict);
-                // Nothing to confirm without a directory, so the caller's own dialog is where the
-                // directory gets supplied. Opened here rather than by the caller so every button shows
-                // the same sentence before the same window appears.
-                CatalogAssist_Click(this, new RoutedEventArgs());
+                SetReviewResult(outcome.CatalogFound
+                    ? "本次没有可应用的方案：按这份参考目录核对后，当前章节树与原文没有需要改动的地方。"
+                    : "本次没有可应用的方案。本次依据是**当前章节树**，只覆盖树自身能看出的问题"
+                      + "（例如重复标题）；缺章与漏识别标题需要参考目录才能判断 —— "
+                      + "需要的话点「选择参考目录…」。");
                 return;
             }
 

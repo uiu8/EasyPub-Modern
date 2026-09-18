@@ -77,14 +77,14 @@ public partial class ChapterEditorWindow
         {
             Content = "预览章节调整…", IsEnabled = false,
             ToolTip = "对照参考目录补建漏识别章节、统一标题、移除重复章节、建立卷层级；"
-                + "与顶部「预览目录修复」打开同一个修复确认窗。是否改原文在确认窗里决定，可撤销",
+                + "与顶部的主按钮打开同一个修复确认窗。是否改原文在确认窗里决定，可撤销",
             Padding = new Thickness(16, 7, 16, 7)
         };
         outlineRow.Children.Add(outline);
         top.Children.Add(new TextBlock
         {
-            Text = "本按钮与顶部「预览目录修复」进入同一个修复确认窗，依据就是你在这里选定或粘贴的目录；"
-                + "不再有第二套预览与勾选。",
+            Text = "本按钮与顶部主按钮进入同一个修复确认窗，依据就是你在这里选定或粘贴的目录；"
+                + "不再有第二套预览与勾选。选定之前不会写入本书记录，也不会改动章节树。",
             TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = secondary, Margin = new Thickness(0, 6, 0, 0)
         });
         var status = new TextBlock

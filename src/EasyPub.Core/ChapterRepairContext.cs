@@ -6,7 +6,13 @@ public enum CatalogAvailability
     /// <summary>没有可取用的目录。</summary>
     None,
 
-    /// <summary>磁盘上有本书保存过的目录，但本次还没有明确要用它。</summary>
+    /// <summary>
+    /// 磁盘上有本书保存过的目录。**它会被用** —— 保存记录是用户之前确认过的，主按钮读的就是它；
+    /// 与 <see cref="Selected"/> 的差别只在"本次有没有重新选过"，不在"这次用不用"。
+    ///
+    /// <para>这一格原来写成"本次还没有明确要用它"，配上主按钮的「按参考目录检查…」就成了自相矛盾：
+    /// 用户读到"尚未选用"会以为这次不会用目录。改的是措辞，不是行为。</para>
+    /// </summary>
     Saved,
 
     /// <summary>本次明确要用某一份（调用方指定的，或用户刚选定的）。</summary>
@@ -43,7 +49,8 @@ public sealed record ChapterRepairContextSnapshot(
     public string CatalogLine => CatalogAvailability switch
     {
         CatalogAvailability.Selected => $"已选用「{CatalogSource}」· {CatalogChapterCount} 章",
-        CatalogAvailability.Saved => $"已保存「{CatalogSource}」· {CatalogChapterCount} 章（本次尚未选用）",
+        // "未重新选择"而不是"尚未选用"：主按钮**会**用它，说成"尚未选用"会让用户以为这次不用目录。
+        CatalogAvailability.Saved => $"已保存「{CatalogSource}」· {CatalogChapterCount} 章（未重新选择）",
         _ => "未加载",
     };
 

@@ -54,6 +54,27 @@ public static class ReferenceCatalogInput
     }
 
     /// <summary>
+    /// 忘掉本书保存过的目录 —— 只删这条配置记录。
+    ///
+    /// <para><b>它不动章节树。</b>树是按那次修复改过的，它与这条记录是两件独立的事：
+    /// 记录没了，不代表树变回"本地识别"的样子（它绑的是那次修复，不是这条记录）。
+    /// 所以这个操作必须与「重新按本地规则识别章节…」分开 —— 合成一个按钮，
+    /// 用户按一下就会以为两件事都回退了（设计文档 §3.3）。</para>
+    /// </summary>
+    /// <returns>真的删掉了返回 true；本来就没有记录返回 false。</returns>
+    public static bool Forget(string hash)
+    {
+        var path = SettingsPath(hash);
+        try
+        {
+            if (!File.Exists(path)) return false;
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
     /// Picks the directory to trust out of several candidates. The largest wins, and only a candidate within
     /// 10% of it qualifies: sources disagree about how much of a book they list, and silently taking a much
     /// shorter directory would report hundreds of chapters as missing.

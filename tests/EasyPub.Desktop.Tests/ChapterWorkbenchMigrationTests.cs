@@ -99,7 +99,9 @@ public class ChapterWorkbenchMigrationTests
             await File.WriteAllTextAsync(path, Source.Replace("正文一。", "正文一，改过一句。"),
                 new UTF8Encoding(false));
             await window.CheckSourceVersionAsync();
-            Assert.Equal("原文已变化 · 刷新", RefreshButton(window).Content);
+            // 按钮名随状态走，而且这两个名字说的是**相反**的后果（§5.2、§6 情况 G）：
+            // 原文被外部改过时是"迁移"（保住手工编排），没改过时才是"重新识别"（丢弃手工编排）。
+            Assert.Equal("原文已变化：迁移章节树…", RefreshButton(window).Content);
 
             await window.RebuildOrMigrateAsync(RefreshButton(window));
 
@@ -109,9 +111,10 @@ public class ChapterWorkbenchMigrationTests
             Assert.False(migration.FellBackToRecognition);
             // 每一章都在 —— 改的是正文，没有一章的标题行被碰过。
             Assert.All(migration.Rebinds, rebind => Assert.True(rebind.Survived, rebind.Title));
-            // 界面上的树还是那三章，而且按钮回到了"刷新原文"：窗口已经在新版本上。
+            // 界面上的树还是那三章，而且按钮回到了"重新识别"那一个名字：窗口已经在新版本上，
+            // 此时再点它才是会丢手工编排的那条路。
             Assert.Equal(titles, window.Roots.Select(node => node.Title).ToArray());
-            Assert.Equal("刷新原文", RefreshButton(window).Content);
+            Assert.Equal("重新识别章节（会替换手工调整）…", RefreshButton(window).Content);
         });
     }
 
@@ -152,7 +155,7 @@ public class ChapterWorkbenchMigrationTests
 
             Assert.Null(window.LastMigration);
             Assert.Equal(titles.Length, window.Roots.Count);
-            Assert.Equal("刷新原文", RefreshButton(window).Content);
+            Assert.Equal("重新识别章节（会替换手工调整）…", RefreshButton(window).Content);
         });
     }
 }

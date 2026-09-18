@@ -52,7 +52,13 @@ public class OneClickRepairAffordanceTests
                     Assert.True(repair.MinHeight >= 40, $"一键修复高度只有 {repair.MinHeight}");
                     Assert.True(repair.FontSize >= 15, $"一键修复字号只有 {repair.FontSize}");
                     Assert.Equal(FontWeights.SemiBold, repair.FontWeight);
-                    Assert.Contains("预览目录修复", Collect(repair));
+                    // 主按钮**按本次依据变名**（§5.2），所以不能钉死一句话 —— 只能钉住
+                    // "它把依据说出来了"。依据本身由 ChapterWorkbench.RefreshContextBar 填，
+                    // 与 ChapterAutoRepair.ReadSavedCatalog 读的是同一处记录。
+                    var label = Collect(repair);
+                    Assert.True(
+                        label.Contains("基于当前章节树检查") || label.Contains("参考目录检查"),
+                        $"主按钮没有说明本次依据，实际是：{label}");
 
                     window.Close();
                 }

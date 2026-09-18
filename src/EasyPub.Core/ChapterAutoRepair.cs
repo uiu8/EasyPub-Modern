@@ -174,54 +174,32 @@ public static class ChapterAutoRepair
     }
 
     /// <summary>
-    /// 取本次要用的参考目录 —— **这是唯一会读磁盘与联网的地方**。
+    /// 只读**本书已保存的**参考目录，**不联网、不提问**。
     ///
-    /// <para>它以前藏在 <see cref="RepairAsync"/> 内部：传 <c>reference: null</c> 就会依次读本书已保存的
-    /// 目录、联网抓取、拿不到再退到自修复。那个"请自动决定依据"的语义让同一个按钮产生四种结果，
-    /// 调用方和用户都无法预知。现在它是**显式的一步**：取到什么、为什么没取到、花了多久，都由返回值
-    /// 说清，由调用方决定下一步 —— 用这份目录、退到自修复，还是把失败原因显示给用户。</para>
+    /// <para>它回答的是"本次修复会用哪一个依据"—— 这个答案必须<b>在点击之前</b>就能被用户看见，
+    /// 因为主按钮的名字就是说这件事的（设计文档 §5.2：本地启发式 →「基于当前章节树检查…」，
+    /// 参考目录 →「按参考目录检查…」）。所以主按钮只能走这一步。</para>
+    ///
+    /// <para><b>联网取目录不在这里。</b>它是「选择参考目录…」那个按钮的事，而且它会换掉依据 ——
+    /// 一个会改变按钮含义的动作不能藏在按钮自己里面（§1.1 的四种结果正是这么来的）。
+    /// 保存记录是用户<b>之前确认过</b>的（未经确认的候选不落盘），所以直接采用它不必再问一次。</para>
     /// </summary>
-    public static async Task<CatalogAcquisition> AcquireCatalogAsync(
-        string path, ChapterTreeDocument document, IProgress<string>? progress = null,
-        CancellationToken token = default)
+    public static CatalogAcquisition ReadSavedCatalog(ChapterTreeDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-
-        // Timed from the first statement: "the network is only a second or two" is an assumption worth
-        // checking, and on a book whose directory is already cached it is simply wrong.
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        var preferred = await LoadPreferredSourcesAsync(path).ConfigureAwait(false);
-        progress?.Report("正在查找本书已保存的目录与来源…");
         var saved = ReferenceCatalogInput.Load(document.SourceSha256);
         var reference = ReferenceCatalogInput.ReadCatalog(saved);
-        if (reference is not null && !string.IsNullOrWhiteSpace(saved?.Url))
-            reference = reference with { Source = saved.Url + "（本书已保存目录）" };
-        if (reference is not null)
-            return new CatalogAcquisition(reference, null, [], watch.ElapsedMilliseconds);
-
-        var bookName = ExtractBookName(path);
-        var query = !string.IsNullOrWhiteSpace(saved?.Url) ? saved.Url
-            : await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(path), token).ConfigureAwait(false)
-            ?? (!string.IsNullOrWhiteSpace(saved?.Query) ? saved.Query : bookName);
-        progress?.Report("正在获取参考目录，可随时取消…");
-        try
-        {
-            var client = new ReferenceCatalogClient();
-            var catalogs = await client.DiscoverAsync(query, token, preferred).ConfigureAwait(false);
-            return new CatalogAcquisition(ReferenceCatalogInput.Pick(catalogs), null,
-                client.LastTimings, watch.ElapsedMilliseconds);
-        }
-        catch (Exception e) when (!token.IsCancellationRequested
-            && e is HttpRequestException or OperationCanceledException or InvalidOperationException)
-        {
-            return new CatalogAcquisition(null, e.Message, [], watch.ElapsedMilliseconds);
-        }
+        if (reference is null) return CatalogAcquisition.NotRequested;
+        // 带上出处，让确认窗能说清这份目录是从哪来的 —— 它是"本书已保存目录"而不是刚抓到的。
+        return CatalogAcquisition.Given(string.IsNullOrWhiteSpace(saved?.Url)
+            ? reference
+            : reference with { Source = saved.Url + "（本书已保存目录）" });
     }
 
     /// <summary>
     /// 按**调用方给定的依据**准备一次修复方案。
     ///
-    /// <para>它不再自己读磁盘或联网 —— 那一步是 <see cref="AcquireCatalogAsync"/>，由调用方决定何时做、
+    /// <para>它不再自己读磁盘或联网 —— 那一步是 <see cref="ReadSavedCatalog"/>，由调用方决定何时做、
     /// 做完怎么处理。所以"点了会怎样"完全由传入的 <see cref="RepairRequest"/> 决定：
     /// <see cref="CurrentTreeHeuristicRequest"/> 只用当前章节树，<see cref="ReferenceRepairRequest"/>
     /// 只用给定的那份目录。</para>

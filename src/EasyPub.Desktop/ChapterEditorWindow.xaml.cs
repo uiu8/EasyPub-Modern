@@ -569,7 +569,7 @@ public partial class ChapterEditorWindow : Window
 
     private void Mutate(Action change, bool markManual = true)
     {
-        if (_sourceChanged) { ShowReviewFeedback("原文已变化，请先重新识别。"); return; }
+        if (_sourceChanged) { ShowReviewFeedback("原文已变化，请先迁移章节树或重新识别。"); return; }
         var before = CaptureSnapshot();
         _trackingPaused = true;
         try { change(); }

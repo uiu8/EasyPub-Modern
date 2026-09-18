@@ -384,7 +384,7 @@ public class ChapterBatchTests
             var more = (Button)window.FindName("WorkbenchMoreButton");
             more.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var menu = more.ContextMenu!;
-            menu.Items.OfType<MenuItem>().Single(i => (string)i.Header == "视图").Items.OfType<MenuItem>().Single(i => (string)i.Header == "恢复本书已确认的提醒").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            menu.Items.OfType<MenuItem>().Single(i => (string)i.Header == "视图").Items.OfType<MenuItem>().Single(i => (string)i.Header == "全部恢复").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             menu.IsOpen = false;
             Assert.Equal(before, issues.Items.Count);
             window.NavigateToSourceLine(3);

@@ -299,6 +299,22 @@ public partial class ChapterEditorWindow
         return _referenceCatalog;
     }
 
+    /// <summary>
+    /// 「忘记这份目录」—— **只删本书记住的记录，不动章节树**（设计文档 §3.3）。
+    ///
+    /// <para>它与「重新识别章节（会替换手工调整）…」是两件独立的事，而以前只有后者存在 ——
+    /// 于是"不想再用这份目录了"只能靠重新识别来表达，而那会连手工编排一起丢掉。</para>
+    ///
+    /// <para>这里复用 <see cref="InvalidateBreakpoints"/>：它清掉的只是**内存里那份目录的副本**，
+    /// 树上的 provenance 不受影响。所以忘掉之后第一行变成「未加载」而第二行仍是「目录校验后」——
+    /// 两行同时成立，而且都是真的。</para>
+    /// </summary>
+    internal void ForgetSavedCatalog()
+    {
+        ReferenceCatalogInput.Forget(_document.SourceSha256);
+        InvalidateBreakpoints();
+    }
+
     /// <summary>Same source hash, so the directory that was found for the old tree still belongs to this one.</summary>
     private void InvalidateBreakpoints()
     {
@@ -371,7 +387,7 @@ public partial class ChapterEditorWindow
         catch (OperationCanceledException) { ShowReviewFeedback("已取消获取目录。"); }
         catch (Exception error)
         {
-            ShowReviewFeedback("获取目录失败：" + error.Message + "。可点「手动核对目录…」粘贴网址或导入目录文字。");
+            ShowReviewFeedback("获取目录失败：" + error.Message + "。可点「选择参考目录…」粘贴网址或导入目录文字。");
         }
         finally
         {
@@ -617,7 +633,7 @@ public partial class ChapterEditorWindow
             ReviewDetailsText.Text = issue.Message + "\n" + (related > 0
                 ? "「补建本组…」只补建已在原文中定位到的标题，原始 TXT 不变，可撤销。"
                 : "可先对照参考目录确认这一章是否真的存在；仍找不到就说明源文件缺这一章，需要换来源补齐。"
-                  + "全部跳章区间的批量入口在「整理工具 ▾ → 批量修复跳章区间漏识别标题…」。");
+                  + "全部跳章区间的批量入口在「专项处理 ▾ → 批量修复跳章区间漏识别标题…」。");
             ReviewActionButton.Visibility = Visibility.Visible;
             ReviewActionButton.Content = related > 0
                 ? $"补建本组 {related} 个漏识别标题…"
@@ -773,6 +789,12 @@ public partial class ChapterEditorWindow
     {
         _resultMessage = message;
         _resultUndoDepth = _undo.Count;
+        // 两处都写：卡片给"现在是什么状态"，提示条给"刚刚发生了什么"。
+        //
+        // 截图里这两句在 _resultMessage 这条路径上是同一句话，看起来像重复 —— 但**它们不是**：
+        // ChapterBatchTests 有两处断言"操作之后提示条必须可见"，而那锁的正是"用户做完一件事
+        // 能得到一句反馈"。想让它们不重样，要改的是两张纸各自说什么，而不是让其中一张闭嘴；
+        // 那是另一件事，不在本轮范围内。
         ShowReviewFeedback(message);
         UpdateReviewCard();
     }

@@ -71,11 +71,23 @@ public partial class ChapterEditorWindow
     private void UpdateSaveState()
     {
         if (_document is null || SaveStateText is null || _initialSnapshot is null) return;
-        SaveStateText.Text = _sourceChanged ? "原始 TXT 已变化 · 点击原文区的“刷新原文”，无需重新打开工作台"
+        SaveStateText.Text = _sourceChanged ? "原始 TXT 已变化 · 点原文区的「原文已变化：迁移章节树…」，无需重新打开工作台"
             : (HasUnsavedChanges() ? "工作台修改未提交 · " : "原始 TXT 不变 · ") + "应用并返回后自动保存；未命名项目保留恢复快照";
         UpdateRuleGuidance();
         SaveChapterTreeButton.IsEnabled = !_sourceChanged;
-        RefreshSourceButton.Content = _sourceChanged ? "原文已变化 · 刷新" : "刷新原文";
+        // 「刷新原文」是**双重身份**的，而且两个后果相反（设计文档 §1.5、§6 情况 G）：
+        //   原文没变化 → 重新识别，**丢弃**手工编排；
+        //   原文已变化 → 版本迁移，**保住**手工编排。
+        // 原名两种都说"刷新"，Tooltip 只描述了会丢编排的那一种 —— 于是用户以为最坏结果是
+        // "重来一遍"，实际却是"编排被保住了"（反向误解）。现在名字和说明都随状态走。
+        RefreshSourceButton.Content = _sourceChanged
+            ? "原文已变化：迁移章节树…"
+            : "重新识别章节（会替换手工调整）…";
+        RefreshSourceButton.ToolTip = _sourceChanged
+            ? "原文被其他程序改过。这一步把现有章节编排**迁移**到新的行号上：手工调整会保住，"
+              + "没能跟过来的章节会列出来。"
+            : "读取已保存的 TXT 并按当前规则重新识别章节。**会替换手工调整的章节树**；"
+              + "同一原文版本可撤销。";
         RefreshSourceButton.FontWeight = _sourceChanged ? FontWeights.Bold : FontWeights.Normal;
         ChapterTree.IsEnabled = !_sourceChanged;
         if (_sourceChanged) UndoButton.IsEnabled = RedoButton.IsEnabled = false;
@@ -105,6 +117,57 @@ public partial class ChapterEditorWindow
         ContextSourceText.Text = _context.SourceChanged
             ? "已在程序之外变化 —— 章节位置可能失效，请先刷新原文"
             : "正常";
+        // 没有记录可忘时按钮不出现 —— 一个永远点不出结果的按钮比没有按钮更让人困惑。
+        if (ForgetCatalogButton is not null)
+            ForgetCatalogButton.Visibility = _context.CatalogAvailability == CatalogAvailability.None
+                ? Visibility.Collapsed : Visibility.Visible;
+        RefreshRepairButton();
+    }
+
+    /// <summary>
+    /// 「忘记这份目录」—— **只删配置记录，不动章节树**（设计文档 §3.3）。
+    ///
+    /// <para>它与「重新识别章节（会替换手工调整）…」是两个独立操作，而且必须保持独立：
+    /// 合成一个按钮，用户按一下就会以为"记录和树一起回退了"，而实际树还是目录树 ——
+    /// 也就是 §3.1 那个"清除目录就等于回到书自身规则"的错误模型。</para>
+    /// </summary>
+    private void ForgetCatalog_Click(object sender, RoutedEventArgs e)
+    {
+        if (_document is null) return;
+        ForgetSavedCatalog();
+        RefreshContextBar();
+        SetReviewResult("已忘记这份参考目录。当前章节树**没有变化** —— 它仍然是按那份目录校验过的结果；"
+            + "要让它回到本地规则识别的样子，请用原文区的「重新识别章节（会替换手工调整）…」。");
+    }
+
+    /// <summary>
+    /// 主按钮**按本次依据变名**（设计文档 §5.2）。
+    ///
+    /// <para>"本次依据"就是 <see cref="ChapterRepairContextSnapshot.CatalogAvailability"/>：
+    /// 磁盘上有本书保存过的目录就用它，否则走当前章节树。这个判断与
+    /// <c>ChapterAutoRepair.ReadSavedCatalog</c> 读的是同一处记录，所以按钮上写的和点下去用的是同一个依据
+    /// —— 这正是它以前叫「预览目录修复」却在无目录时走自修复的反面。</para>
+    ///
+    /// <para>Tooltip 明说两件事：本次**不会**重新读取参考目录；以及能否同时改原文要等到预览才算得出来
+    /// （§3.2 要点 4、§2.2）。后者不写会变成一个假承诺。</para>
+    /// </summary>
+    private void RefreshRepairButton()
+    {
+        if (AutoRepairButtonText is null || AutoRepairButton is null) return;
+        var byCatalog = _context.CatalogAvailability != CatalogAvailability.None;
+        AutoRepairButtonText.Text = byCatalog
+            // "已保存的"三个字是必要的：第一行说这份目录"未重新选择"，按钮必须说清它用的就是那一份，
+            // 而不是"本次选用"的某一份 —— 否则两句话读起来互相打架。
+            ? _context.CatalogAvailability == CatalogAvailability.Saved
+                ? "按已保存的参考目录检查并生成建议…"
+                : "按参考目录检查并生成建议…"
+            : "基于当前章节树检查并生成建议…";
+        AutoRepairButton.ToolTip = "先生成方案，勾选后才应用。"
+            + (byCatalog
+                ? $"本次依据：本书已保存的参考目录（{_context.CatalogChapterCount} 章），不会重新联网获取。"
+                : "本次依据：当前章节树，不读取参考目录，也不联网。")
+            + "当前章节树可能包含之前按目录校验或手工调整的结果。"
+            + "是否可同时修改原文，将在预览中按所选动作与当前文件状态计算。";
     }
 
     private void UpdateRuleGuidance()
@@ -119,9 +182,9 @@ public partial class ChapterEditorWindow
             + (rules.Numeric ? $"数字章节开启，至少 {rules.Minimum} 行正文（{(inherited ? "继承全局" : "本书独立")}）；" : "数字章节关闭；")
             + (rules.Hierarchy ? "卷 / 章 / 节分层开启。" : "卷 / 章 / 节分层关闭，标题仍可作为普通章节识别。")
             + (RecognitionRulesChanged() ? "\n设置已改变，当前树尚未重新识别。" : "\n输出使用当前章节树，手动编辑优先；设置不会自动覆盖它。");
-        WorkflowHintText.Text = _sourceChanged ? "下一步：原文已变化，请先刷新原文。"
+        WorkflowHintText.Text = _sourceChanged ? "下一步：原文已变化，请先迁移或重新识别章节。"
             : RecognitionRulesChanged() ? "规则已调整：当前树保持不变。需要套用新规则时，在“识别设置”中重新识别。"
-            : "先查看待核对问题 → 预览目录修复；来源或匹配不准确时手动核对 → 应用并返回。";
+            : "先查看待核对问题 → 点主按钮生成建议；依据不对时先「选择参考目录…」。";
     }
 
     private ChapterRuleState CaptureRules() => new(ChapterPatternText.Text, NumericHeadingsCheck.IsChecked == true,
@@ -275,7 +338,7 @@ public partial class ChapterEditorWindow
             var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(document.SourcePath)));
             if (!ReferenceEquals(document, _document)) return;
             _sourceChanged = hash != document.SourceSha256;
-            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已保存修改。点击右侧“原文已变化 · 刷新”会用版本迁移把当前章节树搬到新行号，并列出没能跟过来的章节。");
+            if (_sourceChanged) ShowReviewFeedback("原始 TXT 已保存修改。点右侧的「原文已变化：迁移章节树…」会用版本迁移把当前章节树搬到新行号，并列出没能跟过来的章节。");
         }
         catch (Exception error) { _sourceChanged = true; ShowReviewFeedback("无法校验原始 TXT：" + error.Message); }
         finally { _checkingSource = false; UpdateSaveState(); UpdateActionButtons(); }
@@ -298,7 +361,7 @@ public partial class ChapterEditorWindow
     /// <summary>
     /// The last migration this window ran, kept so a caller can report on it.
     ///
-    /// <para>Set by <see cref="MigrateToExternalEditAsync"/>, which is what the 「原文已变化 · 刷新」 button
+    /// <para>Set by <see cref="MigrateToExternalEditAsync"/>, which is what the 「原文已变化：迁移章节树…」 button
     /// ends in — so a test can press that button's own entry and read the outcome, rather than calling the
     /// migration directly and asserting something the button might not reach.</para>
     /// </summary>
@@ -462,8 +525,10 @@ public partial class ChapterEditorWindow
             foreach (var node in Flatten()) node.IsExpanded = false;
             ClearHiddenSelection();
         });
-        Add(view, "查看 / 恢复本书已确认的提醒…", (_, _) => ShowConfirmedGroups(), _confirmedGroups.Count > 0);
-        Add(view, "恢复本书已确认的提醒", (_, _) => RestoreConfirmedGroups(), _confirmedGroups.Count > 0);
+        // 这两项原来都叫「（查看 / ）恢复本书已确认的提醒」—— 名字几乎相同，行为完全不同：
+        // 一个打开窗口，一个直接执行恢复。相邻两行、看起来像同一件事的两种写法（§1.6）。
+        Add(view, "查看已确认的提醒…", (_, _) => ShowConfirmedGroups(), _confirmedGroups.Count > 0);
+        Add(view, "全部恢复", (_, _) => RestoreConfirmedGroups(), _confirmedGroups.Count > 0);
         Add(view, "清除搜索与筛选", (_, args) => { ChapterSearchText.Text = ""; IssueCategoryCombo.SelectedIndex = 0; AllChapters_Click(this, args); ApplySearchFilter(); });
         menu.Items.Add(new Separator());
         var copy = new MenuItem { Header = "复制原始文件路径" }; copy.Click += (_, _) => Clipboard.SetText(_document.SourcePath); menu.Items.Add(copy);

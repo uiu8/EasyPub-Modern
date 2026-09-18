@@ -27,8 +27,9 @@ public sealed record CurrentTreeHeuristicRequest : RepairRequest;
 /// 用**调用方给定的**这份参考目录修复。
 ///
 /// <para>目录缺失不是"再想想办法"，而是调用方的错误：它必须先用
-/// <see cref="ChapterAutoRepair.AcquireCatalogAsync"/> 显式取到一份目录，
-/// 或者明确改走 <see cref="CurrentTreeHeuristicRequest"/>。</para>
+/// <see cref="ChapterAutoRepair.ReadSavedCatalog"/>（只读磁盘、不联网）拿到本书已保存的目录，
+/// 或者等用户从「选择参考目录…」里选定一份，再或者明确改走
+/// <see cref="CurrentTreeHeuristicRequest"/>。</para>
 /// </summary>
 public sealed record ReferenceRepairRequest(ReferenceCatalog Catalog) : RepairRequest;
 
