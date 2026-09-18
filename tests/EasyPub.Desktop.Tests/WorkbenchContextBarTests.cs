@@ -43,10 +43,12 @@ public class WorkbenchContextBarTests
 
         Assert.Null(failure);
 
-        // 干净状态下的样书：没有保存过目录、没有 provenance（旧项目语义）、原文没被外部改过。
-        // **三行各说各的** —— 这正是单一开关做不到的。
+        // 干净状态下的样书：没有保存过目录、原文没被外部改过。
+        // 树是"本地识别"而**不是**"来源未知（旧项目）" —— 后者是"旧项目文件里没有 provenance 字段"
+        // 的意思，与"这份树刚按本地规则识别出来"完全是两回事。原来单参数构造时 _provenance
+        // 保持初值 Unknown，于是新导入的书被标成旧项目（走查时一眼看出来的错标）。
         Assert.Equal("未加载", catalogLine);
-        Assert.Contains("来源未知", treeLine);
+        Assert.Equal("本地识别", treeLine);
         Assert.Equal("正常", sourceLine);
     }
 
@@ -80,5 +82,43 @@ public class WorkbenchContextBarTests
         Assert.Null(failure);
         Assert.Equal("未加载", catalogLine);
         Assert.Contains("目录校验后", treeLine);
+    }
+
+    /// <summary>
+    /// 顶部那句「下一步」说的是**该做什么**，不是"现在是什么状态"。
+    ///
+    /// <para>这一条来自真实走查的反馈：用户走进工作台，看到的是一串问题码，
+    /// 而原来的提示只说了句泛泛的「点主按钮生成建议」—— 既没说有几件事，
+    /// 也没说哪一件非要有参考目录不可。他原话是"我确实不知道应该点哪里"。</para>
+    ///
+    /// <para>所以这里钉住三件事：句子里有**数量**、数量按"要不要目录"分堆、
+    /// 并且在他还没有目录时**直接点名该点哪个按钮**。</para>
+    /// </summary>
+    [Fact]
+    public void The_next_step_line_says_what_to_do_and_not_only_what_is_wrong()
+    {
+        var book = Path.Combine(WorkbenchHarness.SampleRoot(), "缺陷样书.txt");
+        var previous = WorkbenchHarness.IsolateCatalogStore();
+        string? headline = null;
+        string? detail = null;
+
+        var failure = WorkbenchHarness.OnStaThread(() =>
+        {
+            var document = ChapterTreeDocument.LoadAsync(book).GetAwaiter().GetResult();
+            var editor = WorkbenchHarness.ShowOffscreen(new ChapterEditorWindow(document));
+            headline = WorkbenchHarness.Line(editor, "NextStepHeadline");
+            detail = WorkbenchHarness.Line(editor, "NextStepDetail");
+            WorkbenchHarness.Save(editor, "26-工作台-下一步做什么");
+        });
+        WorkbenchHarness.RestoreCatalogStore(previous);
+
+        Assert.Null(failure);
+        // 样书实测：本地漏识别候选为 0（§7.2 第 2 步），所以那 9 处跳章只能靠目录。
+        // 32 处正文重复与 2 处重复拼接需要人逐条判断；1 处结构建议可以先在本地预览。
+        Assert.Contains("9 处需要参考目录", headline);
+        Assert.Contains("1 处本地就能修", headline);
+        Assert.Contains("34 处需要你核对", headline);
+        // 没有目录时**点名**该按哪个按钮，而不是让用户自己从六个控件里猜。
+        Assert.Contains("选择参考目录", detail);
     }
 }

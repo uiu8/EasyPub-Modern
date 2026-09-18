@@ -125,6 +125,65 @@ public partial class ChapterEditorWindow
             ForgetCatalogButton.Visibility = _context.CatalogAvailability == CatalogAvailability.None
                 ? Visibility.Collapsed : Visibility.Visible;
         RefreshRepairButton();
+        RefreshNextStep();
+    }
+
+    /// <summary>
+    /// 顶部那句**"你该做什么"**。
+    ///
+    /// <para>它替代了原来那句泛泛的「先查看待核对问题 → 点主按钮生成建议」。走查里最直接的
+    /// 反馈就是"进来之后没有任何提示要我点哪里" —— 而那句提示既没有说有几件事，
+    /// 也没有说哪一件非要有目录不可。</para>
+    ///
+    /// <para>现在它给的是一件具体的事：这本书有几处本地能修、几处非要参考目录不可、
+    /// 几处只能人工核对，以及**第一下该点哪**。这些数字来自
+    /// <see cref="IssueResolutionPolicy.Summarize"/> —— 与列表里逐条的标注同源。</para>
+    /// </summary>
+    private void RefreshNextStep()
+    {
+        if (NextStepHeadline is null || NextStepDetail is null) return;
+        if (_document is null)
+        {
+            NextStepHeadline.Text = "请先导入书稿。";
+            NextStepDetail.Text = "";
+            return;
+        }
+        // 这三件事任何一件成立时，都轮不到"处理提醒"——它们会让所有基于行号的动作失效。
+        if (_sourceChanged)
+        {
+            NextStepHeadline.Text = "原文被其他程序改过，先处理这一件。";
+            NextStepDetail.Text = "用原文区的「原文已变化：迁移章节树…」把现有编排搬到新行号上"
+                + "（手工调整会保住，没能跟过来的章节会列出来），或者重新识别。";
+            return;
+        }
+        if (RecognitionRulesChanged())
+        {
+            NextStepHeadline.Text = "识别规则改过了，但当前章节树还是按旧规则识别的。";
+            NextStepDetail.Text = "要套用新规则就在「识别设置」里重新识别；不改也可以直接继续。";
+            return;
+        }
+        if (Workload() is not { } workload)
+        {
+            NextStepHeadline.Text = "正在核对这本书的提醒…";
+            NextStepDetail.Text = "";
+            return;
+        }
+        if (workload.IsEmpty)
+        {
+            NextStepHeadline.Text = "没有待核对的提醒。";
+            NextStepDetail.Text = "可以直接「应用并返回」，或先在左侧浏览章节结构。";
+            return;
+        }
+        var parts = new List<string>(3);
+        if (workload.NeedsCatalogCount > 0) parts.Add($"{workload.NeedsCatalogCount} 处需要参考目录");
+        if (workload.LocalCount > 0) parts.Add($"{workload.LocalCount} 处本地就能修");
+        if (workload.ManualCount > 0) parts.Add($"{workload.ManualCount} 处需要你核对");
+        NextStepHeadline.Text = string.Join(" · ", parts);
+        // 只有"需要目录、而且手上还没有"时才指路。其余情况点主按钮就够了，
+        // 再给一句指示反而让人以为还有前置步骤。
+        NextStepDetail.Text = workload.NeedsCatalogFirst
+            ? "先点「选择参考目录…」拿到目录 —— 前一类没有它判不了。本地那部分不联网也能修，可以稍后再做。"
+            : "点主按钮一次生成完整方案，勾选之后才会应用。";
     }
 
     /// <summary>
@@ -158,13 +217,16 @@ public partial class ChapterEditorWindow
     {
         if (AutoRepairButtonText is null || AutoRepairButton is null) return;
         var byCatalog = _context.CatalogAvailability != CatalogAvailability.None;
-        AutoRepairButtonText.Text = byCatalog
-            // "已保存的"三个字是必要的：第一行说这份目录"未重新选择"，按钮必须说清它用的就是那一份，
-            // 而不是"本次选用"的某一份 —— 否则两句话读起来互相打架。
-            ? _context.CatalogAvailability == CatalogAvailability.Saved
-                ? "按已保存的参考目录检查并生成建议…"
-                : "按参考目录检查并生成建议…"
-            : "基于当前章节树检查并生成建议…";
+        // **按钮只说做什么，依据单独一行说。**
+        //
+        // 原来整句依据塞在按钮里（「基于当前章节树检查并生成建议…」），于是这一行六个控件排不下，
+        // 而按钮名越长越没人读。拆开之后按钮短了，依据反而更清楚 —— 它旁边就写着是哪一份目录、
+        // 多少章，或者"不读参考目录、不联网"。
+        AutoRepairButtonText.Text = byCatalog ? "按目录检查并生成建议" : "检查并生成建议";
+        if (AutoRepairBasisText is not null)
+            AutoRepairBasisText.Text = byCatalog
+                ? $"依据：{_context.CatalogLine}"
+                : "依据：当前章节树（不读参考目录、不联网）";
         AutoRepairButton.ToolTip = "先生成方案，勾选后才应用。"
             + (byCatalog
                 ? $"本次依据：本书已保存的参考目录（{_context.CatalogChapterCount} 章），不会重新联网获取。"

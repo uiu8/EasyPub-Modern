@@ -217,6 +217,45 @@ public sealed record IssueResolutionFacts(
     public static IssueResolutionFacts None { get; } = new();
 }
 
+/// <summary>一条提醒属于哪一堆：需要目录 / 本地能修 / 你来核对。</summary>
+public enum ChapterWorkloadKind
+{
+    /// <summary>没有参考目录就下不了结论。</summary>
+    NeedsCatalog,
+
+    /// <summary>不需要任何书外知识，本地就能生成方案。</summary>
+    Local,
+
+    /// <summary>软件只能把材料摆出来，判断由人做。</summary>
+    Manual,
+}
+
+/// <summary>
+/// 这本书的**工作量分解** —— 它是"我该先点哪里"的直接回答。
+///
+/// <para>把全部提醒按"要不要参考目录"分成三堆，因为那是用户唯一需要**先**知道的判断：
+/// 本地能修的不必联网；需要目录的没目录就判不了；只能人工核对的，软件不该假装能修。
+/// <b>三堆的数量</b>比任何单条提醒都更能说明"这个软件现在能替我做什么" —— 而原来的界面
+/// 一条结论都不给，只把十六类问题码丢在列表里让用户自己归纳。</para>
+///
+/// <para>分类不另写一套规则：它读的就是 <see cref="ResolutionAction"/> 上那三个字段
+/// （<see cref="ResolutionAction.CatalogRole"/>、<see cref="ResolutionAction.Execution"/>）。
+/// 也就是说列表里逐条标注的依据和这里的分堆，永远出自同一次 <see cref="IssueResolutionPolicy.Evaluate"/>。</para>
+/// </summary>
+public sealed record ChapterWorkload(
+    int LocalCount,
+    int NeedsCatalogCount,
+    int ManualCount,
+    ResolutionIntent? SuggestedFirstStep)
+{
+    public int Total => LocalCount + NeedsCatalogCount + ManualCount;
+
+    public bool IsEmpty => Total == 0;
+
+    /// <summary>有事情可做，但都需要先弄到一份参考目录。</summary>
+    public bool NeedsCatalogFirst => NeedsCatalogCount > 0 && SuggestedFirstStep == ResolutionIntent.AcquireCatalog;
+}
+
 /// <summary>
 /// <c>IssueCode + ChapterRepairContext + 本地证据 → ResolutionAdvice</c>。
 ///
@@ -322,6 +361,62 @@ public static class IssueResolutionPolicy
         ArgumentNullException.ThrowIfNull(issue);
         var group = new ChapterReviewGroup(issue, IssueCategory.For(issue), [], [], []);
         return Evaluate(group, context ?? ChapterRepairContextSnapshot.Unknown, facts);
+    }
+
+    /// <summary>
+    /// 把一批提醒折成三堆数量，并指出**第一步该做什么**。
+    ///
+    /// <para>它存在的理由：用户走进工作台时，问题列表给他的是十六种问题码，而他要的回答只是
+    /// "这里面哪些我自己能修、哪些非要有目录不可"。这个判断策略早就在算，只是从来没被说出来过。</para>
+    /// </summary>
+    /// <param name="findings">要统计的提醒。</param>
+    /// <param name="context">当前上下文（目录可用性决定建议的第一步）。</param>
+    /// <param name="facts">
+    /// 逐条给出本地证据。工作台传真实值；报告窗口这类没有文档的调用方不传，
+    /// 于是"跳章"会被算进"需要参考目录"——对它们来说那是诚实的答案。
+    /// </param>
+    public static ChapterWorkload Summarize(
+        IEnumerable<ChapterReviewGroup> findings,
+        ChapterRepairContextSnapshot context,
+        Func<ChapterReviewGroup, IssueResolutionFacts>? facts = null)
+    {
+        ArgumentNullException.ThrowIfNull(findings);
+        ArgumentNullException.ThrowIfNull(context);
+        var local = 0;
+        var needsCatalog = 0;
+        var manual = 0;
+        foreach (var finding in findings)
+        {
+            // 分堆规则只有 Classify 一处 —— 列表里逐条的标注读的也是它。
+            switch (Classify(Evaluate(finding, context, facts?.Invoke(finding))))
+            {
+                case ChapterWorkloadKind.NeedsCatalog: needsCatalog++; break;
+                case ChapterWorkloadKind.Local: local++; break;
+                default: manual++; break;
+            }
+        }
+
+        // 第一步：**需要目录、而且手上还没有**时，先拿到它是唯一有意义的第一步 ——
+        // 否则那几十条提醒一条都判不了。其余情况交给主按钮，不必再指路。
+        var needsCatalogFirst = needsCatalog > 0 && context.CatalogAvailability == CatalogAvailability.None;
+        return new ChapterWorkload(local, needsCatalog, manual,
+            needsCatalogFirst ? ResolutionIntent.AcquireCatalog : null);
+    }
+
+    /// <summary>
+    /// 这条提醒属于哪一堆 —— 顶部三个数字与列表里逐条标注用的是**同一个判断**。
+    ///
+    /// <para>分开写两套规则的话，迟早出现"总结说本地能修、点进去却要目录"。</para>
+    /// </summary>
+    public static ChapterWorkloadKind Classify(ResolutionAdvice advice)
+    {
+        ArgumentNullException.ThrowIfNull(advice);
+        if (advice.Recommended is not { } action) return ChapterWorkloadKind.Manual;
+        if (action.CatalogRole is CatalogRole.RequiredForConclusion or CatalogRole.RequiredForAutomaticAction)
+            return ChapterWorkloadKind.NeedsCatalog;
+        return action.Execution == ResolutionExecutionKind.Navigation
+            ? ChapterWorkloadKind.Manual
+            : ChapterWorkloadKind.Local;
     }
 
     private static ResolutionAdvice SourceChangedAdvice() =>

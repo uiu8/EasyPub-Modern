@@ -112,18 +112,21 @@
                 <TextBlock x:Name="SummaryText" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
             </StackPanel>
             <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,10,0,0">
-                <Button x:Name="AutoRepairButton" Style="{StaticResource HeroRepairButton}" Click="AutoRepair_Click">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE90F;" FontFamily="Segoe Fluent Icons" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                        <!--
-                          名字与 Tooltip 由 RefreshContextBar 按**本次依据**填（§5.2）：
-                          本地启发式 → 「基于当前章节树检查并生成建议…」，有目录 → 「按参考目录检查…」。
-                          按钮上写的依据必须在点下去之前就是真的 —— 这正是它以前叫「预览目录修复」
-                          却在无目录时走自修复（§1.1）的反面。
-                        -->
-                        <TextBlock x:Name="AutoRepairButtonText" Text="检查并生成建议…" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel VerticalAlignment="Top" Margin="0,0,8,0">
+                    <Button x:Name="AutoRepairButton" Style="{StaticResource HeroRepairButton}" Click="AutoRepair_Click" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE90F;" FontFamily="Segoe Fluent Icons" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <!--
+                              **按钮只说做什么，依据单独一行说。**
+                              原来把「基于当前章节树检查并生成建议…」整句塞进按钮里，
+                              结果这一行六个控件排不下，而按钮名越长越没人读。
+                            -->
+                            <TextBlock x:Name="AutoRepairButtonText" Text="检查并生成建议" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <TextBlock x:Name="AutoRepairBasisText" Margin="3,5,0,0" FontSize="11.5"
+                               Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                </StackPanel>
                 <Button x:Name="CatalogAssistButton" Content="选择参考目录…" Click="CatalogAssist_Click" ToolTip="可以粘贴书籍网址、导入目录文字，或从书源抓取；选定后才写入本书记录，这一步不改章节树"/>
                 <Button x:Name="RecognitionSettingsButton" Content="识别设置…" Click="RecognitionSettings_Click"/>
                 <Button x:Name="RecoverStructureButton" Visibility="Collapsed" Content="结构整理…" Click="RecoverStructure_Click" ToolTip="预览编号分组、排除假卷与额外章头，按原文顺序重建"/>
@@ -150,9 +153,9 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="参考目录" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="参考目录" FontSize="12.5" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
                         <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                            <TextBlock x:Name="ContextCatalogText" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ContextCatalogText" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center"/>
                             <!--
                               「忘记这份目录」**只删这条配置记录，不动章节树**（§3.3）。
                               它与「重新识别章节（会替换手工调整）…」是两件独立的事：树是按那次修复改过的，
@@ -163,13 +166,29 @@
                                     Margin="10,0,0,0" Padding="8,2" MinHeight="22" FontSize="11" Visibility="Collapsed"
                                     ToolTip="只删除本书记住的这份参考目录，以后不再自动使用；**当前章节树不受影响**。若还想让树回到本地规则，请用「重新识别章节」"/>
                         </StackPanel>
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="当前章节树" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
-                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="ContextTreeText" FontSize="11" TextWrapping="Wrap"/>
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="原文版本" FontSize="11" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
-                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="ContextSourceText" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="当前章节树" FontSize="12.5" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="ContextTreeText" FontSize="12.5" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="原文版本" FontSize="12.5" Margin="0,0,12,0" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="ContextSourceText" FontSize="12.5" TextWrapping="Wrap"/>
                     </Grid>
                 </Border>
-                <TextBlock x:Name="WorkflowHintText" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"/>
+                <!--
+                  「下一步」那一句。**它比上面三行事实更大、更靠前**：三行说的是"现在是什么状态"，
+                  这一句说的是"你该做什么" —— 用户走进来要的是后者。
+
+                  原来的这里是同一段 11 号灰字，和状态条挤在一起，而它其实只说了句泛泛的
+                  "点主按钮生成建议"。现在它由 IssueResolutionPolicy.Summarize 算出来：
+                  这本书有几处本地能修、几处非要目录不可、几处只能人工核对。
+                -->
+                <Border x:Name="NextStepBar" Margin="0,10,0,0" Padding="14,11" CornerRadius="8"
+                        Background="{DynamicResource RaisedSurfaceBrush}">
+                    <StackPanel>
+                        <TextBlock x:Name="NextStepHeadline" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="NextStepDetail" Margin="0,5,0,0" FontSize="13" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"/>
+                    </StackPanel>
+                </Border>
+                <TextBlock x:Name="WorkflowHintText" Visibility="Collapsed" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource SecondaryTextBrush}"/>
             </StackPanel>
             <Border x:Name="StructureSuggestionBanner" Grid.Row="3" Grid.ColumnSpan="2" Visibility="Collapsed" Margin="0,10,0,0" Padding="10" Background="{DynamicResource RaisedSurfaceBrush}" CornerRadius="8">
                 <StackPanel>
@@ -240,7 +259,17 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="225">
                         <StackPanel>
-                            <TextBlock x:Name="ReviewHeading" Text="选择章节，核对原文" FontSize="17" FontWeight="SemiBold"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ReviewHeading" Text="选择章节，核对原文" FontSize="17" FontWeight="SemiBold"/>
+                                <!--
+                                  这条提醒属于哪一堆（§5.6"前者在后"）：和顶部那三个数字用的是
+                                  同一个 IssueResolutionPolicy 判断，所以两边永远不会互相打架。
+                                -->
+                                <Border x:Name="ReviewBasisTag" Visibility="Collapsed" Margin="10,3,0,0"
+                                        Padding="9,2" CornerRadius="10" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ReviewBasisTagText" FontSize="11.5" FontWeight="SemiBold"/>
+                                </Border>
+                            </StackPanel>
                             <TextBlock x:Name="ReviewExplanation" Text="点击左侧章节或选择待核对组。" TextWrapping="Wrap" MaxHeight="46" Margin="0,7,0,4" Foreground="{DynamicResource SecondaryTextBrush}"/>
                             <Expander x:Name="ReviewEvidenceExpander" Header="判断依据与原文位置" FontSize="11" Margin="0,0,0,6">
                                 <StackPanel><TextBlock x:Name="ReviewDetailsText" TextWrapping="Wrap" Margin="0,4,0,4"/>

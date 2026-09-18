@@ -157,6 +157,14 @@ public partial class ChapterEditorWindow
             var acquisition = reference is { } given
                 ? CatalogAcquisition.Given(given)
                 : ChapterAutoRepair.ReadSavedCatalog(snapshot);
+            // 依据是这一整条路上最要紧的岔路口：选错它，后面每个数字都是错的。
+            InteractionLog.Decision("选择依据", new
+            {
+                来源 = reference is null ? "磁盘上保存的目录" : "调用方给定的目录",
+                有目录 = acquisition.Catalog is not null,
+                章数 = acquisition.Catalog?.Titles.Count ?? 0,
+                出处 = acquisition.Catalog?.Source,
+            });
             // 显式声明成基类型：两个分支是不同的 sealed record，三元表达式自己推不出共同类型。
             RepairRequest request = acquisition.Catalog is { } found
                 ? new ReferenceRepairRequest(found)
@@ -167,6 +175,14 @@ public partial class ChapterEditorWindow
             finished = true;
             progress?.Close();
             IsEnabled = true;
+            InteractionLog.Outcome("生成方案", new
+            {
+                有目录 = outcome.CatalogFound,
+                动作数 = outcome.Plan?.Actions.Count ?? 0,
+                重建卷 = outcome.RebuiltVolumes,
+                重建章 = outcome.RebuiltChapters,
+                未定位 = outcome.Missing,
+            });
 
             // **无方案时不再自动弹目录对话框**（设计文档 §6 情况 C）。
             //

@@ -37,8 +37,11 @@ public class OneClickRepairAffordanceTests
                     window.UpdateLayout();
 
                     var repair = Assert.IsType<Button>(window.FindName("AutoRepairButton"));
-                    var toolbar = Assert.IsType<WrapPanel>(repair.Parent);
-                    Assert.Same(repair, toolbar.Children[0]);
+                    // 主按钮下面挂着一行依据（AutoRepairBasisText），所以它先属于一个竖排 StackPanel，
+                    // 那个 StackPanel 才是工具栏的第一项 —— 一行六个控件因此排得下。
+                    var holder = Assert.IsType<StackPanel>(repair.Parent);
+                    var toolbar = Assert.IsType<WrapPanel>(holder.Parent);
+                    Assert.Same(holder, toolbar.Children[0]);
 
                     var style = Assert.IsType<Style>(repair.Style);
                     string? KeyFor(DependencyProperty property) =>
@@ -52,13 +55,10 @@ public class OneClickRepairAffordanceTests
                     Assert.True(repair.MinHeight >= 40, $"一键修复高度只有 {repair.MinHeight}");
                     Assert.True(repair.FontSize >= 15, $"一键修复字号只有 {repair.FontSize}");
                     Assert.Equal(FontWeights.SemiBold, repair.FontWeight);
-                    // 主按钮**按本次依据变名**（§5.2），所以不能钉死一句话 —— 只能钉住
-                    // "它把依据说出来了"。依据本身由 ChapterWorkbench.RefreshContextBar 填，
-                    // 与 ChapterAutoRepair.ReadSavedCatalog 读的是同一处记录。
+                    // 按钮**只说做什么**，依据由旁边那一行 AutoRepairBasisText 承担（§5.6）：
+                    // 整句依据塞进按钮里，这一行六个控件就排不下，而按钮名越长越没人读。
                     var label = Collect(repair);
-                    Assert.True(
-                        label.Contains("基于当前章节树检查") || label.Contains("参考目录检查"),
-                        $"主按钮没有说明本次依据，实际是：{label}");
+                    Assert.Contains("检查并生成建议", label);
 
                     window.Close();
                 }

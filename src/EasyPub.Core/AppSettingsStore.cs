@@ -120,13 +120,37 @@ public sealed class AppSettingsStore
         if (!File.Exists(StoragePath)) return EasyPubAppSettings.Default;
         try
         {
-            return JsonSerializer.Deserialize<EasyPubAppSettings>(File.ReadAllText(StoragePath), JsonOptions)
-                ?? EasyPubAppSettings.Default;
+            return UpgradeSupersededPatterns(
+                JsonSerializer.Deserialize<EasyPubAppSettings>(File.ReadAllText(StoragePath), JsonOptions)
+                ?? EasyPubAppSettings.Default);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
             return EasyPubAppSettings.Default;
         }
+    }
+
+    /// <summary>
+    /// 把设置里**等于旧版默认值**的识别正则升到当前默认值，并记一条日志。
+    ///
+    /// <para>没有这一步，改进过的正则传不到老用户身上：设置文件里存着当年写入的默认值，
+    /// 它不为空，所以永远压着代码里的新默认值。实测同一本样书在旧设置下识别出 560 个条目、
+    /// 默认设置下 468 个 —— 而界面上没有任何地方提示这件事。</para>
+    ///
+    /// <para>换掉的时候写日志，免得"我的设置怎么变了"变成另一个谜。</para>
+    /// </summary>
+    private static EasyPubAppSettings UpgradeSupersededPatterns(EasyPubAppSettings settings)
+    {
+        var upgraded = settings.NumericHeadingDefaults.UpgradeSupersededPatterns(out var changed);
+        if (!changed) return settings;
+        InteractionLog.Decision("升级旧识别规则", new
+        {
+            原Level1 = settings.NumericHeadingDefaults.Level1Pattern,
+            原Level2 = settings.NumericHeadingDefaults.Level2Pattern,
+            新Level1 = upgraded.Level1Pattern,
+            新Level2 = upgraded.Level2Pattern,
+        });
+        return settings with { NumericHeadingDefaults = upgraded };
     }
 
     public async Task<EasyPubAppSettings> LoadAsync(CancellationToken cancellationToken = default)
@@ -138,8 +162,9 @@ public sealed class AppSettingsStore
             try
             {
                 await using var stream = File.OpenRead(StoragePath);
-                return await JsonSerializer.DeserializeAsync<EasyPubAppSettings>(stream, JsonOptions, cancellationToken)
-                    ?? EasyPubAppSettings.Default;
+                return UpgradeSupersededPatterns(
+                    await JsonSerializer.DeserializeAsync<EasyPubAppSettings>(stream, JsonOptions, cancellationToken)
+                    ?? EasyPubAppSettings.Default);
             }
             catch (JsonException)
             {

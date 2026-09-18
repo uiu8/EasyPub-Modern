@@ -127,6 +127,36 @@ public sealed record TocHierarchyOptions
     public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
     public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
     public string Level3Pattern { get; init; } = DefaultLevel3Pattern;
+
+    /// <summary>
+    /// 这几个字段**曾经**用过的默认值：键是旧值，值是要换成的当前值。
+    ///
+    /// <para><b>为什么必须有这一步</b>：设置文件里存的是**当时写入的默认值**，而它不为空，
+    /// 所以在 <c>LegacyTextParser</c> / <c>ChapterTree</c> 的"空则用默认"里永远轮不到新默认值。
+    /// 于是识别正则改进了却传不到老用户身上 —— 实测同一本样书在一台旧设置的机器上识别出
+    /// <b>560</b> 个条目、在默认设置下 <b>468</b> 个，而界面上没有任何地方提示这件事。
+    /// 用户看到的是错的那一份，还以为自己改过设置（他确实没改）。</para>
+    ///
+    /// <para>判据是<b>字符串完全相等</b>：真的自己改过正则的人，不会恰好等于旧默认值。</para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> SupersededDefaults { get; } =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [@"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[卷部篇集].*"] = DefaultLevel1Pattern,
+            [@"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[章回].*"] = DefaultLevel2Pattern,
+        };
+
+    /// <summary>
+    /// 把等于旧默认值的正则升到当前默认值；其余原样保留。返回是否真的换过。
+    /// </summary>
+    public TocHierarchyOptions UpgradeSupersededPatterns(out bool changed)
+    {
+        var level1 = SupersededDefaults.GetValueOrDefault(Level1Pattern, Level1Pattern);
+        var level2 = SupersededDefaults.GetValueOrDefault(Level2Pattern, Level2Pattern);
+        changed = !string.Equals(level1, Level1Pattern, StringComparison.Ordinal)
+            || !string.Equals(level2, Level2Pattern, StringComparison.Ordinal);
+        return changed ? this with { Level1Pattern = level1, Level2Pattern = level2 } : this;
+    }
 }
 
 public sealed record PublicationMetadata

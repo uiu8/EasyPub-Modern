@@ -45,6 +45,8 @@ public class WorkbenchForgetCatalogTests
         string? catalogAfter = null;
         string? buttonBefore = null;
         string? buttonAfter = null;
+        string? basisBefore = "";
+        string? basisAfter = "";
         Visibility forgetBefore = Visibility.Visible;
         Visibility forgetAfter = Visibility.Visible;
         var entryCountBefore = 0;
@@ -64,6 +66,7 @@ public class WorkbenchForgetCatalogTests
             catalogBefore = WorkbenchHarness.Line(editor, "ContextCatalogText");
             treeBefore = WorkbenchHarness.Line(editor, "ContextTreeText");
             buttonBefore = Text(editor, "AutoRepairButtonText");
+            basisBefore = Text(editor, "AutoRepairBasisText");
             forgetBefore = ((Button)editor.FindName("ForgetCatalogButton")!).Visibility;
             entryCountBefore = editor.Roots.Count;
             WorkbenchHarness.Save(editor, "22-工作台-有已保存目录");
@@ -73,6 +76,7 @@ public class WorkbenchForgetCatalogTests
             catalogAfter = WorkbenchHarness.Line(editor, "ContextCatalogText");
             treeAfter = WorkbenchHarness.Line(editor, "ContextTreeText");
             buttonAfter = Text(editor, "AutoRepairButtonText");
+            basisAfter = Text(editor, "AutoRepairBasisText");
             forgetAfter = ((Button)editor.FindName("ForgetCatalogButton")!).Visibility;
             entryCountAfter = editor.Roots.Count;
             WorkbenchHarness.Save(editor, "23-工作台-忘记目录之后");
@@ -86,9 +90,11 @@ public class WorkbenchForgetCatalogTests
         Assert.Contains("已保存", catalogBefore);
         Assert.Contains("480 章", catalogBefore);
         Assert.Equal(Visibility.Visible, forgetBefore);
-        // "已保存的"这三个字是必要的：第一行说这份目录"未重新选择"，按钮必须说清它用的就是那一份，
-        // 否则两句话读起来互相打架 —— 这一条是渲染出截图之后才看出来的。
-        Assert.Contains("按已保存的参考目录检查", buttonBefore);
+        // 按钮只说做什么（"按目录检查并生成建议"），依据单独一行说 —— 这行字由
+        // AutoRepairBasisText 承担，它旁边就写着是哪一份目录、多少章。
+        Assert.Contains("按目录检查并生成建议", buttonBefore);
+        Assert.Contains("依据：", basisBefore);
+        Assert.Contains("480 章", basisBefore);
 
         // 忘掉之后：记录没了，所以第一行回到"未加载"，按钮也没了 —— **但树一格都没变**。
         Assert.Equal("未加载", catalogAfter);
@@ -99,7 +105,8 @@ public class WorkbenchForgetCatalogTests
         // 记录与树是两件事，忘掉前者不会撤销后者。
         Assert.Equal(treeBefore, treeAfter);
         Assert.Contains("目录校验后", treeAfter);
-        Assert.Contains("基于当前章节树检查", buttonAfter);
+        Assert.Contains("检查并生成建议", buttonAfter);
+        Assert.Contains("当前章节树", basisAfter);
     }
 
     /// <summary>
@@ -170,6 +177,6 @@ public class WorkbenchForgetCatalogTests
         Assert.Contains("已选用", step4Catalog);
         Assert.Contains("480 章", step4Catalog);
         Assert.Equal("本地识别", step4Tree);
-        Assert.Contains("参考目录检查", step4Button);
+        Assert.Contains("按目录检查", step4Button);
     }
 }

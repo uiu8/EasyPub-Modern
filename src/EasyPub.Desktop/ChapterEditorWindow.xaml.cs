@@ -98,6 +98,15 @@ public partial class ChapterEditorWindow : Window
             // 旧项目没有这个字段 → Unknown，UI 显示「来源未知（旧项目）」，**不去猜**。
             _provenance = savedPlan.Provenance ?? PersistedTreeProvenance.Unknown;
         }
+        else
+        {
+            // **没有可用的已保存计划 = 这棵树是刚识别出来的**，它的来源就是本地规则。
+            //
+            // 这里原来什么都不做，于是 _provenance 保持初值 Unknown，新导入的书在状态条上
+            // 被标成「来源未知（旧项目）」—— 那是"旧项目文件里没有这个字段"的意思，
+            // 与"这份树刚刚按本地规则识别出来"完全是两回事。走查时用户一眼就看到了这个错标。
+            _provenance = PersistedTreeProvenance.Local;
+        }
         VisibleRoots = new ChapterDisplayCollection();
         VisibleRoots.Synchronize(Roots);
         DataContext = this;

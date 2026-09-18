@@ -146,14 +146,41 @@ public partial class ChapterEditorWindow
     private ResolutionAdvice AdviceFor(ConversionPreflightIssue? issue, ChapterReviewGroup? group)
     {
         if (issue is null) return ResolutionAdvice.None("未选择提醒。");
-        var facts = new IssueResolutionFacts(
-            // 工作台手里有文档，所以这一项**总是"查过"**（true / false 都确定，不会是"没查过"）。
-            // 短路只为省掉对无关问题码的全文扫描。
-            HasLocalHeadingCandidate: issue.Code == "chapter_number_gap" && FindLocalHeadingCandidates().Count > 0,
-            HasSuggestedTitle: SuggestedTitle() is not null,
-            CanSplitSelectedLine: OperationSelection().Length > 0 && CanSplitSelectedLine());
-        return IssueResolutionPolicy.Evaluate(
-            group ?? new ChapterReviewGroup(issue, ReviewCategory(issue), [], [], []), _context, facts);
+        var finding = group ?? new ChapterReviewGroup(issue, ReviewCategory(issue), [], [], []);
+        return IssueResolutionPolicy.Evaluate(finding, _context, FactsFor(finding));
+    }
+
+    /// <summary>
+    /// 工作台手里的本地证据。**它对每一组都是"查过"**（true / false 都确定，不会是"没查过"）——
+    /// 报告窗口拿不出这些，所以那边的建议更保守（§8.9 第 2 条）。
+    /// </summary>
+    /// <param name="gapCandidates">
+    /// 跳章那一类的本地候选。可以传进来是为了**全文只扫一次**：统计整本书的工作量时，
+    /// 每一组跳章都会问同一个问题。
+    /// </param>
+    private IssueResolutionFacts FactsFor(ChapterReviewGroup group,
+        IReadOnlyList<MissingChapterHeading>? gapCandidates = null) => new(
+        HasLocalHeadingCandidate: group.Issue.Code == "chapter_number_gap"
+            && (gapCandidates ?? FindLocalHeadingCandidates()).Count > 0,
+        HasSuggestedTitle: group.Issue.Code is "chapter_number_order" or "volume_number_duplicate" or "chapter_level_gap"
+            && SuggestedTitle() is not null,
+        CanSplitSelectedLine: OperationSelection().Length > 0 && CanSplitSelectedLine());
+
+    /// <summary>
+    /// 这本书的工作量分解 —— 顶部那句"下一步"读的就是它。
+    ///
+    /// <para>它和卡片上的按钮读的是**同一个** <see cref="IssueResolutionPolicy"/>，所以顶部的结论
+    /// 与列表里逐条的标注永远一致，不会出现"总结说本地能修、点进去却要目录"。</para>
+    ///
+    /// <para>提醒还没算出来时返回 null —— 那时说"没有待核对的提醒"是错的，
+    /// 而一句错话比一句"正在检查"更糟。</para>
+    /// </summary>
+    internal ChapterWorkload? Workload()
+    {
+        if (_reviewGroups.Length == 0) return null;
+        // 全文只扫一次：下面每一组跳章都会问"本地有没有候选"。
+        var gapCandidates = FindLocalHeadingCandidates();
+        return IssueResolutionPolicy.Summarize(_reviewGroups, _context, group => FactsFor(group, gapCandidates));
     }
 
     /// <summary>跳章区间里本地能补建的候选。与"批量补建全书"读的是同一个搜索结果。</summary>
@@ -689,6 +716,29 @@ public partial class ChapterEditorWindow
         ReviewActionButton.ToolTip = resolution.Recommended is { } chosen
             ? chosen.Explanation + (alternative is null ? "" : $"\n\n另一条路：{ChapterIssueAction.CtaFor(alternative)}")
             : null;
+        // 这条提醒属于哪一堆 —— 与顶部那三个数字同源（§5.6"前者在后"）。
+        // 措辞是给用户看的，所以不直接用枚举名。
+        if (ReviewBasisTag is not null && ReviewBasisTagText is not null)
+        {
+            var kind = IssueResolutionPolicy.Classify(resolution);
+            ReviewBasisTagText.Text = kind switch
+            {
+                ChapterWorkloadKind.NeedsCatalog => "需要参考目录",
+                ChapterWorkloadKind.Local => "本地就能修",
+                _ => "需要你核对",
+            };
+            // 三堆各一个颜色，和效果图一致：暖色＝卡住了，绿色＝能自己办，灰色＝中性。
+            // 颜色写在这里而不是主题字典里：这三堆是这份界面的固定词汇，不该随主题改名。
+            var (fill, ink) = kind switch
+            {
+                ChapterWorkloadKind.NeedsCatalog => (System.Windows.Media.Color.FromRgb(0xFE, 0xF3, 0xEC), System.Windows.Media.Color.FromRgb(0x9A, 0x34, 0x12)),
+                ChapterWorkloadKind.Local => (System.Windows.Media.Color.FromRgb(0xED, 0xF7, 0xEF), System.Windows.Media.Color.FromRgb(0x16, 0x65, 0x34)),
+                _ => (System.Windows.Media.Color.FromRgb(0xF1, 0xF3, 0xF7), System.Windows.Media.Color.FromRgb(0x3F, 0x4A, 0x5A)),
+            };
+            ReviewBasisTag.Background = new System.Windows.Media.SolidColorBrush(fill);
+            ReviewBasisTagText.Foreground = new System.Windows.Media.SolidColorBrush(ink);
+            ReviewBasisTag.Visibility = Visibility.Visible;
+        }
         var plan = PlanBatchAction(targets, merge: true);
         // 只有"把选中行建立成章节"需要先选中一行；其余动作各自带着自己的对象，或者只导航。
         // 以前这里按**类别**判断（漏识别一律要求先选中），于是"目录里有、树里没有"这种
@@ -707,6 +757,9 @@ public partial class ChapterEditorWindow
         // **与卡片文案读同一个 advice。** 这一句是这次重构的全部意义：按钮说什么，
         // 这一下就做什么。以前这里是另一套按问题码的 switch，与拼按钮文案的那套从未被核对过。
         var intent = AdviceFor(issue, ReviewGroup(issue)).Recommended?.Intent ?? ResolutionIntent.Unknown;
+        // 按钮文字与这条 intent 是同一个来源；把它记下来，事后就能回答
+        // "他按的那个按钮，代码走的是哪条分支"。
+        InteractionLog.Decision("执行提醒动作", new { code = issue?.Code, intent = intent.ToString() });
         var before = _undo.Count;
         var numericGroup = OperationSelection().Length == 1 && OnlyCurrentIssueCheck.IsChecked != true ? CurrentNumericGroup(issue) : [];
         if (numericGroup.Length > 1) SetOperationSelection(numericGroup);
