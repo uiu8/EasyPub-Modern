@@ -286,9 +286,15 @@ public class ChapterRepairApplierTests : IDisposable
     {
         // 无目录时的「改原文」：这是 Phase 7 要开的那条路。
         // 重复标题是不依赖外部目录就能判定的问题，所以自修复方案在 EditSource 下应该真的删掉多余的行。
+        //
+        // **0-A 之后夹具改成"恰好一份有正文、另一份是空章"**：新模型只承认这一种 keep-target 证据，
+        // 也只有在它成立时才默认勾选动作。原来的夹具是「两份都带正文的整章重复」，它现在仍然生成动作，
+        // 但默认不勾选 —— 因为"哪一份是正本"没有任何本地证据，位置先后不是证据。
+        // 这条路径没有被削弱：软件只在**结构事实**支持时才替读者做删除决定。
+        const string body = "这一段正文写得足够长，长到比较器愿意为它计算相似度，而不是因为太短就直接跳过。";
         var book = Path.Combine(_workspace, "自修复书稿.txt");
         await File.WriteAllTextAsync(book,
-            "第一章 起点\n正文一\n第一章 起点\n正文二\n第二章 继续\n正文三\n", new UTF8Encoding(false));
+            $"第一章 起点\n{body}\n第一章 起点\n第二章 继续\n正文三\n", new UTF8Encoding(false));
         var document = await ChapterTreeDocument.LoadAsync(book);
         var outcome = ChapterAutoRepair.Prepare(document, catalog: null);
 
@@ -318,7 +324,8 @@ public class ChapterRepairApplierTests : IDisposable
         Assert.True(result.Changed, result.Message);
 
         var after = SourceTextDocument.Load(book);
-        Assert.Equal(5, after.Lines.Count);
+        // 夹具是 5 行，删掉第 3 行那个空章标题后剩 4 行（原夹具 6 行、剩 5 行）。
+        Assert.Equal(4, after.Lines.Count);
         Assert.Equal(1, after.Lines.Count(line => line.Text == "第一章 起点"));
     }
 

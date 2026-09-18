@@ -194,4 +194,71 @@ public class SampleBookRegressionTests
         Assert.Equal(6, volumes.Length);
         Assert.False(outcome.VolumesInferred, "目录自带卷标题，不应该走推断分支");
     }
+
+    /// <summary>
+    /// 样书上「本地能不能自己找到漏识别标题」的当前事实 —— 答案是**找不到**。
+    ///
+    /// 这条测试存在的理由：文档 §7.2 曾写「第四卷 79/80 章确有高置信度候选」，那个说法来自
+    /// 1.58.0 的 <c>自测说明.md</c>；<c>MissingChapterHeadings</c> 之后经过 <c>MaximumGap</c> /
+    /// <c>RequireIsolatedLine</c> / 数字纠错规则 / 候选顺序约束等修改，当前版本**一个候选都没有**。
+    ///
+    /// 这不是缺陷，而是样书的形状决定的：第四卷 30–40 与 50–60 是「标题行完全不存在、只有正文」，
+    /// 而候选必须**匹配标题格式**（<c>MissingChapterHeadings.Candidate</c> 正则）。所以
+    /// gap 确实存在（9 个），但区间里没有任何一行能成为候选。
+    ///
+    /// 它直接决定 §3.4 的推荐顺序在样书上的结果：**先本地扫描 → 无候选 → 直接推荐参考目录**。
+    /// </summary>
+    [Fact]
+    public async Task Sample_book_local_missing_heading_candidates_are_recorded()
+    {
+        var (document, _) = await LoadAsync();
+
+        var candidates = MissingChapterHeadings.Find(document, document.Entries);
+
+        // 当前事实：0。若这个数字变了，说明 MissingChapterHeadings 的行为变了 ——
+        // 那时要判断的是"新行为和旧行为哪个对"，而不是改断言。
+        Assert.Empty(candidates);
+
+        // 而 gap 确实存在 —— 所以"没有候选"不是"没有 gap"造成的。
+        var gaps = ChapterDiagnostics
+            .Inspect(document, CancellationToken.None, true, document.Entries, int.MaxValue)
+            .Count(issue => issue.Code == "chapter_number_gap");
+        Assert.Equal(9, gaps);
+    }
+
+    /// <summary>
+    /// 样书在当前版本上的**诊断形状** —— 这是 R3（诊断抑制策略化）的 before-count 基线。
+    ///
+    /// 三处都与文档此前的说法不同，而它们只能靠跑出来：
+    ///
+    /// <list type="bullet">
+    /// <item>**没有 <c>chapter_duplicate</c>**：第六卷那 100 个重复标题行在识别阶段就被剔除，
+    /// 不属于任何 <c>ChapterTreeEntry</c>，所以 tree-level 诊断看不到它们。</item>
+    /// <item>**没有 <c>chapter_unrecognized</c>**：它要求"原文里存在一行看起来像标题、但这行没进树"，
+    /// 而第四卷 30–40 **根本没有标题行**。</item>
+    /// <item>**没有 <c>chapter_heading_typo</c>**：本地漏识别候选为 0，所以这个码也不产生。</item>
+    /// </list>
+    ///
+    /// R3 改完 suppression 之后要拿这份形状做对照。
+    /// </summary>
+    [Fact]
+    public async Task Sample_book_diagnostic_shape_is_recorded()
+    {
+        var (document, _) = await LoadAsync();
+
+        var analysis = ChapterReviewAnalyzer.Analyze(document);
+        var byCode = analysis.Groups
+            .GroupBy(group => group.Issue.Code)
+            .ToDictionary(group => group.Key, group => group.Count());
+
+        Assert.Equal(32, byCode["chapter_content_duplicate"]);
+        Assert.Equal(9, byCode["chapter_number_gap"]);
+        Assert.Equal(2, byCode["chapter_repeated_sequence"]);
+        Assert.Equal(1, byCode["chapter_structure_suggested"]);
+
+        // 这三个码在样书的当前版本上**不产生** —— 理由见上面的注释。
+        Assert.DoesNotContain("chapter_duplicate", byCode.Keys);
+        Assert.DoesNotContain("chapter_unrecognized", byCode.Keys);
+        Assert.DoesNotContain("chapter_heading_typo", byCode.Keys);
+    }
 }

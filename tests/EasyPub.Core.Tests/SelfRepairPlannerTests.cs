@@ -26,9 +26,14 @@ public class SelfRepairPlannerTests
     [Fact]
     public async Task A_book_with_a_repeated_title_offers_a_duplicate_action()
     {
-        // 同一个标题连续出现两次，就是这个样书的核心缺陷形状。
+        // 同一个标题出现两次，就是这个样书的核心缺陷形状。
+        //
+        // **0-A 起正文必须够长**：ChapterContentDuplicates 对最短正文 < 20 字符直接返回 null
+        // （那道门槛专门避免"很短的模板文字"被当成强重复证据）。原来的夹具是「正文一」「正文二」
+        // 各 3 个字符，身份判断永远停在 Candidate —— 也就是说它一直在测一件它没测到的事。
+        const string body = "这一段正文写得足够长，长到比较器愿意为它计算相似度，而不是因为太短就直接跳过。";
         var document = await BookAsync(
-            "第一章 起点\n正文一\n第一章 起点\n正文二\n第二章 继续\n正文三\n");
+            $"第一章 起点\n{body}\n第一章 起点\n{body}\n第二章 继续\n正文三\n");
 
         var plan = SelfRepairPlanner.Build(document);
 
@@ -37,7 +42,9 @@ public class SelfRepairPlannerTests
         // 减去动作自己那一行"来算哪些行离开这本书的，锚在被删行上会算反，删掉留下的那一份。
         Assert.Equal(1, duplicate.Line);
         Assert.Equal("第一章 起点", duplicate.Title);
-        Assert.True(duplicate.Recommended);
+        // **0-A 起 Recommended 不再无条件为真**：两份正文完全相同，却没有任何本地证据说明该留哪一份
+        // （位置先后不是证据）。所以动作照常产生、让用户看得见，但默认不勾选。
+        Assert.False(duplicate.Recommended);
     }
 
     [Fact]
