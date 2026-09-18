@@ -508,16 +508,78 @@ if (level == 0 && !candidates.TryGetValue(...)) continue;    // ← levelPattern
 
 **这一条与 §8.2 是同一个病根：系统里对"什么算标题"有不止一个答案。**
 
-### 8.2 ⚠️ 标题语义是**硬编码**的，而"什么算标题"是可配的
+### 8.2 ⚠️ 正则表达式是整个系统的输入，而系统对它的假设散落在多处
 
-**这是这个项目最根本的架构裂缝，而且它不报错。**
+#### 它决定一切
 
-#### 事实：两件事必须一致，但只有一件可配
+```
+用户配的正则（或默认正则）
+   ↓  什么被识别为章节
+树的 Entries
+   ↓  有什么问题
+诊断（gap / duplicate / order / unrecognized / …）
+   ↓  生成什么动作
+planner（补建 / 改名 / 移除 / 保留 / 加卷）
+   ↓  改哪些行
+源码补丁
+   ↓
+成品 EPUB / MOBI 的目录结构
+```
 
-| 问题 | 在哪决定 | 可配吗 |
+**换一个正则，这条链上每一环的输出都会变。** 但链上有若干环**假设了某种标题形态**，
+它们并不跟着正则走 —— 这是这个项目最根本的架构裂缝。
+
+#### 正则的分布：上半可配，下半写死
+
+| 在哪个环节 | 由谁决定 | 可配？ |
 |---|---|---|
-| **什么算一个章节标题** | `TocHierarchyOptions.Level1/2/3Pattern`、`ConversionOptions.ChapterPattern` | ✅ 用户可配，界面里就有 |
-| **怎么从标题里读出编号** | `HeadingSyntax.ChapterNumber`、`HeadingSyntax.Numbering` | ❌ **常量，写死的** |
+| 章节候选（什么行算标题） | `ConversionOptions.ChapterPattern` | ✅ 界面可配 |
+| 分层（卷 / 章 / 节） | `TocHierarchyOptions.Level1/2/3Pattern` | ✅ 界面可配 |
+| 数字章节 | `NumericHeadingPattern` + `RecognizeNumericHeadings` | ✅ 界面可配 |
+| 章号纠错（久=九） | `HeadingNumberCorrections` | ✅ 界面可配 |
+| **从标题里读出编号** | `HeadingSyntax.ChapterNumber` | ❌ **常量** |
+| **去掉编号、留下标题文字** | `HeadingSyntax.Numbering` | ❌ **常量** |
+| 跳章区间的漏识别候选 | `MissingChapterHeadings` 内置 | ❌ 常量 |
+| 异常长章里的无编号标题 | `UnnumberedHeadings` 内置 | ❌ 常量 |
+| 对齐时的相似度分级 | `ReferenceLocator` 内置 | ❌ 常量 |
+| 旧版兼容正则 | `HeadingSyntax.LegacyPattern` | ❌ 常量（**而且会悄悄顶上来**，见 §8.1） |
+
+**上半是"什么算标题"，可配；下半是"标题长什么样"，写死。**
+**两者不一致时，没有任何检查会拦下来。**
+
+#### 这条链上每一环对正则的依赖程度
+
+| 环节 | 依赖什么 | 换正则后 |
+|---|---|---|
+| **识别** | 只用正则本身 | ✅ 完全跟着走 |
+| **对齐**（目录 ↔ 树） | `ParseKey` → `Canonical` | ⚠️ **自洽** —— 两边用同一套解析，即使解析错了也仍然对得上 |
+| **重复检测** | `ParseKey` → `Words` | ⚠️ 同上，自洽 |
+| **缺章判定**（absent） | `ParseKey` → `Canonical` | ⚠️ 自洽，但**混入未对齐的节点后就会失准**（§8.1 的 120 就是这么来的） |
+| **卷重启检测** | `ParseKey` → **`Number`** | ❌ **失效** —— 读不出编号就 `continue` |
+| **"无编号"判定** | `ParseKey` → **`Number.Length`** | ❌ **误判** —— 每一章都被当成无编号 |
+| **跳章提示 / 区间补建** | 内置编号解析 | ❌ 失效 |
+| **planner 的改名 / 补建** | 编号 + 文字 | ⚠️ 部分失效，**且不报错** |
+
+**分水岭是"自洽"与"依赖编号"**：
+
+- 只用 `Canonical` / `Words` 做**两边比较**的地方 → 解析错了也**仍然自洽**，能工作
+- 任何**单独依赖 `Number`** 的地方（判空、转 int、按编号找区间）→ **静默失效**
+
+**这是最危险的地方：坏掉的不是"比较"，而是"解读"。而解读错了不会报错，只会给出一个合法的错误答案。**
+
+#### 为什么这件事比单个 bug 重要
+
+**§8.1 那个 560 和这里的编号硬编码是同一个病根**：
+
+> 系统里对"什么算一个章节标题"有**不止一个答案** —— 一个可配、一个写死、
+> 还有一个在 `Options` 为 null 时悄悄顶上来。
+
+**三处都不报错。** 它们只是让界面上显示的数字、和最终写进文件的东西，对应了不同的树。
+
+**如果只修 §8.1（让分析传 Options），这个病根还在** —— 下一个用户的标题格式还是可能
+和 `ChapterNumber` 不一致，而他会看到一个"没有问题"的报告。
+
+#### 具体缺陷：编号解析写死了
 
 `HeadingSyntax.cs:31-33`：
 
@@ -528,63 +590,39 @@ internal static readonly Regex Numbering     = new(NumberPrefix + @"[章回节�
 
 **它只认 `第?<数字>[章回节]`。**
 
-#### 影响面：`ParseKey` 是 13 处的公共依赖
+`ReferenceOutline.ParseKey(title)` → `TitleKey(Number, Words)` → `Canonical = Number + "|" + Words`，
+**全系统靠它把标题变成可比较的键**：`ReferenceLocator`（8 处）、`ChapterDiagnostics`（2 处）、
+`ChapterReviewAnalyzer`（2 处）、`ReferencePlan`（6 处）、`ChapterAutoRepair`、`ReferenceAlignment`（4 处）。
 
-`ReferenceOutline.ParseKey(title)` → `TitleKey(Number, Words)` → `Canonical = Number + "|" + Words`。
-**全系统靠它把标题变成可比较的键**：
-
-| 用在哪 | 文件 |
-|---|---|
-| 目录对齐 | `ReferenceLocator.cs`（8 处） |
-| 重复判定（比 `Words`） | `ChapterDiagnostics.cs:78,89` |
-| 缺章判定（比 `Canonical`） | `ChapterReviewAnalyzer.cs:236,238` |
-| planner（比 `Words` / 判 `Number` 空） | `ReferencePlan.cs`（6 处） |
-| 卷重启检测（`int.TryParse(Number)`） | `ChapterAutoRepair.cs:150` |
-| 对齐回归 | `ReferenceAlignment.cs`（4 处） |
-
-#### 换个正则会发生什么：**不崩，静默降级**
+#### 换个正则会发生什么：不崩，静默降级
 
 以用户配 `^第\d+话`（"话"而不是"章"）为例：
 
 | 环节 | 结果 |
 |---|---|
-| **识别** | ✅ 正常 —— 用户的 `Level2Pattern` 说了算，树识别出 `第12话 xxx` |
-| **`ParseKey` 拆编号** | ❌ `ChapterNumber` 不认"话" → `Number = ""`；`Numbering` 也不认 → `Words = "第12话xxx"` |
-| **对齐 / 缺章判定** | ⚠️ **可能仍然工作** —— 目录和树**两边用同一套错误解析**，`Canonical` 仍对得上（自洽） |
-| **重复检测** | ⚠️ 同上，自洽 |
-| **卷重启检测** | ❌ **失效** —— `ChapterAutoRepair:150` 的 `int.TryParse` 拿到空串 → `continue` |
-| **"无编号"判定** | ❌ **误判** —— `ReferencePlan:199` 用 `Number.Length == 0` 判断，于是每一章都被当成无编号，可能触发 `DemoteExtra` |
-| **跳章区间找候选** | ❌ **失效** —— `MissingChapterHeadings` 按编号格式找候选，认不出"话" |
-| **跳章提示** | ❌ 失效（`ChapterBreakpoints` 同样靠编号） |
+| 识别 | ✅ 正常 —— 用户的规则说了算，树识别出 `第12话 xxx` |
+| `ParseKey` 拆编号 | ❌ `ChapterNumber` 不认"话" → `Number = ""`；`Numbering` 也不认 → `Words = "第12话xxx"` |
+| 对齐 / 缺章判定 | ⚠️ **可能仍然工作** —— 两边用同一套错误解析，`Canonical` 仍对得上 |
+| 重复检测 | ⚠️ 同上 |
+| 卷重启检测 | ❌ **失效** |
+| "无编号"判定 | ❌ **误判**，可能触发 `DemoteExtra` |
+| 跳章提示 / 区间补建候选 | ❌ 失效 |
 
-**最危险的是这个形状**：它不报错、不崩溃、界面上没有任何提示 —— 只是有几个功能悄悄不再起作用。
-用户会以为"这本书没问题"，实际是"这个功能没工作"。
+**它不报错、不崩溃、界面上没有任何提示。** 用户会以为"这本书没问题"，实际是"这个功能没工作"。
 
-**§8.1 那个 120 是同一类问题**：不是算错，是**用错了词表**，而且没人告诉你。
-
-#### 更麻烦的：系统里同时存在三套"什么算标题"的答案
-
-```
-HeadingSyntax.LegacyPattern     旧宽松正则（第X章回部节集卷 都吃）
-HeadingSyntax.ChapterPattern    现代默认
-用户的 TocHierarchyOptions      可配
-```
-
-**而"什么算编号"只有一套，且不可配。两者不一致时，没有任何检查会拦下来。**
-
-#### 三个候选方案（**尚未决定，也没有实现**）
+#### 三个候选方案（**尚未决定，也未实现**）
 
 | 方案 | 做法 | 代价 |
 |---|---|---|
-| **A（最小、最诚实）** | 加**一致性检查**：当用户的识别规则能匹配、但 `ChapterNumber` 解析不出编号时，在识别结果上给一条明确提醒，列出"哪些功能因此不可用" | 不改任何现有行为，只把静默失效变成看得见的提醒 |
-| **B（彻底）** | 把编号解析也做成可配（跟 `Level2Pattern` 一起定义 `(?<n>…)` 捕获组） | 工程量不小，且 `Level2Pattern` 现在没有强制捕获组 |
-| **C** | 给 `ChapterNumber` 加常见变体（话/集/篇…） | 成本低但治标，下次遇到新格式还是一样 |
+| **A（最小、最诚实）** | 加**一致性检查**：用户的规则能匹配、但 `ChapterNumber` 解析不出编号时，在识别结果上明确提醒「以下功能不可用：卷重启检测、跳章提示、区间补建候选」 | 不改现有行为，只把静默失效变成看得见的提醒 |
+| **B（彻底）** | 把编号解析也做成可配（跟 `Level2Pattern` 一起定义 `(?<n>…)` 捕获组） | 工程量大，且 `Level2Pattern` 现在没有强制捕获组 |
+| **C** | 给 `ChapterNumber` 加常见变体（话 / 集 / 篇…） | 成本低但治标 |
 
-**推荐 A 先做。** 它同时能覆盖 §8.1 那类"用错词表"的问题。
+**推荐 A 先做**，因为它同时能覆盖 §8.1 那类"用错词表"的问题。
 
-#### ⚠️ 上面那张影响表是**读代码得出的，没有实测**
+#### ⚠️ 上面那些影响表是**读代码得出的，没有实测**
 
-**"配 `^第\d+话` 之后会怎样"我没有真的跑过。** 要把它变成实测值，只需要一本用别的格式的小书
+**"配 `^第\d+话` 之后会怎样"我没有真的跑过。** 要变成实测值，只需要一本用别的格式的小书
 （几行就够）跑一遍 `ChapterReviewAnalyzer` + `ParseKey`。
 
 **接手的人如果要做这一块，第一件事就是造那个样本，把上表验证一遍** ——
