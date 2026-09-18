@@ -41,20 +41,16 @@ public static class ChapterReviewAnalyzer
         // A tree reconciled against an official directory already answers "which chapters exist".
         // These heuristics exist to guess exactly that, so once the reference has been applied their
         // findings describe the source text rather than a problem still left to fix.
-        var referenceIds = entries.Where(e => e.RecognitionSource == "reference").Select(e => e.Id).ToHashSet();
-        bool Unverified(string id) => !referenceIds.Contains(id);
-        bool UnverifiedLine(int? line) => line is null || entries.Any(e => Unverified(e.Id)
-            && (e.TitleLineNumber == line || e.ContentRanges.Any(r => line >= r.StartLine && line <= r.EndLine)));
-        var referenceAligned = entries.Any(e => e.RecognitionSource == "reference")
-            && entries.Where(e => !e.IsFrontMatter && e.RecognitionSource is not ("reference-volume" or "inferred-volume"))
-                .All(e => !Unverified(e.Id));
+        var verification = ReferenceVerificationIndex.Build(entries);
+        // **逐 finding 判断，不再用全局 bool，也不再在被调用处各自 Where 过滤。**
+        // 原来的 referenceAligned 要求"所有非卷条目都已验证"，于是用户手工改过一个节点，
+        // 六类本地提醒就全部重新打开 —— 而他不知道那是自己那次编辑造成的。
+        SuppressionDecision Decide(string code, FindingScope scope) =>
+            FindingSuppressionPolicy.Decide(code, scope, verification);
+        // **这里不再过滤。** 六类以前在这里被逐行滤掉，另外几类在各自的调用点被全局滤掉 ——
+        // 四处对"哪些 finding 能被动用目录证据推翻"的判断并不一致（内容类被误伤，而
+        // chapter_number_gap 本该照常报告）。现在抑制只在 Add(...) 里发生一次。
         var raw = ChapterDiagnostics.Inspect(document, cancellationToken, detectUnrecognized, entries, int.MaxValue)
-            // A gap between chapter numbers is deliberately NOT suppressed after alignment. The
-            // directory knows which chapters exist, so a gap now means the source text really is
-            // missing chapters the official release has — the one thing the user must be told.
-            .Where(issue => UnverifiedLine(issue.LineNumber) || issue.Code is not ("chapter_unrecognized"
-                or "chapter_number_order" or "chapter_heading_typo" or "chapter_content_duplicate"
-                or "chapter_duplicate" or "chapter_repeated_sequence"))
             .ToList();
         var parentIds = new Dictionary<string, string>();
         var stack = new Stack<ChapterTreeEntry>();
@@ -66,24 +62,27 @@ public static class ChapterReviewAnalyzer
             stack.Push(entry);
         }
         var groups = new List<ChapterReviewGroup>();
-        var unnumberedGroups = referenceAligned
-            ? []
-            : UnnumberedHeadings.Find(document, entries).Where(p => Unverified(p.OwnerId)).GroupBy(p => p.OwnerId).ToArray();
-        foreach (var candidates in unnumberedGroups)
+        // consumed 必须在这里声明：Add(...) 是局部函数，而它从下面第一个循环就被调用。
+        var consumed = new HashSet<ConversionPreflightIssue>();
+        // 抑制统一在 Add(...) 里做 —— 这里不再各自 Where 过滤"已由目录验证的 owner"。
+        foreach (var candidates in UnnumberedHeadings.Find(document, entries).GroupBy(p => p.OwnerId))
         {
             var first = candidates.First();
+            var lines = candidates.Select(c => c.Line).ToArray();
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_unnumbered",
                 $"异常长章中发现 {candidates.Count()} 处疑似无编号标题。可在目录辅助修复中调整行数阈值、获取参考目录并预览补建；不会自动拆分正文。",
                 PreflightTargetKind.Chapters, first.Line);
-            groups.Add(new(issue, ReviewCategories.Missing, [first.OwnerId], candidates.Select(c => c.Line).ToArray(), [issue]));
+            AddScope(issue, ReviewCategories.Missing, [first.OwnerId], lines, [issue]);
         }
-        foreach (var gap in (referenceAligned ? [] : MissingChapterHeadings.Find(document, entries, cancellationToken).Where(c => Unverified(c.OwnerId)).GroupBy(c => c.NextLine).ToArray()))
+        foreach (var gap in MissingChapterHeadings.Find(document, entries, cancellationToken).GroupBy(c => c.NextLine))
         {
             var candidates = gap.ToArray();
+            var owners = candidates.Select(c => c.OwnerId).Distinct().ToArray();
+            var lines = candidates.Select(c => c.Line).ToArray();
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_heading_typo",
                 $"跳章区间发现 {candidates.Length} 个疑似漏识别标题：" + string.Join("；", candidates.Select(c => $"第 {c.Line} 行：{c.Original} → {c.Title}")),
                 PreflightTargetKind.Chapters, candidates[0].Line);
-            groups.Add(new(issue, ReviewCategories.Missing, candidates.Select(c => c.OwnerId).Distinct().ToArray(), candidates.Select(c => c.Line).ToArray(), [issue]));
+            AddScope(issue, ReviewCategories.Missing, owners, lines, [issue]);
         }
         if (FindNumericChapters(document, entries, cancellationToken) is { } suggestion)
         {
@@ -94,10 +93,16 @@ public static class ChapterReviewAnalyzer
             groups.Add(new(issue, ReviewCategories.Missing, entries.Where(e => e.IsFrontMatter).Select(e => e.Id).ToArray(), suggestion.Lines, [issue]));
         }
         if (ChapterStructureSuggestion.Find(document, entries) is { } structure) groups.Add(structure);
-        var consumed = new HashSet<ConversionPreflightIssue>();
-        var duplicateBodies = referenceAligned ? [] : ChapterContentDuplicates.Find(document, entries, cancellationToken)
-            .Where(p => Unverified(p.FirstId) || Unverified(p.SecondId)).ToArray();
-        if (!referenceAligned) groups.AddRange(ChapterRepeatedSequences.Find(document, entries, duplicateBodies));
+        // **不再按"是否已验证"预过滤**：正文重复属于"目录证据推翻不了"的一类 ——
+        // 两边都被目录验证过，也不能说明正文没有被错误复制。显不显示交给 Add(...) 的策略。
+        var duplicateBodies = ChapterContentDuplicates.Find(document, entries, cancellationToken).ToArray();
+        // 正文重复这一类**不可**被目录证据 supersede —— 目录验证的是章节身份，不是正文内容。
+        // 逐条过策略而不是无条件放行，是为了让"哪一类可以被 supersede"只有一个定义处。
+        foreach (var repeated in ChapterRepeatedSequences.Find(document, entries, duplicateBodies))
+        {
+            if (Decide(repeated.Issue.Code, FindingScope.Of(repeated)).IsSuppressed) continue;
+            groups.Add(repeated);
+        }
         var byId = entries.ToDictionary(e => e.Id);
         foreach (var pair in duplicateBodies)
         {
@@ -115,32 +120,44 @@ public static class ChapterReviewAnalyzer
         // The same prose under two different headings. A same-title comparison cannot see this pair,
         // and a release that repeats a stretch and renumbers it produces exactly that — so the finding
         // belongs next to the duplicate it is, not in a category of its own.
-        if (!referenceAligned)
-            foreach (var pair in ChapterContentDuplicates.FindCrossTitle(document, entries, cancellationToken: cancellationToken))
-            {
-                var first = entries.FirstOrDefault(e => e.TitleLineNumber == pair.FirstLine);
-                var second = entries.FirstOrDefault(e => e.TitleLineNumber == pair.SecondLine);
-                if (first is null || second is null) continue;
-                if (!Unverified(first.Id) && !Unverified(second.Id)) continue;
-                var description = pair.Exact ? "正文完全相同（忽略空白）" : $"正文相似度 {pair.Similarity:P1}";
-                var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_cross_title_duplicate",
-                    $"“{first.Title}”（第 {pair.FirstLine} 行）与“{second.Title}”（第 {pair.SecondLine} 行）标题不同、{description}。"
-                    + "多半是源文件重复拼接后改了标题；请核对哪一份该留，软件不会自动删除、也不会按内容替换标题。",
-                    PreflightTargetKind.Chapters, pair.SecondLine);
-                groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id],
-                    new[] { pair.FirstLine, pair.SecondLine }.OfType<int>().ToArray(), [issue]));
-            }
+        //
+        // 逐对判断在下面（"两边都验证过"才跳过），所以这里不再需要全局开关。
+        foreach (var pair in ChapterContentDuplicates.FindCrossTitle(document, entries, cancellationToken: cancellationToken))
+        {
+            var first = entries.FirstOrDefault(e => e.TitleLineNumber == pair.FirstLine);
+            var second = entries.FirstOrDefault(e => e.TitleLineNumber == pair.SecondLine);
+            if (first is null || second is null) continue;
+            var description = pair.Exact ? "正文完全相同（忽略空白）" : $"正文相似度 {pair.Similarity:P1}";
+            var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_cross_title_duplicate",
+                $"“{first.Title}”（第 {pair.FirstLine} 行）与“{second.Title}”（第 {pair.SecondLine} 行）标题不同、{description}。"
+                + "多半是源文件重复拼接后改了标题；请核对哪一份该留，软件不会自动删除、也不会按内容替换标题。",
+                PreflightTargetKind.Chapters, pair.SecondLine);
+            groups.Add(new(issue, ReviewCategories.Duplicate, [first.Id, second.Id],
+                new[] { pair.FirstLine, pair.SecondLine }.OfType<int>().ToArray(), [issue]));
+        }
         var numeric = NumericHeadingRule.Compile(document.RecognitionOptions.NumericHeadingPattern);
         bool IsNumeric(ChapterTreeEntry entry) => !entry.IsFrontMatter && entry.RecognitionSource is not ("manual" or "pattern")
             && entry.TitleLineNumber is int line && NumericHeadingRule.Matches(numeric, document.SourceLine(line)?.Text ?? "");
+        // **全流程唯一一处抑制判断。** 两个入口都汇到这里，所以"哪一类可以被目录证据推翻"
+        // 只有 FindingSuppressionPolicy 一个定义处。
+        //
+        // 注意局部函数**不能重载**（它们是局部变量，同名即冲突），所以下面两个入口取不同的名字。
+        void AddScope(ConversionPreflightIssue issue, string category, IReadOnlyList<string> ids,
+            IReadOnlyList<int> lines, IEnumerable<ConversionPreflightIssue> related)
+        {
+            var originals = related.ToArray();
+            // 先消费 related，再决定显不显示 —— 否则被抑制的那一组会把它的关联条目漏成碎片。
+            foreach (var item in originals) consumed.Add(item);
+            if (Decide(issue.Code, new FindingScope(ids, lines)).IsSuppressed) return;
+            groups.Add(new(issue, category, ids, lines, originals));
+        }
         void Add(ConversionPreflightIssue issue, string category, IEnumerable<ChapterTreeEntry> nodes, IEnumerable<ConversionPreflightIssue> related)
         {
             var members = nodes.ToArray();
             var originals = related.ToArray();
-            foreach (var item in originals) consumed.Add(item);
             var lines = members.Select(n => n.TitleLineNumber).Concat(originals.Select(i => i.LineNumber)).Append(issue.LineNumber)
                 .OfType<int>().Distinct().Order().ToArray();
-            groups.Add(new(issue, category, members.Select(n => n.Id).ToArray(), lines, originals));
+            AddScope(issue, category, members.Select(n => n.Id).ToArray(), lines, originals);
         }
         // Scan the complete flattened order; require same parent and leaves, not filtered neighbors.
         for (var i = 1; i < entries.Count; i++)
