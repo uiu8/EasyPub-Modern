@@ -37,7 +37,13 @@ public partial class ChapterEditorWindow
             });
         }
         top.Children.Add(new TextBlock { Text = "目录辅助修复", FontSize = 22, FontWeight = FontWeights.SemiBold });
-        top.Children.Add(new TextBlock { Text = "原始 TXT 不会被修改，所有调整都可撤销。", TextWrapping = TextWrapping.Wrap });
+        // 这里不能说"原始 TXT 不会被修改"：下面的「预览章节调整…」进入的是统一修复确认窗，
+        // 而那个窗口支持「同时改原文」。是否写文件在下一步决定，这句话必须如实说。
+        top.Children.Add(new TextBlock
+        {
+            Text = "这里只做目录匹配与预览，不会写任何文件。是否修改原始 TXT，在下一步的修复确认窗里决定。",
+            TextWrapping = TextWrapping.Wrap
+        });
         Section("第一步 · 选择参考目录", "有了参考目录，补建漏识别章节、统一标题、移除重复、建立卷层级才有依据。不上传 TXT。");
         top.Children.Add(new TextBlock { Text = "书名、书籍网址或番茄编号", Margin = new Thickness(0, 4, 0, 4) });
         var search = new WrapPanel(); top.Children.Add(search);
@@ -71,13 +77,13 @@ public partial class ChapterEditorWindow
         {
             Content = "预览章节调整…", IsEnabled = false,
             ToolTip = "对照参考目录补建漏识别章节、统一标题、移除重复章节、建立卷层级；"
-                + "与顶部「一键目录修复」打开同一个修复确认窗，原始 TXT 不变，可撤销",
+                + "与顶部「预览目录修复」打开同一个修复确认窗。是否改原文在确认窗里决定，可撤销",
             Padding = new Thickness(16, 7, 16, 7)
         };
         outlineRow.Children.Add(outline);
         top.Children.Add(new TextBlock
         {
-            Text = "本按钮与顶部「一键目录修复」进入同一个修复确认窗，依据就是你在这里选定或粘贴的目录；"
+            Text = "本按钮与顶部「预览目录修复」进入同一个修复确认窗，依据就是你在这里选定或粘贴的目录；"
                 + "不再有第二套预览与勾选。",
             TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = secondary, Margin = new Thickness(0, 6, 0, 0)
         });
