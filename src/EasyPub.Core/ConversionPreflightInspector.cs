@@ -213,6 +213,22 @@ public sealed class ConversionPreflightInspector
                         }
                         }
                         var candidateCount = document.Entries.Count(entry => entry.TitleLineNumber.HasValue);
+                        // **这一条是为了回答"主界面看到几个条目"**。
+                        //
+                        // 走查时主界面显示「已识别 560 项」，而 Core 加载同一份文件得到
+                        // Entries.Count = 468 —— 有标题行号的条目不可能多于全部条目，
+                        // 所以那两个数不可能来自同一个 document。把两者都记下来，
+                        // 下一次导入就能看出是哪一边、差在哪。
+                        InteractionLog.Outcome("识别书稿", new
+                        {
+                            文件 = System.IO.Path.GetFileName(request.InputPath),
+                            条目 = document.Entries.Count,
+                            有标题行号 = candidateCount,
+                            行数 = document.LineCount,
+                            分层 = options.TocHierarchy.Enabled,
+                            章正则 = options.ChapterPattern ?? "(默认)",
+                            级别2正则 = options.TocHierarchy.Level2Pattern,
+                        });
                         books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
                         if (Check(PreflightTargetKind.Chapters))
                         {

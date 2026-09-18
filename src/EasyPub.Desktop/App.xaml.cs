@@ -13,6 +13,13 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // 启动就写一条：这样日志文件**立刻存在**，而不是等用户点了第一个按钮才出现 ——
+        // "日志在哪"本身不该是个需要猜的问题。它同时记录了版本，方便事后对齐行为。
+        InteractionLog.Outcome("启动", new
+        {
+            版本 = typeof(App).Assembly.GetName().Version?.ToString(),
+            日志 = InteractionLog.Path,
+        });
         // **一个钩子覆盖全部按钮**，而不是在每个点击处理器里加一行。
         //
         // 理由：这个软件的按钮有一大半是运行时建出来的（专项处理菜单、目录面板、

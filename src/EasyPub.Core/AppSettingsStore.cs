@@ -137,21 +137,29 @@ public sealed class AppSettingsStore
     /// 它不为空，所以永远压着代码里的新默认值。实测同一本样书在旧设置下识别出 560 个条目、
     /// 默认设置下 468 个 —— 而界面上没有任何地方提示这件事。</para>
     ///
-    /// <para>换掉的时候写日志，免得"我的设置怎么变了"变成另一个谜。</para>
+    /// <para>升级只发生在**内存**里，不写回设置文件 —— 那会有副作用，而且可能在只读环境失败。
+    /// 代价是每次 <c>Load</c> 都会重新升一次，所以日志只记第一次：否则启动一次会看到两条
+    /// 一模一样的记录，读日志的人会以为发生了两次不同的升级（这是实测踩到的）。</para>
     /// </summary>
     private static EasyPubAppSettings UpgradeSupersededPatterns(EasyPubAppSettings settings)
     {
         var upgraded = settings.NumericHeadingDefaults.UpgradeSupersededPatterns(out var changed);
         if (!changed) return settings;
-        InteractionLog.Decision("升级旧识别规则", new
+        if (!_upgradeLogged)
         {
-            原Level1 = settings.NumericHeadingDefaults.Level1Pattern,
-            原Level2 = settings.NumericHeadingDefaults.Level2Pattern,
-            新Level1 = upgraded.Level1Pattern,
-            新Level2 = upgraded.Level2Pattern,
-        });
+            _upgradeLogged = true;
+            InteractionLog.Decision("升级旧识别规则", new
+            {
+                原Level1 = settings.NumericHeadingDefaults.Level1Pattern,
+                原Level2 = settings.NumericHeadingDefaults.Level2Pattern,
+                新Level1 = upgraded.Level1Pattern,
+                新Level2 = upgraded.Level2Pattern,
+            });
+        }
         return settings with { NumericHeadingDefaults = upgraded };
     }
+
+    private static bool _upgradeLogged;
 
     public async Task<EasyPubAppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
