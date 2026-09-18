@@ -42,7 +42,7 @@ public class LandingModeEquivalenceTests
         var document = await ChapterTreeDocument.LoadAsync(bookPath);
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: document);
         var plan = outcome.Plan!;
 
         string? BaseLine(int line) => line >= 1 && line <= textDocument.Lines.Count
@@ -109,7 +109,7 @@ public class LandingModeEquivalenceTests
         var document = await ChapterTreeDocument.LoadAsync(bookPath);
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: document);
 
         var dropped = new List<int>();
         var rebuilt = ReferencePlanner.Apply(document, document.Entries, outcome.Plan!,

@@ -55,7 +55,7 @@ public class SourceEditTransactionTests : IDisposable
         var document = await ChapterTreeDocument.LoadAsync(book);
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(SampleRoot(), "目录.txt"), Encoding.UTF8))!;
-        var outcome = await ChapterAutoRepair.RepairAsync(book, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(book, new ReferenceRepairRequest(catalog), currentDocument: document);
         var version = RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
             document.RecognitionOptions, null);
         var proposal = RepairProposalFactory.Create("ReferenceCatalog", version, outcome.Plan!, catalog);

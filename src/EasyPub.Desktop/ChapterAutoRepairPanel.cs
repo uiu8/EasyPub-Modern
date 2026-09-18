@@ -140,8 +140,19 @@ public partial class ChapterEditorWindow
             var sink = report is null
                 ? ProgressOn(Dispatcher, text => { if (stage is not null) stage.Text = text; })
                 : ProgressOn(Dispatcher, report);
-            var outcome = await ChapterAutoRepair.RepairAsync(snapshot.SourcePath, cancellation.Token, sink,
-                snapshot, reference);
+            // 取目录是**显式的一步**：只有它读磁盘与联网。以前这件事藏在 RepairAsync 内部
+            // （传 reference: null 就等于"请自动决定依据"），同一个按钮因此有四种结果。
+            // 现在由调用方在这里决定何时取、拿到什么、拿不到怎么办。
+            // 用户已经从目录面板给了目录时不再去取。
+            var acquisition = reference is { } given
+                ? CatalogAcquisition.Given(given)
+                : await ChapterAutoRepair.AcquireCatalogAsync(snapshot.SourcePath, snapshot, sink, cancellation.Token);
+            // 显式声明成基类型：两个分支是不同的 sealed record，三元表达式自己推不出共同类型。
+            RepairRequest request = acquisition.Catalog is { } found
+                ? new ReferenceRepairRequest(found)
+                : new CurrentTreeHeuristicRequest();
+            var outcome = await ChapterAutoRepair.RepairAsync(snapshot.SourcePath, request, cancellation.Token,
+                sink, snapshot, acquisition);
             cancellation.Token.ThrowIfCancellationRequested();
             finished = true;
             progress?.Close();

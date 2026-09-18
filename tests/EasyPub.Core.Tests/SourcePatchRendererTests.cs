@@ -310,7 +310,7 @@ public class SourcePatchRendererTests
         var tree = await ChapterTreeDocument.LoadAsync(bookPath);
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: tree, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: tree);
 
         var operations = outcome.Plan!.Actions
             .Where(action => action.Kind == ReferenceActionKind.Retitle && action.Line > 0)

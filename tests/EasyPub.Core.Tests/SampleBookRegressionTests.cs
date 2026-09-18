@@ -186,7 +186,7 @@ public class SampleBookRegressionTests
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
         var outcome = await ChapterAutoRepair.RepairAsync(
-            document.SourcePath, currentDocument: document, reference: catalog);
+            document.SourcePath, new ReferenceRepairRequest(catalog), currentDocument: document);
         var rebuilt = ChapterAutoRepair.RebuildWithSelection(
             document, outcome, outcome.Plan!.DefaultSelection.ToArray());
 

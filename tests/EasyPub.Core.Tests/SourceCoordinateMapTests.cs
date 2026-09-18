@@ -256,7 +256,7 @@ public class SourceCoordinateMapTests
         var document = await ChapterTreeDocument.LoadAsync(bookPath);
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: document);
         var version = RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
             document.RecognitionOptions, null);
         var proposal = RepairProposalFactory.Create("ReferenceCatalog", version, outcome.Plan!, catalog);

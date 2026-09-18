@@ -39,7 +39,7 @@ public class ChapterRepairApplierTests : IDisposable
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(catalogPath, Encoding.UTF8))!;
         var document = await ChapterTreeDocument.LoadAsync(bookPath);
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: document);
         var version = RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
             document.RecognitionOptions, null);
         var proposal = RepairProposalFactory.Create("ReferenceCatalog", version, outcome.Plan!, catalog);

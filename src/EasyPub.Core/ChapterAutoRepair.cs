@@ -173,46 +173,77 @@ public static class ChapterAutoRepair
         }
     }
 
-    public static async Task<AutoRepairOutcome> RepairAsync(
-        string path, CancellationToken token = default, IProgress<string>? progress = null,
-        ChapterTreeDocument? currentDocument = null, ReferenceCatalog? reference = null)
+    /// <summary>
+    /// 取本次要用的参考目录 —— **这是唯一会读磁盘与联网的地方**。
+    ///
+    /// <para>它以前藏在 <see cref="RepairAsync"/> 内部：传 <c>reference: null</c> 就会依次读本书已保存的
+    /// 目录、联网抓取、拿不到再退到自修复。那个"请自动决定依据"的语义让同一个按钮产生四种结果，
+    /// 调用方和用户都无法预知。现在它是**显式的一步**：取到什么、为什么没取到、花了多久，都由返回值
+    /// 说清，由调用方决定下一步 —— 用这份目录、退到自修复，还是把失败原因显示给用户。</para>
+    /// </summary>
+    public static async Task<CatalogAcquisition> AcquireCatalogAsync(
+        string path, ChapterTreeDocument document, IProgress<string>? progress = null,
+        CancellationToken token = default)
     {
+        ArgumentNullException.ThrowIfNull(document);
+
         // Timed from the first statement: "the network is only a second or two" is an assumption worth
         // checking, and on a book whose directory is already cached it is simply wrong.
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var document = currentDocument ?? await ChapterTreeDocument.LoadAsync(path, cancellationToken: token).ConfigureAwait(false);
+        var preferred = await LoadPreferredSourcesAsync(path).ConfigureAwait(false);
+        progress?.Report("正在查找本书已保存的目录与来源…");
+        var saved = ReferenceCatalogInput.Load(document.SourceSha256);
+        var reference = ReferenceCatalogInput.ReadCatalog(saved);
+        if (reference is not null && !string.IsNullOrWhiteSpace(saved?.Url))
+            reference = reference with { Source = saved.Url + "（本书已保存目录）" };
+        if (reference is not null)
+            return new CatalogAcquisition(reference, null, [], watch.ElapsedMilliseconds);
+
         var bookName = ExtractBookName(path);
-        string? error = null;
-        IReadOnlyList<ReferenceCatalogClient.SourceTiming> timings = [];
-        if (reference is null)
+        var query = !string.IsNullOrWhiteSpace(saved?.Url) ? saved.Url
+            : await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(path), token).ConfigureAwait(false)
+            ?? (!string.IsNullOrWhiteSpace(saved?.Query) ? saved.Query : bookName);
+        progress?.Report("正在获取参考目录，可随时取消…");
+        try
         {
-            progress?.Report("正在查找本书已保存的目录与来源…");
-            var preferred = await LoadPreferredSourcesAsync(path).ConfigureAwait(false);
-            var saved = ReferenceCatalogInput.Load(document.SourceSha256);
-            reference = ReferenceCatalogInput.ReadCatalog(saved);
-            if (reference is not null && !string.IsNullOrWhiteSpace(saved?.Url)) reference = reference with { Source = saved.Url + "（本书已保存目录）" };
-            if (reference is null)
-            {
-                var query = !string.IsNullOrWhiteSpace(saved?.Url) ? saved.Url
-                    : await Task.Run(() => ReferenceCatalogInput.FindLocalBookUrl(path), token).ConfigureAwait(false)
-                    ?? (!string.IsNullOrWhiteSpace(saved?.Query) ? saved.Query : bookName);
-                progress?.Report("正在获取参考目录，可随时取消…");
-                try
-                {
-                    var client = new ReferenceCatalogClient();
-                    var catalogs = await client.DiscoverAsync(query,token,preferred).ConfigureAwait(false);
-                    timings = client.LastTimings;
-                    reference = ReferenceCatalogInput.Pick(catalogs);
-                }
-                catch (Exception e) when (!token.IsCancellationRequested && e is HttpRequestException or OperationCanceledException or InvalidOperationException)
-                { error=e.Message; }
-            }
+            var client = new ReferenceCatalogClient();
+            var catalogs = await client.DiscoverAsync(query, token, preferred).ConfigureAwait(false);
+            return new CatalogAcquisition(ReferenceCatalogInput.Pick(catalogs), null,
+                client.LastTimings, watch.ElapsedMilliseconds);
         }
-        token.ThrowIfCancellationRequested();
-        var catalogMs = watch.ElapsedMilliseconds;
+        catch (Exception e) when (!token.IsCancellationRequested
+            && e is HttpRequestException or OperationCanceledException or InvalidOperationException)
+        {
+            return new CatalogAcquisition(null, e.Message, [], watch.ElapsedMilliseconds);
+        }
+    }
+
+    /// <summary>
+    /// 按**调用方给定的依据**准备一次修复方案。
+    ///
+    /// <para>它不再自己读磁盘或联网 —— 那一步是 <see cref="AcquireCatalogAsync"/>，由调用方决定何时做、
+    /// 做完怎么处理。所以"点了会怎样"完全由传入的 <see cref="RepairRequest"/> 决定：
+    /// <see cref="CurrentTreeHeuristicRequest"/> 只用当前章节树，<see cref="ReferenceRepairRequest"/>
+    /// 只用给定的那份目录。</para>
+    ///
+    /// <para><paramref name="acquisition"/> 只用来把取目录阶段的事实（失败原因、耗时、各源计时）
+    /// 带进判词，**不参与"用哪个依据"的决定** —— 那个决定在 <paramref name="request"/> 里。</para>
+    /// </summary>
+    public static async Task<AutoRepairOutcome> RepairAsync(
+        string path, RepairRequest request, CancellationToken token = default,
+        IProgress<string>? progress = null, ChapterTreeDocument? currentDocument = null,
+        CatalogAcquisition? acquisition = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var document = currentDocument
+            ?? await ChapterTreeDocument.LoadAsync(path, cancellationToken: token).ConfigureAwait(false);
+        var catalog = request is ReferenceRepairRequest withCatalog ? withCatalog.Catalog : null;
         progress?.Report("正在核对章节、分配正文并检查行完整性…");
-        var outcome = await Task.Run(() => Prepare(document,reference,error,token,catalogMs),token).ConfigureAwait(false);
-        return outcome with { Catalog = reference, CatalogTimings = timings };
+        var outcome = await Task.Run(
+            () => Prepare(document, catalog, acquisition?.Error, token, acquisition?.ElapsedMs ?? 0),
+            token).ConfigureAwait(false);
+        return outcome with { Catalog = catalog, CatalogTimings = acquisition?.Timings ?? [] };
     }
 
     /// <summary>Set only while a repair pass is running, so <see cref="Prepare"/> can report its own cost.</summary>

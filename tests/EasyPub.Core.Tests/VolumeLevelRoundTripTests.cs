@@ -42,7 +42,7 @@ public class VolumeLevelRoundTripTests
         var catalog = ReferenceCatalogInput.ParseText(
             await File.ReadAllTextAsync(Path.Combine(root, "目录.txt"), Encoding.UTF8))!;
 
-        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, currentDocument: document, reference: catalog);
+        var outcome = await ChapterAutoRepair.RepairAsync(bookPath, new ReferenceRepairRequest(catalog), currentDocument: document);
         Assert.True(outcome.CatalogFound);
         Assert.NotNull(outcome.Catalog);
 
@@ -75,7 +75,7 @@ public class VolumeLevelRoundTripTests
 
         // 而经过 RepairAsync 之后同一个字段就有了。
         var viaEntryPoint = await ChapterAutoRepair.RepairAsync(
-            document.SourcePath, currentDocument: document, reference: catalog);
+            document.SourcePath, new ReferenceRepairRequest(catalog), currentDocument: document);
         Assert.NotNull(viaEntryPoint.Catalog);
     }
 }
