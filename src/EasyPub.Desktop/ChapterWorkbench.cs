@@ -110,7 +110,10 @@ public partial class ChapterEditorWindow
     {
         _context = _document is null
             ? ChapterRepairContextSnapshot.Unknown
-            : ChapterRepairContextFactory.Capture(_document, _provenance, _sourceChanged);
+            : ChapterRepairContextFactory.Capture(_document, _provenance, _sourceChanged,
+                // 用户这次亲自确认过的目录 → 「已选用」；只是磁盘上有记录 → 「已保存（未重新选择）」。
+                // 两者对主按钮的行为一样，差别只在要不要给他一个"我的动作生效了"的确认。
+                selectedCatalog: _catalogChosenThisSession ? SavedReference() : null);
         if (ContextCatalogText is null || _document is null) return;
         ContextCatalogText.Text = _context.CatalogLine;
         ContextTreeText.Text = _context.TreeLine;

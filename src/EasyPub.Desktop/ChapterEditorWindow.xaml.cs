@@ -44,6 +44,19 @@ public partial class ChapterEditorWindow : Window
     /// 同一句建议在这两种情况下必须不同。缓存的原因见 <c>RefreshContextBar</c> 的注释。</para>
     /// </summary>
     private ChapterRepairContextSnapshot _context = ChapterRepairContextSnapshot.Unknown;
+
+    /// <summary>
+    /// 本次工作台会话里，用户**亲自确认过**一份目录（在目录面板里按了「记住这份目录」或
+    /// 「预览章节调整…」）。
+    ///
+    /// <para>它区分「已选用」与「已保存（未重新选择）」：前者要给用户一个"我的动作生效了"的确认，
+    /// 后者只是上次留下的记录。两者对主按钮的行为完全一样。</para>
+    ///
+    /// <para><b>没有它，<see cref="CatalogAvailability.Selected"/> 在产品路径上永远走不到</b> ——
+    /// 快照每次都从磁盘读，把"这次是我选的"这个信息丢掉了。而 §7.2 第 4 步那个中间态
+    /// （"目录已就位，但树还没被它校验过"）正是靠这个状态才说得出来。</para>
+    /// </summary>
+    private bool _catalogChosenThisSession;
     private int _nextSuggestionIndex;
     private string _numericPattern = NumericHeadingRule.DefaultPattern;
     public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();

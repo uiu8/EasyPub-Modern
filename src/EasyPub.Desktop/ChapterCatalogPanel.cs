@@ -147,6 +147,9 @@ public partial class ChapterEditorWindow
             if (exact is not null && catalogText.Text != string.Join(Environment.NewLine, exact.Nodes.Select(n => n.Title))) exact = null;
             ReferenceCatalogInput.Save(_document.SourceSha256,
                 new CatalogPreferences(query.Text, url.Text, catalogText.Text, minimumLines) { Catalog = exact });
+            // 用户确认了这份目录 —— 工作台要能说出「已选用」而不是「已保存（未重新选择）」。
+            // 这就是 §7.2 第 4 步那个中间态：目录已就位，而树还没被它校验过。
+            _catalogChosenThisSession = true;
             InvalidateBreakpoints();
             ScheduleBreakpoints();
         }
