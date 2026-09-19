@@ -13,10 +13,10 @@ public sealed class BookAnalysisCoordinatorTests
         try
         {
             await File.WriteAllTextAsync(path, "第一章 开始\n正文\n更新不易，请书友分享，速读谷 www.sudugu.org，无错最新章节\n正文");
-            var result = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"))]);
+            var result = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"), Options: new ConversionOptions())]);
             Assert.Contains(result.Report.Issues, issue => issue.Code == "site_notices" && issue.LineNumber == 3);
             Assert.Equal(BookReadiness.NeedsReview, result.Books[0].Readiness.State);
-            var enabled = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"))
+            var enabled = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.Combine(root, "book.epub"), Options: new ConversionOptions())
             {
                 Options = ConversionOptions.LegacyDefault with { TextCleanup = new TextCleanupOptions { RemoveSiteNotices = true } }
             }]);
@@ -26,7 +26,7 @@ public sealed class BookAnalysisCoordinatorTests
             var realBook = Environment.GetEnvironmentVariable("EASYPUB_AD_REGRESSION_BOOK");
             if (!string.IsNullOrWhiteSpace(realBook))
             {
-                var actual = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(realBook, Path.Combine(root, "actual.epub"))]);
+                var actual = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(realBook, Path.Combine(root, "actual.epub"), Options: new ConversionOptions())]);
                 Assert.Contains(actual.Report.Issues, issue => issue.Code == "site_notices");
                 var preview = TextCleanupPipeline.Apply(await TextCleanupPipeline.ReadFileAsync(realBook, TextEncodingMode.Auto), new TextCleanupOptions { RemoveSiteNotices = true });
                 Assert.Contains(preview.Changes, change => change.LineNumber == 27073);
@@ -62,8 +62,8 @@ public sealed class BookAnalysisCoordinatorTests
         var secondPath = Path.Combine(root, "second.txt");
         await File.WriteAllTextAsync(firstPath, "第一章 雨夜\n正文\n第二章 天明\n正文");
         await File.WriteAllTextAsync(secondPath, "第一章 开始\n正文");
-        var first = new ConversionRequest(firstPath, Path.Combine(root, "first.epub"));
-        var second = new ConversionRequest(secondPath, Path.Combine(root, "second.epub"));
+        var first = new ConversionRequest(firstPath, Path.Combine(root, "first.epub"), Options: new ConversionOptions());
+        var second = new ConversionRequest(secondPath, Path.Combine(root, "second.epub"), Options: new ConversionOptions());
         var coordinator = new BookAnalysisCoordinator();
 
         try

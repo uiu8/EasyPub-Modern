@@ -19,6 +19,10 @@ internal static class LegacyMobiWriter
         if (!string.Equals(inputExtension, ".epub", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("MOBI 输入目前支持 TXT 和 EPUB 文件。");
 
+        // 兼容出口：这两个 Writer 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，
+        // 不是"用旧正则"。调用方没给选项时按 v1.50 语义走是它们的既有契约。
+        // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
+        //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
         return options.Mobi.EpubInputMode == EpubInputMode.PreserveOriginal
             ? await WritePreservedEpubAsync(request, cancellationToken, progress).ConfigureAwait(false)
@@ -32,6 +36,10 @@ internal static class LegacyMobiWriter
     {
         progress?.Report(new ConversionProgress(request.InputPath, 0.02, "正在读取 EPUB 目录与正文"));
         using var imported = await EpubCompatibilityImporter.ImportAsync(request.InputPath, cancellationToken).ConfigureAwait(false);
+        // 兼容出口：这两个 Writer 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，
+        // 不是"用旧正则"。调用方没给选项时按 v1.50 语义走是它们的既有契约。
+        // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
+        //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
         var importedMetadata = imported.Metadata;
         var configuredMetadata = options.Metadata;
@@ -75,6 +83,10 @@ internal static class LegacyMobiWriter
             throw new InvalidDataException("该 EPUB 含 DRM 或不支持的加密资源，无法转换。");
         var outputPath = Path.GetFullPath(request.OutputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        // 兼容出口：这两个 Writer 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，
+        // 不是"用旧正则"。调用方没给选项时按 v1.50 语义走是它们的既有契约。
+        // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
+        //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
         var kindleGenPath = KindleGenLocator.Resolve(options.Mobi.KindleGenPath);
         var workingDirectory = Path.Combine(Path.GetDirectoryName(outputPath)!, ".easypub-modern-" + Guid.NewGuid().ToString("N"));
@@ -109,6 +121,10 @@ internal static class LegacyMobiWriter
         var outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
 
+        // 兼容出口：这两个 Writer 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，
+        // 不是"用旧正则"。调用方没给选项时按 v1.50 语义走是它们的既有契约。
+        // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
+        //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
         var kindleGenPath = KindleGenLocator.Resolve(options.Mobi.KindleGenPath);
         var stem = Path.GetFileNameWithoutExtension(outputPath);

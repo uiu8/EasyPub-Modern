@@ -11,7 +11,7 @@ public sealed class ConversionPreflightCacheTests
         Directory.CreateDirectory(root);
         var input = Path.Combine(root, "book.txt");
         await File.WriteAllTextAsync(input, "第一章 雨夜\n正文");
-        var request = new ConversionRequest(input, Path.Combine(root, "book.epub"));
+        var request = new ConversionRequest(input, Path.Combine(root, "book.epub"), Options: new ConversionOptions());
         var cache = new ConversionPreflightCache();
 
         try

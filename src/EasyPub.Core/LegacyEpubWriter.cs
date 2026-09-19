@@ -27,6 +27,10 @@ internal static class LegacyEpubWriter
             ? Path.GetFileNameWithoutExtension(inputPath)
             : request.Title.Trim();
         var author = request.Author?.Trim() ?? string.Empty;
+        // 兼容出口：这两个 Writer 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，
+        // 不是"用旧正则"。调用方没给选项时按 v1.50 语义走是它们的既有契约。
+        // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
+        //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
         ValidateOptions(options);
         var metadata = options.Metadata;

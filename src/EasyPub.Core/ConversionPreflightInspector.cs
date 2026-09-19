@@ -149,7 +149,7 @@ public sealed class ConversionPreflightInspector
                     return;
                 }
 
-                var options = request.Options ?? ConversionOptions.LegacyDefault;
+                var options = request.RequiredOptions;
                 int? inputLineCount = null;
                 var inputExtension = Path.GetExtension(request.InputPath);
                 if (string.Equals(inputExtension, ".epub", StringComparison.OrdinalIgnoreCase))

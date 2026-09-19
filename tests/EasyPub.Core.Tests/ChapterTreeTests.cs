@@ -96,7 +96,7 @@ public sealed class ChapterTreeTests
         await File.WriteAllTextAsync(path, "第一章 开始\n正文\n第二章 继续\n正文");
         try
         {
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output));
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output, Options: new ConversionOptions()));
 
             using var archive = ZipFile.OpenRead(output);
             Assert.Null(archive.GetEntry("OEBPS/book-toc.html"));

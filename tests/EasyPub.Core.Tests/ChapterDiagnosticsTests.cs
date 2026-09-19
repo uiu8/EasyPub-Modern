@@ -70,7 +70,7 @@ public sealed class ChapterDiagnosticsTests
             Assert.All(issues, i => Assert.Equal(PreflightSeverity.Warning, i.Severity));
             Assert.Equal(source, await File.ReadAllTextAsync(path));
             Assert.DoesNotContain(ChapterDiagnostics.Inspect(document, detectUnrecognized: false), i => i.Code == "chapter_unrecognized");
-            var report = await new ConversionPreflightInspector().InspectAsync([new(path, Path.ChangeExtension(path, ".epub")) { AutomaticChecks = new() { Targets = [], Cleanup = new() } }]);
+            var report = await new ConversionPreflightInspector().InspectAsync([new(path, Path.ChangeExtension(path, ".epub")) { AutomaticChecks = new() { Targets = [], Cleanup = new() }, Options = new ConversionOptions() }]);
             Assert.DoesNotContain(report.Issues, i => i.Target == PreflightTargetKind.Chapters);
         }
         finally { File.Delete(path); }

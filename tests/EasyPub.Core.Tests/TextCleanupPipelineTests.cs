@@ -183,7 +183,7 @@ public sealed class TextCleanupPipelineTests
         await File.WriteAllTextAsync(input, original);
         try
         {
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(input, output)
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(input, output, Options: new ConversionOptions())
             {
                 Options = new ConversionOptions
                 {

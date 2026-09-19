@@ -18,7 +18,7 @@ public sealed class EpubToMobiTests
         var kindleGen = Path.Combine(root, "work", "easypub-compat", "legacy-capture", "bin", "kindlegen_v2.9.exe");
         try
         {
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(input, epub, "EPUB 输入测试", "Codex"));
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(input, epub, "EPUB 输入测试", "Codex", Options: new ConversionOptions()));
             var originalHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(epub)));
             var options = ConversionOptions.LegacyDefault with
             {
@@ -46,7 +46,7 @@ public sealed class EpubToMobiTests
         try
         {
             await Assert.ThrowsAnyAsync<Exception>(() => new EasyPubConverter().ConvertAsync(
-                new ConversionRequest(path, Path.ChangeExtension(path, ".copy.epub"))));
+                new ConversionRequest(path, Path.ChangeExtension(path, ".copy.epub"), Options: new ConversionOptions())));
         }
         finally
         {

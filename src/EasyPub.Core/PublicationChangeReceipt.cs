@@ -14,7 +14,7 @@ internal sealed class PublicationChangeReceipt
 
     public static PublicationChangeReceipt? Prepare(ConversionRequest request, byte[] bytes, TextCleanupPreview cleanup)
     {
-        var options = request.Options ?? ConversionOptions.LegacyDefault;
+        var options = request.RequiredOptions;
         if (request.ChapterTree is null && !cleanup.Changes.Any(c => c.IsApplied)) return null;
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
         if (request.ChapterTree is { } plan && !string.Equals(plan.SourceSha256, hash, StringComparison.OrdinalIgnoreCase))

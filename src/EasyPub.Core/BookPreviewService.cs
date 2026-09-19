@@ -48,14 +48,14 @@ public sealed class BookPreviewService
             var oebps = Path.Combine(extractedPath, "OEBPS");
             var chapters = await LegacyTextParser.ParseAsync(
                 request.InputPath,
-                request.Options ?? ConversionOptions.LegacyDefault,
+                request.RequiredOptions,
                 request.ChapterTree,
                 cancellationToken).ConfigureAwait(false);
             var items = new List<BookPreviewItem>
             {
                 new("封面", Path.Combine(oebps, "cover.html"), false),
             };
-            if ((request.Options ?? ConversionOptions.LegacyDefault).TocHierarchy.IncludeHtmlTocPage)
+            if ((request.RequiredOptions).TocHierarchy.IncludeHtmlTocPage)
                 items.Add(new BookPreviewItem("目录", Path.Combine(oebps, "book-toc.html"), false));
             items.AddRange(chapters.Select((chapter, index) =>
                 new BookPreviewItem(chapter.Title, Path.Combine(oebps, $"chapter{index}.html"), true)));

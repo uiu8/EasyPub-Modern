@@ -44,7 +44,7 @@ public sealed class QualitySafetyTests
         await File.WriteAllTextAsync(path, "第一章 开始\n甲段\n第二章 后续\n乙段独有末尾");
         try
         {
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output));
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output, Options: new ConversionOptions()));
             EpubInspectionService.ValidateCompatibleReflow(output);
             using (var archive = ZipFile.Open(output, ZipArchiveMode.Update))
             {
@@ -84,7 +84,7 @@ public sealed class QualitySafetyTests
     [Fact]
     public void Structurally_invalid_artifact_is_not_counted_as_success()
     {
-        var request = new ConversionRequest("in.txt", "out.epub");
+        var request = new ConversionRequest("in.txt", "out.epub", Options: new ConversionOptions());
         var validation = new ArtifactValidationReport("out.epub", "epub",
             [new(ArtifactValidationSeverity.Error, "broken", "损坏")], DateTimeOffset.UtcNow, false);
         Assert.False(new BatchJobOutcome(request, new("in.txt", "out.epub", 1, 10, TimeSpan.Zero), null, Validation: validation).Succeeded);
@@ -121,7 +121,7 @@ public sealed class QualitySafetyTests
         await File.WriteAllTextAsync(path, "第一章 开始\n正文");
         try
         {
-            var request = new ConversionRequest(path, Path.ChangeExtension(path, ".mobi"))
+            var request = new ConversionRequest(path, Path.ChangeExtension(path, ".mobi"), Options: new ConversionOptions())
             { AutomaticChecks = new() { Targets = [], Cleanup = new() } };
             var result = await new BookAnalysisCoordinator().AnalyzeAsync([request]);
             Assert.Equal("未选择检查项", result.Books[0].Readiness.Label);
@@ -155,7 +155,7 @@ public sealed class QualitySafetyTests
         await File.WriteAllTextAsync(path, "第一章 开始\n正文");
         try
         {
-            var result = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.ChangeExtension(path, ".epub"))
+            var result = await new BookAnalysisCoordinator().AnalyzeAsync([new ConversionRequest(path, Path.ChangeExtension(path, ".epub"), Options: new ConversionOptions())
                 { AutomaticChecks = new() { Cleanup = new() { CustomRules = [new() { Pattern = "(", IsRegex = true }] } } }]);
             Assert.Contains(result.Report.Issues, issue => issue.Code == "cleanup_rule_invalid");
             Assert.DoesNotContain(result.Report.Issues, issue => issue.Code == "input_unreadable");

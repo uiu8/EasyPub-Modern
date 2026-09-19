@@ -50,7 +50,7 @@ public sealed class LegacyCompatibilityTests
         try
         {
             var requests = Enumerable.Range(1, 3)
-                .Select(index => new ConversionRequest(input, Path.Combine(directory, $"{index}.epub"), $"Book {index}"))
+                .Select(index => new ConversionRequest(input, Path.Combine(directory, $"{index}.epub"), $"Book {index}", Options: new ConversionOptions()))
                 .ToArray();
             var results = await new BatchConverter(new EasyPubConverter()).ConvertAsync(requests, maxParallelism: 2);
             Assert.Equal(
@@ -73,8 +73,8 @@ public sealed class LegacyCompatibilityTests
         var missing = Path.Combine(directory, "missing.txt");
         var requests = new[]
         {
-            new ConversionRequest(input, Path.Combine(directory, "ok.epub")),
-            new ConversionRequest(missing, Path.Combine(directory, "failed.epub")),
+            new ConversionRequest(input, Path.Combine(directory, "ok.epub"), Options: new ConversionOptions()),
+            new ConversionRequest(missing, Path.Combine(directory, "failed.epub"), Options: new ConversionOptions()),
         };
 
         try

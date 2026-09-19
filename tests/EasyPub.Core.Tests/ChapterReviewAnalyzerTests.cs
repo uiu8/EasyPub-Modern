@@ -24,7 +24,7 @@ public sealed class ChapterReviewAnalyzerTests
                 var recognized = await ChapterTreeDocument.LoadAsync(path, hierarchy: document.RecognitionOptions with
                 { RecognizeNumericHeadings = true, NumericHeadingPattern = suggestion.Pattern, NumericHeadingMinimumBodyLines = suggestion.MinimumBodyLines });
                 Assert.Equal(suggestion.Lines, recognized.Entries.Where(e => !e.IsFrontMatter).Select(e => e.TitleLineNumber!.Value));
-                var report = await new ConversionPreflightInspector().InspectAsync([new ConversionRequest(path, Path.ChangeExtension(path, ".epub"))
+                var report = await new ConversionPreflightInspector().InspectAsync([new ConversionRequest(path, Path.ChangeExtension(path, ".epub"), Options: new ConversionOptions())
                 { Options = new() { TocHierarchy = document.RecognitionOptions } }]);
                 Assert.Contains(report.Issues, i => i.Code == "numeric_chapters_suspected" && i.LineNumber == 1);
                 Assert.DoesNotContain(report.Issues, i => i.Code == "chapter_not_found");

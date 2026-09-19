@@ -474,7 +474,7 @@ RepairPlanCompiler.Compile(plan, decisions, mode)
 
 #### 两个独立的成因，必须分开看
 
-**成因一：`?? ConversionOptions.LegacyDefault`（9 处，5 个文件）**
+**成因一：`?? ConversionOptions.LegacyDefault`（9 处，5 个文件）—— ✅ P0-2 已修**
 
 ```
 ConversionPreflightInspector.cs:88      PublicationChangeReceipt.cs:17
@@ -485,6 +485,11 @@ LegacyEpubWriter.cs:30
 `Options` 为 null 时静默回退到 `ChapterPattern = HeadingSyntax.LegacyPattern`
 （2015 年的宽松正则：连「第一章回」都吃，也不排除"回头/回来/回事"）。
 **但它单独只能把 468 变成 461 —— 要得到 561 还需要第二个成因。**
+
+**现在**：分析（预检 / 预览 / 回执 / 分析协调器）四条路径改走
+`ConversionRequest.RequiredOptions`，**null 直接抛**；只有两个 `Legacy*Writer`
+兼容出口保留显式回退（它们的 "Legacy" 指**输出格式兼容 v1.50**，是既有契约）。
+实测记录见 §8.5 的 P0-2 记录。
 
 **成因二：分层识别拆开重复标题行**
 
@@ -756,7 +761,7 @@ internal static readonly Regex Numbering     = new(NumberPrefix + @"[章回节�
 | 阶段 | 做什么 | 验收 | 状态 |
 |---|---|---|---|
 | **P0-1** | **契约测试**：同一本书、同一 `Options` 下，**预检 / 章节树 / 无树转换**三条路径的章节数必须一致（矩阵：分层开/关 × 新/旧正则） | **先红**，并作为后续基线 | ✅ **已完成**（`ChapterCountContractTests.cs`，9 条：3 绿 6 红） |
-| **P0-2** | 把 9 处 `?? LegacyDefault` 收敛成一个 `Resolve(request)` 入口。分析与预检路径 `Options` 为 null 时**直接报错**；只在 `Legacy*Writer` 的兼容出口保留显式 `LegacyDefault` | 契约测试里"旧正则"那几行消失 | 未开始 |
+| **P0-2** | 把 9 处 `?? LegacyDefault` 收敛成一个 `Resolve(request)` 入口。分析与预检路径 `Options` 为 null 时**直接报错**；只在 `Legacy*Writer` 的兼容出口保留显式 `LegacyDefault` | 契约测试里"旧正则"那几行消失 | ✅ **已完成** |
 | **P0-3** | 无树转换（`LegacyTextParser`）不合并重复标题行。**2026-09-18 决定：不改行为，只让它说出来** | 差异一旦存在，转换前检查必须报出**实测**的两个数 | ✅ **已完成（"说出来"版）** |
 | **P0-4** | `Load` 的分层路径补重复行合并 —— **这是纯 bug，不涉及兼容** | 分层开时与分层关章数一致，空章仅「序」 | ✅ **已完成**（分层开/关现在都 467（现代默认）/ 460（旧正则）） |
 | **P0-5** | 升级表把 `ChapterPattern` 的旧值也纳入；**更正 v1.61.0 发布说明里那句「560 → 468」** | 旧设置机器与新装结果一致 | 未开始 |
@@ -885,6 +890,54 @@ if (request.ChapterTree is null)
 
 > **"这条测试本来就是红的"不是结论，是猜测。** 只要改动了那条路径，
 > 就先把它关掉跑一次基线。三步，两分钟，换来的是没在发布说明里写下假话。
+
+#### P0-2 实测记录（2026-09-18）
+
+**做法**：`ConversionRequest` 新增 `RequiredOptions`，null 就抛，报错里带上
+**是哪一本书**以及**怎么改成旧语义**：
+
+```csharp
+public ConversionOptions RequiredOptions =>
+    Options ?? throw new InvalidOperationException(
+        $"转换请求没有携带识别/排版选项（{nameof(ConversionRequest)}.{nameof(Options)} 为 null）：{InputPath}。"
+        + "分析、预检、预览与输出必须使用**同一份**选项 —— 静默回退到 v1.50 旧默认会让同一本书"
+        + "在不同路径上数出不同的章节数（HANDOVER §8.1）。"
+        + $"要旧语义请显式传 {nameof(ConversionOptions)}.{nameof(ConversionOptions.LegacyDefault)}。");
+```
+
+- **四条分析路径**（`ConversionPreflightInspector` / `BookPreviewService` /
+  `PublicationChangeReceipt`）改走 `RequiredOptions`。
+- **两个兼容出口**（`LegacyEpubWriter` / `LegacyMobiWriter`）保留
+  `request.Options ?? ConversionOptions.LegacyDefault`，但**加了注释说明为什么**：
+  它们的 "Legacy" 指输出格式兼容 v1.50，那是既有契约。
+
+**先探针后断言**：动之前先量了两件事 ——
+
+1. 生产代码里 **77 处** `new ConversionRequest(` **没有一处省略 Options**，
+   所以这个抛只会在程序员出错时触发，碰不到用户。
+2. 测试里有 **39 处**省略 Options（11 个文件）。逐个看了它们的**方法名**：
+   `Batch_conversion_preserves_input_order`、`Inspect_runs_once_and_reuses_the_completed_report`、
+   `Epub_input_cannot_be_written_as_epub` ……
+   **没有一条是关于识别正则的**，它们只是需要一个 request 对象。
+   所以统一补 `Options: new ConversionOptions()`（现代默认 = 真实应用传的那份），
+   而不是 `LegacyDefault` —— 后者会把"这些测试测的是旧识别"这个**假事实**固化下来。
+
+**新增契约测试** `ConversionRequestOptionsContractTests`（5 条）：
+存在则原样返回 / 缺失则抛且报错含书名与 `LegacyDefault` / 预检拒绝猜 / 分析拒绝猜 /
+显式要旧语义仍然可用。
+
+**⚠️ 这次批量改测试时我自己弄坏过 21 个文件（1964 行被删）。**
+脚本在"这个构造点已经有 Options、跳过"的分支里**忘记把跳过的原文补回去**，
+于是每个已带 Options 的构造点之前的内容全被吃掉。
+`git checkout -- tests` 还原后修好那一行重跑，并加了防线：
+**检查 `git diff --numstat` 里每个文件是否 N 增 N 删** —— 只替换不删除时必然如此，
+出现 `\d+ 0` 就是有内容被吃掉了。
+
+结果是全量 Core **841 通过 / 1 失败**（那条墙钟预算测试），
+Desktop 的 `ChapterIssueActionTests` / `ChapterBatchTests` / `WorkbenchContextBarTests` 全绿。
+
+**修完这一条，§8.1 的两个成因就都落地了**：成因一（静默换正则）现在会抛，
+成因二（重复标题行被拆）已修并可见。剩下的是 §8.3 的升级表（P0-5）。
 
 ### 8.6 其他已知缺陷（P2）
 

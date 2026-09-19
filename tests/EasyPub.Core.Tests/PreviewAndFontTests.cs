@@ -105,7 +105,7 @@ public sealed class PreviewAndFontTests
         try
         {
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-                new EasyPubConverter().ConvertAsync(new ConversionRequest(input, output), cancellation.Token));
+                new EasyPubConverter().ConvertAsync(new ConversionRequest(input, output, Options: new ConversionOptions()), cancellation.Token));
             Assert.Equal("old-output", await File.ReadAllTextAsync(output));
             Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
         }

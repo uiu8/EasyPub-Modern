@@ -10,6 +10,29 @@ public sealed record ConversionRequest(
     public ChapterTreePlan? ChapterTree { get; init; }
     public AutomaticCheckOptions? AutomaticChecks { get; init; }
     internal Action<byte[], TextCleanupPreview>? CaptureTextChanges { get; init; }
+
+    /// <summary>
+    /// 这次转换**实际使用**的识别与排版选项。没传就是**错误**，不是"用旧默认"。
+    ///
+    /// <para><b>为什么这里必须抛，而不是给个默认值。</b>原先 9 处调用点写的是
+    /// <c>request.Options ?? ConversionOptions.LegacyDefault</c> —— 一句话就把
+    /// <c>ChapterPattern</c> 换成了 2015 年的宽松正则（<c>^\s*[第卷]…</c>）。
+    /// 后果是同一本书只因为某条路径没拿到 Options，就被数出不同的章节数，
+    /// 而用户在设置里明明选的是现代默认。HANDOVER §8.1 那一族的第一个成因就是它。</para>
+    ///
+    /// <para>要 v1.50 语义的调用方请**显式**传 <see cref="ConversionOptions.LegacyDefault"/> ——
+    /// 那是"我要旧语义"的声明；而 <c>null</c> 是"我忘了传"，两者不该走同一条路。
+    /// 所以兼容出口写的是 <c>ConversionOptions.LegacyDefault</c>，不再是 <c>?? 它</c>。</para>
+    ///
+    /// <para>实测（2026-09）：生产代码里 <b>77 处</b> <c>new ConversionRequest(</c>
+    /// 没有一处省略 Options，所以这个抛只会在程序员出错时触发，碰不到用户。</para>
+    /// </summary>
+    public ConversionOptions RequiredOptions =>
+        Options ?? throw new InvalidOperationException(
+            $"转换请求没有携带识别/排版选项（{nameof(ConversionRequest)}.{nameof(Options)} 为 null）：{InputPath}。"
+            + "分析、预检、预览与输出必须使用**同一份**选项 —— 静默回退到 v1.50 旧默认会让同一本书"
+            + "在不同路径上数出不同的章节数（HANDOVER §8.1）。"
+            + $"要旧语义请显式传 {nameof(ConversionOptions)}.{nameof(ConversionOptions.LegacyDefault)}。");
 }
 
 public sealed record ConversionOptions

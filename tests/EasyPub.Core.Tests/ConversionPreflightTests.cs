@@ -16,7 +16,7 @@ public sealed class ConversionPreflightTests
             {
                 var input = Path.Combine(directory, $"book-{index:D2}.txt");
                 await File.WriteAllTextAsync(input, $"第一章 开始 {index}\n正文");
-                requests.Add(new ConversionRequest(input, Path.Combine(directory, $"book-{index:D2}.epub")));
+                requests.Add(new ConversionRequest(input, Path.Combine(directory, $"book-{index:D2}.epub"), Options: new ConversionOptions()));
             }
 
             var report = await new ConversionPreflightInspector().InspectAsync(requests);
@@ -34,7 +34,7 @@ public sealed class ConversionPreflightTests
     {
         var request = new ConversionRequest(
             Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.txt"),
-            Path.Combine(Path.GetTempPath(), "missing.epub"));
+            Path.Combine(Path.GetTempPath(), "missing.epub"), Options: new ConversionOptions());
 
         var report = await new ConversionPreflightInspector().InspectAsync([request]);
 
@@ -57,7 +57,7 @@ public sealed class ConversionPreflightTests
         try
         {
             var report = await new ConversionPreflightInspector().InspectAsync([
-                new ConversionRequest(input, output),
+                new ConversionRequest(input, output, Options: new ConversionOptions()),
             ]);
 
             var book = Assert.Single(report.Books);
@@ -215,9 +215,9 @@ public sealed class ConversionPreflightTests
         await File.WriteAllTextAsync(text, "第一章 开始\n正文");
         try
         {
-            await new EasyPubConverter().ConvertAsync(new ConversionRequest(text, epub));
+            await new EasyPubConverter().ConvertAsync(new ConversionRequest(text, epub, Options: new ConversionOptions()));
             var report = await new ConversionPreflightInspector().InspectAsync([
-                new ConversionRequest(epub, Path.Combine(directory, "复制.epub")),
+                new ConversionRequest(epub, Path.Combine(directory, "复制.epub"), Options: new ConversionOptions()),
             ]);
 
             Assert.Contains(report.Issues, issue => issue.Code == "epub_output_unsupported");

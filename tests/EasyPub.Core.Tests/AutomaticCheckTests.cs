@@ -16,7 +16,7 @@ public sealed class AutomaticCheckTests
             await File.WriteAllTextAsync(path, text);
             var custom = new TextCleanupCustomRule { Name = "测试水印", Pattern = "测试水印", Replacement = "" };
             var checks = new AutomaticCheckOptions { Targets = [], Cleanup = new TextCleanupOptions { CollapseBlankLines = true, CustomRules = [custom] } };
-            var request = new ConversionRequest(path, Path.Combine(root, "book.epub")) { AutomaticChecks = checks };
+            var request = new ConversionRequest(path, Path.Combine(root, "book.epub"), Options: new ConversionOptions()) { AutomaticChecks = checks };
             var coordinator = new BookAnalysisCoordinator();
             var first = await coordinator.AnalyzeAsync([request]);
             Assert.Contains(first.Report.Issues, issue => issue.Message.Contains("测试水印"));

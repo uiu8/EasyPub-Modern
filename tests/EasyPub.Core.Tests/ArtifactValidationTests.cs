@@ -13,7 +13,7 @@ public sealed class ArtifactValidationTests
         var input = Path.Combine(directory, "book.txt");
         var output = Path.Combine(directory, "book.epub");
         await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
-        var request = new ConversionRequest(input, output, "验收测试");
+        var request = new ConversionRequest(input, output, "验收测试", Options: new ConversionOptions());
         try
         {
             await new EasyPubConverter().ConvertAsync(request);
@@ -46,7 +46,7 @@ public sealed class ArtifactValidationTests
         try
         {
             var outcomes = await new BatchConverter(new EasyPubConverter()).ConvertWithReportAsync(
-                [new ConversionRequest(input, output)
+                [new ConversionRequest(input, output, Options: new ConversionOptions())
                 {
                     Options = new ConversionOptions
                     {
@@ -82,7 +82,7 @@ public sealed class ArtifactValidationTests
         try
         {
             var outcomes = await new BatchConverter(new EasyPubConverter()).ConvertWithReportAsync(
-                [new ConversionRequest(input, output)],
+                [new ConversionRequest(input, output, Options: new ConversionOptions())],
                 progress: new ImmediateProgress<BatchConversionProgress>(events.Add));
 
             Assert.True(outcomes[0].Succeeded);
@@ -105,7 +105,7 @@ public sealed class ArtifactValidationTests
         var input = Path.Combine(directory, "book.txt");
         var output = Path.Combine(directory, "book.epub");
         await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
-        var request = new ConversionRequest(input, output);
+        var request = new ConversionRequest(input, output, Options: new ConversionOptions());
         try
         {
             await new EasyPubConverter().ConvertAsync(request);
@@ -133,7 +133,7 @@ public sealed class ArtifactValidationTests
         var input = Path.Combine(directory, "book.txt");
         var output = Path.Combine(directory, "book.mobi");
         await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
-        var request = new ConversionRequest(input, output, "MOBI 验收测试")
+        var request = new ConversionRequest(input, output, "MOBI 验收测试", Options: new ConversionOptions())
         {
             Options = new ConversionOptions
             {
@@ -169,7 +169,7 @@ public sealed class ArtifactValidationTests
         var output = Path.Combine(directory, "book.mobi");
         await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
         WriteJpegCover(cover);
-        var request = new ConversionRequest(input, output, "MOBI 首图封面验收")
+        var request = new ConversionRequest(input, output, "MOBI 首图封面验收", Options: new ConversionOptions())
         {
             Options = new ConversionOptions
             {
@@ -205,7 +205,7 @@ public sealed class ArtifactValidationTests
         var output = Path.Combine(directory, "book.mobi");
         await File.WriteAllTextAsync(input, "第一章 开始\n正文。", System.Text.Encoding.UTF8);
         WriteJpegCover(configuredCover);
-        var conversionRequest = new ConversionRequest(input, output, "MOBI 无封面验收")
+        var conversionRequest = new ConversionRequest(input, output, "MOBI 无封面验收", Options: new ConversionOptions())
         {
             Options = new ConversionOptions
             {

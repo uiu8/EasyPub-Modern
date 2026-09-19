@@ -521,7 +521,7 @@ public class ChapterBatchTests
             var plan = document.CreatePlan(window.Roots.Select(n => n.ToEntry()).ToArray());
             try
             {
-                Task.Run(() => new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output) { ChapterTree = plan })).GetAwaiter().GetResult();
+                Task.Run(() => new EasyPubConverter().ConvertAsync(new ConversionRequest(path, output, Options: new ConversionOptions()) { ChapterTree = plan })).GetAwaiter().GetResult();
                 using var archive = System.IO.Compression.ZipFile.OpenRead(output);
                 var chapters = archive.Entries.Where(e => e.FullName.StartsWith("OEBPS/chapter") && e.FullName.EndsWith(".html"));
                 var text = string.Join("\n", chapters.Select(e => { using var reader = new StreamReader(e.Open()); return reader.ReadToEnd(); }));
