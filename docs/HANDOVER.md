@@ -1018,7 +1018,7 @@ Desktop 的 `ChapterIssueActionTests` / `ChapterBatchTests` / `WorkbenchContextB
 
 | # | 缺陷 | 位置 | 影响 |
 |---|---|---|---|
-| 1 | `sourceProblems` 被传进 `RepairCompilation` 但**全文件从未 `Add`**，永远为空 | `RepairPlanCompiler.cs:134` | ⚠️ **要先查下游有没有拿它判断"补丁可应用"** —— 有的话这道校验形同虚设 |
+| 1 | ~~`sourceProblems` 被传进 `RepairCompilation` 但全文件从未 `Add`，永远为空~~ → **已查明：不是漏掉的校验，是从未写入的提示通道** | `RepairPlanCompiler.cs:134` | ✅ **查清，非缺陷**。真正拦住不可应用补丁的是 `SourcePatchNormalizer.Normalize` 的 `validation`，它失败时走 `CanApply=false` + `Problems`（第 5 个参数）。实测全解决方案里 `SourceProblems` **只被 `Describe()` 读过**，没有任何下游拿它判断"补丁可应用"。已在代码原位写下说明，免得下一个人重复怀疑 |
 | 2 | 硬编码的个人路径 `C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe` | `LegacyMobiWriter.cs:306` | 在公开仓库里，删掉 |
 | 3 | README 自相矛盾：徽章写 v1.56.0，正文写「当前正式版本为 v1.22.0」，实际 v1.61.0 | `README.md` | 对外可见 |
 | 4 | 「原始 TXT 不变」在 Desktop 里**硬编码 21 处**，而默认落地模式是会改原文的 `EditSource` | Desktop 多处 | ⚠️ 纯树操作的多半成立，但**工作台底栏是 XAML 静态文字**，执行一次改原文修复后它仍会写「不变」。**代码层风险，未在界面验证** —— 需逐条对照落地模式审计 |

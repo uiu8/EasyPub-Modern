@@ -131,6 +131,15 @@ public static class RepairPlanCompiler
 
         // 4. The source patch, normalised against the file it will be applied to.
         SourcePatch? sourcePatch = null;
+        // ⚠️ **这个列表目前永远是空的，而这是安全的 —— 但它看起来像一道校验，容易被误判。**
+        //
+        // HANDOVER §8.6 第 1 条曾把它记成"形同虚设的校验"，那是**错的**：真正拦住不可应用补丁的是
+        // 下面 SourcePatchNormalizer 的 validation，它失败时走 CanApply=false + Problems（第 5 个参数），
+        // 与这个字段无关（实测 2026-09-18：全解决方案里 SourceProblems 只被 Describe() 读过）。
+        //
+        // 所以它是**一条从未被写入的提示通道**，不是一道漏掉的闸门。留着是因为
+        // RepairCompilation 是公开记录，删字段会改位置签名；但下次有人怀疑它之前，
+        // 先看这段：要加校验请加在 validation 那条路上，不要指望这里。
         var sourceProblems = new List<SourcePatchProblem>();
         if (input.Mode == RepairLandingMode.EditSource)
         {
