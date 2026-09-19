@@ -8,12 +8,12 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.56.0-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.61.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.56.0/EasyPubModern-Setup-v1.56.0-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.56.0/EasyPubModern-v1.56.0-reviewable-repair-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.61.1/EasyPubModern-Setup-v1.61.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.61.1/EasyPubModern-v1.61.1-true-count-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1)
 
 </div>
 
@@ -38,7 +38,7 @@
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.56.0) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -60,6 +60,16 @@
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.61.1 章节数只有一个答案
+
+- 修好分层识别把重复标题行拆成空章：开不开层级目录不再改变"这本书有多少章"（样书少掉 100 个空章）。
+- 没保存章节树时转换走 v1.50 原样识别，会与工作台数出的章数不同。**该行为保留**，
+  但现在转换前检查会报出**实测**的两个数并指向「在工作台保存章节树」——差异不再沉默。
+- 查清层级正则是第二条独立识别通道，能认出裸数字标题（「一百零一章」这类没有「第」字的）。
+- 验证：Core **836** 项通过（唯一失败是一条给 28 MB 长篇设墙钟预算的性能测试，单独跑通过），Desktop 相关 22 项通过。
+
+[完整发布说明](docs/RELEASE_v1.61.1.md)
 
 ## v1.56.0 可核对的修复与原稿保护
 
@@ -210,4 +220,7 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前正式版本为 **v1.22.0**，首页只描述当前可下载版本。
+当前正式版本为 **v1.61.1（true-count）**。首页徽章与下载链接指向的就是它。
+
+未修项与实测数据见 [维护交接](docs/HANDOVER.md) §8 —— 那里记录了每个已知缺陷的
+复现矩阵、根因和修复状态，包括**已经查错过的结论**（连同错在哪、为什么错）。

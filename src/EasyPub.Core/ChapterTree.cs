@@ -82,6 +82,18 @@ public sealed class ChapterTreeDocument
     internal IReadOnlyList<ChapterTreeSourceLine> SourceLines => _sourceLines;
     public IReadOnlyList<ChapterTreeEntry> Entries { get; }
     public TocHierarchyOptions RecognitionOptions { get; private init; } = new();
+
+    /// <summary>
+    /// 识别时跳过了多少行"连着印两遍的标题"（见 <c>SkipRepeatedHeadingRun</c>）。
+    ///
+    /// <para><b>这个数是"没保存章节树时转换会多出几个空章"的精确值</b> —— 被跳过的每一行
+    /// 都与某个标题逐字节相同，所以在无树路径（<c>LegacyTextParser</c> 逐行识别）里必然
+    /// 也被认成一个标题，各自成一个正文为空的章。</para>
+    ///
+    /// <para>转换前检查用它当**闸门**：为 0 就跳过那次昂贵的实测。它顺手就有
+    /// （<c>SkipRepeatedHeadingRun</c> 本来每个标题都要调一次），不额外扫描文件。</para>
+    /// </summary>
+    public int RepeatedHeadingLinesSkipped { get; private init; }
     public ChapterTreeSourceLine? SourceLine(int number) => number >= 1 && number <= _sourceLines.Count ? _sourceLines[number - 1] : null;
 
     /// <summary>Creates a new in-memory tree for the same TXT, preserving its source hash and recognition options.</summary>
@@ -203,6 +215,7 @@ public sealed class ChapterTreeDocument
             HeadingLevel = 2,
         });
 
+        var repeatedHeadingLinesSkipped = 0;
         for (var index = 0; index < headings.Count; index++)
         {
             var heading = headings[index];
@@ -214,6 +227,11 @@ public sealed class ChapterTreeDocument
             // chapter with the title printed a second time as its first body line. Skipping the run
             // here is what makes "one chapter" true of the ranges as well as of the entries.
             var bodyStart = SkipRepeatedHeadingRun(sourceLines, heading.LineNumber);
+            // 每一行被跳过的重复标题，就是"没保存章节树时转换会多出来的一个空章" ——
+            // 那行与标题逐字节相同，所以它在无树路径里必然也被认成一个标题。
+            // 这个数**顺手就有**，不额外扫一遍文件；转换前检查靠它决定要不要做昂贵的那次实测
+            // （见 ConversionPreflightInspector.HasRepeatedHeadingRun）。
+            repeatedHeadingLinesSkipped += bodyStart - heading.LineNumber - 1;
             entries.Add(new ChapterTreeEntry(
                 Guid.NewGuid().ToString("N"),
                 heading.Title,
@@ -232,7 +250,11 @@ public sealed class ChapterTreeDocument
         entries = NormalizeHierarchyLevels(entries).ToList();
         var plan = new ChapterTreePlan(sourceHash, entries);
         ValidatePlan(plan, sourceLines.Length);
-        return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries) { RecognitionOptions = hierarchyOptions };
+        return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries)
+        {
+            RecognitionOptions = hierarchyOptions,
+            RepeatedHeadingLinesSkipped = repeatedHeadingLinesSkipped,
+        };
     }
 
     public IReadOnlyList<ChapterTreeSourceLine> GetSourceLines(ChapterTreeEntry entry)

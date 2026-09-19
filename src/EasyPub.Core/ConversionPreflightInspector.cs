@@ -21,6 +21,26 @@ public enum PreflightTargetKind
     TextCleanup,
 }
 
+/// <summary>
+/// 便宜的**闸门**：文件里有没有"上一行和下一行完全一样"的非空行。
+///
+/// <para>重复标题行的判定就是纯文本相等（见 <c>ChapterTree.SkipRepeatedHeadingRun</c>），
+/// 所以这个扫描是"存在重复标题行"的**必要条件**：没有相邻重复行，就不可能有重复标题行，
+/// 也就不可能因为这个原因产生章数差异。</para>
+///
+/// <para><b>它存在的唯一理由是成本。</b>真正的差异测量要跑一整条无树转换路径
+/// （读文件 + 解码 + 文本清理 + 逐行识别）—— <b>实测</b>在 28 MB / 8000 章的长篇上
+/// 会把转换前检查从 400 ms 以内顶到 **545 ms**，而那种文件一行重复都没有。
+/// 2026-09 就是这么把 <c>LongTextPerformanceTests</c> 的 400 ms 预算顶穿的。</para>
+///
+/// <para>闸门只回答"**可能**有差异"；报出来的数仍然是**实测**的 ——
+/// 闸门开、测量说没差异，就不报。</para>
+///
+/// <para>⚠️ 已知范围限制：闸门只覆盖"重复标题行"这一个成因。两条识别路径在别处
+/// （候选过滤、数字标题过滤）理论上也能分出不同的章数，那种差异**不会被报出来**。
+/// 要覆盖它就必须每次都跑完整测量，代价就是上面那 145 ms。这里选择了成本，
+/// 但把限制写下来，而不是假装覆盖了全部。</para>
+/// </summary>
 public sealed record ConversionPreflightIssue(
     string? InputPath,
     PreflightSeverity Severity,
@@ -67,6 +87,33 @@ public sealed class ConversionPreflightInspector
     {
         _documentCache = documentCache ?? new ChapterTreeDocumentCache();
     }
+
+    /// <summary>
+    /// 便宜的**闸门**：这棵树在识别时到底跳过了几行"连着印两遍的标题"。
+    ///
+    /// <para>数字由 <c>ChapterTreeDocument.RepeatedHeadingLinesSkipped</c> 顺手记下
+    /// （<c>SkipRepeatedHeadingRun</c> 本来每个标题都要调一次），**不额外扫描文件**。</para>
+    ///
+    /// <para><b>为什么需要闸门。</b>真正的差异测量要跑一整条无树转换路径
+    /// （读文件 + 解码 + 文本清理 + 逐行识别）—— <b>实测</b>在 28 MB / 8000 章的长篇上
+    /// 会把转换前检查从 400 ms 以内顶到 **545 ms**。而那种文件一行重复标题都没有，
+    /// 闸门为 0，测量直接跳过。</para>
+    ///
+    /// <para>⚠️ <b>闸门的第一版是错的，记在这里免得再犯。</b>第一版扫的是"有没有相邻的
+    /// 完全相同的非空行"。那是个**没用的**条件：长篇里重复的正文行到处都是
+    /// （对话、分隔线、场景切换符），性能测试文件里 28 行正文压根就是同一句，
+    /// 于是闸门永远开着，白白多花 145 ms。**判据必须落在"标题"上，不能落在"行"上。**</para>
+    ///
+    /// <para>闸门只回答"**可能**有差异"；报出来的数仍然是**实测**的 ——
+    /// 闸门开、测量说没差异，就不报。</para>
+    ///
+    /// <para>⚠️ 已知范围限制：闸门只覆盖"重复标题行"这一个成因。两条识别路径在别处
+    /// （候选过滤、数字标题过滤）理论上也能分出不同的章数，那种差异**不会被报出来**。
+    /// 要覆盖它就必须每次都跑完整测量，代价就是上面那 145 ms。这里选择了成本，
+    /// 但把限制写下来，而不是假装覆盖了全部。</para>
+    /// </summary>
+    private static bool HasRepeatedHeadingRun(ChapterTreeDocument document) =>
+        document.RepeatedHeadingLinesSkipped > 0;
 
     public async Task<ConversionPreflightReport> InspectAsync(
         IEnumerable<ConversionRequest> requests,
@@ -272,7 +319,7 @@ public sealed class ConversionPreflightInspector
                             //
                             // 这里不推断差异，而是**实测**：用转换将要用的同一份 options、
                             // 同一条无树路径真的跑一遍。同一个入口，不可能与实际转换漂移。
-                            if (request.ChapterTree is null)
+                            if (request.ChapterTree is null && HasRepeatedHeadingRun(document))
                             {
                                 var withoutTree = await LegacyTextParser.ParseAsync(
                                     request.InputPath, options, null, token);
@@ -294,8 +341,9 @@ public sealed class ConversionPreflightInspector
                                         PreflightIssueCodes.RepeatedHeadingSplit,
                                         $"工作台识别出 {candidateCount} 章，但直接转换会产出 {withoutTreeCount} 章"
                                         + $"（多 {withoutTreeCount - candidateCount} 章，其中 {emptyBodies} 章正文是空的）。"
-                                        + "两条路径的识别规则不同：没保存章节树时走 v1.50 原样识别，且不合并连着印两遍的标题行。"
-                                        + "这是为兼容旧成品保留的行为。要按工作台那份转换，请先在工作台保存章节树。",
+                                        + "本书有标题行连着印了两遍；没保存章节树时转换走 v1.50 原样识别，不合并它们，"
+                                        + "于是第二遍各自成了一个空章。这是为兼容旧成品保留的行为。"
+                                        + "要按工作台那份转换，请先在工作台保存章节树。",
                                         PreflightTargetKind.Chapters));
                                 }
                             }
