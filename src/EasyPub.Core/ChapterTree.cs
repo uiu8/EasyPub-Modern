@@ -159,14 +159,25 @@ public sealed class ChapterTreeDocument
                     candidates.Add(line.LineNumber, new ChapterCandidate(line.LineNumber, line.Text.Trim(), line.Text.Trim(), ChapterCandidateKind.NumericTitle));
         }
         var headings = new List<(int LineNumber, string Title, int Level)>();
+        // A heading printed twice in a row is **one** chapter — see SkipRepeatedHeadingRun below,
+        // which already makes the body ranges say so. The recognition pass agrees: it does not
+        // emit a second candidate for the repeated line. But the level patterns below match it,
+        // so with layering on the second copy became a chapter of its own with no body at all.
+        //
+        // Sample book volume six prints every one of its hundred titles twice, so turning on
+        // layering alone added exactly a hundred empty chapters: 467 became 567. Skipping the
+        // run here is what makes "one chapter" true of the entries as well as of the ranges.
+        var repeatedRunEnd = 0;
         foreach (var line in sourceLines)
         {
+            if (line.LineNumber < repeatedRunEnd) continue;
             var level = MatchLevel(line.Text, levelPatterns);
             if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) continue;
             var suggested = candidates.TryGetValue(line.LineNumber, out candidate)
                 ? candidate.OriginalTitle
                 : line.Text.Trim();
             headings.Add((line.LineNumber, suggested, level == 0 ? 2 : level));
+            repeatedRunEnd = SkipRepeatedHeadingRun(sourceLines, line.LineNumber);
         }
 
         var numericLines = NumericHeadingFilter.AcceptedLines(

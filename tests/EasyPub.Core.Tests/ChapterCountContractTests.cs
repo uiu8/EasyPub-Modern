@@ -48,14 +48,14 @@ public class ChapterCountContractTests
     private const string OldLevel1 = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[卷部篇集].*";
     private const string OldLevel2 = @"^\s*第[0123456789一二三四五六七八九十零〇百千两]+[章回].*";
 
-    private static ConversionOptions Options(bool layered, bool oldPatterns) => new()
+    private static ConversionOptions Options(bool layered, bool oldChapterPattern, bool oldLevelPatterns) => new()
     {
-        ChapterPattern = oldPatterns ? HeadingSyntax.LegacyPattern : null,
+        ChapterPattern = oldChapterPattern ? HeadingSyntax.LegacyPattern : null,
         TocHierarchy = new TocHierarchyOptions
         {
             Enabled = layered,
-            Level1Pattern = oldPatterns ? OldLevel1 : TocHierarchyOptions.DefaultLevel1Pattern,
-            Level2Pattern = oldPatterns ? OldLevel2 : TocHierarchyOptions.DefaultLevel2Pattern,
+            Level1Pattern = oldLevelPatterns ? OldLevel1 : TocHierarchyOptions.DefaultLevel1Pattern,
+            Level2Pattern = oldLevelPatterns ? OldLevel2 : TocHierarchyOptions.DefaultLevel2Pattern,
         },
     };
 
@@ -89,14 +89,17 @@ public class ChapterCountContractTests
         (await LegacyTextParser.ParseAsync(path, options, null, CancellationToken.None)).Count - 1;
 
     [Theory]
-    [InlineData(false, false, "现代默认 + 分层关")]
-    [InlineData(true, false, "现代默认 + 分层开")]
-    [InlineData(false, true, "旧正则 + 分层关")]
-    [InlineData(true, true, "旧正则 + 分层开")]
-    public async Task All_three_paths_count_the_same_chapters(bool layered, bool oldPatterns, string label)
+    [InlineData(false, false, false, "现代默认 + 分层关")]
+    [InlineData(true, false, false, "现代默认 + 分层开")]
+    [InlineData(false, true, true, "旧正则 + 分层关")]
+    [InlineData(true, true, true, "旧正则 + 分层开")]
+    [InlineData(true, false, true, "现代默认 + 分层开 + 旧 Level")]
+    [InlineData(true, true, false, "旧正则 + 分层开 + 新 Level")]
+    public async Task All_three_paths_count_the_same_chapters(
+        bool layered, bool oldChapterPattern, bool oldLevelPatterns, string label)
     {
         var path = SamplePath();
-        var options = Options(layered, oldPatterns);
+        var options = Options(layered, oldChapterPattern, oldLevelPatterns);
 
         var byTree = await ByTreeAsync(path, options);
         var byPreflight = await ByPreflightAsync(path, options);
@@ -110,18 +113,66 @@ public class ChapterCountContractTests
 
     /// <summary>
     /// 同一份配置下，**有无层级目录不该改变"这本书有多少章"这个事实** ——
-    /// 它只该改变章与卷的从属关系。样书第六卷的重复标题行被分层路径拆成了 100 个空章，
-    /// 所以这条现在也是红的。
+    /// 它只该改变章与卷的从属关系。
+    ///
+    /// <para>样书第六卷每章标题印了两遍（100 章）。分层路径曾经把第二遍拆成
+    /// 一个正文为空的独立条目，于是开分层 = 关分层 + 100 个空章。
+    /// 这条现在是绿的：<c>SkipRepeatedHeadingRun</c> 也作用于条目列表了。</para>
     /// </summary>
-    [Fact]
-    public async Task Turning_on_layering_does_not_change_how_many_chapters_the_book_has()
+    [Theory]
+    [InlineData(false, "现代默认")]
+    [InlineData(true, "旧正则")]
+    public async Task Turning_on_layering_does_not_change_how_many_chapters_the_book_has(
+        bool oldChapterPattern, string label)
     {
         var path = SamplePath();
-        var flat = await ByTreeAsync(path, Options(layered: false, oldPatterns: false));
-        var layered = await ByTreeAsync(path, Options(layered: true, oldPatterns: false));
+        var flat = await ByTreeAsync(path, Options(layered: false, oldChapterPattern, oldLevelPatterns: oldChapterPattern));
+        var layered = await ByTreeAsync(path, Options(layered: true, oldChapterPattern, oldLevelPatterns: oldChapterPattern));
 
         Assert.True(flat == layered,
-            $"分层开关改变了章节数：关={flat} 开={layered}。"
+            $"[{label}] 分层开关改变了章节数：关={flat} 开={layered}。"
             + "分层只该决定卷与章的从属，不该多出章节 —— 多出来的应当是重复标题行被拆开的空章。");
+    }
+
+    /// <summary>
+    /// **Level 正则是第二条独立的识别通道** —— 它认出的标题，章节正则未必认得出。
+    ///
+    /// <para>样书第一百零一章起有 7 章印成裸数字标题「一百零一章 戊101 断后险路」，
+    /// 没有「第」字。旧 `LegacyPattern` 要求首字符必须是 第 或 卷，**结构上就匹不上**；
+    /// 旧 Level2 要求 `第…章回`，也匹不上。只有现代 `HeadingSyntax.ChapterPattern`
+    /// 能认——它的 `NumberPrefix` 里「第」是可选的（见 HeadingSyntax 第 20–23 行的注释：
+    /// "plenty of releases print 「八百三十章 赌徒」"）。</para>
+    ///
+    /// <para>所以"旧正则 + 分层开"下旧 Level 给 460、新 Level 给 467 —— **那 7 个差
+    /// 是能力，不是缺陷**。这条测试把"这 7 章存在、且只有现代 Level 正则看得见"锁下来，
+    /// 免得将来有人把它当成计数 bug 去"修平"。</para>
+    ///
+    /// <para>⚠️ 曾经这里写的是一条错误的契约：「Level 正则不该改变章节数」。
+    /// 那是把 Level 正则当成了"只决定层级"的装饰，而它实际上承担识别职责。
+    /// 契约写错时不要改实现去迁就它 —— 先查清差在哪。</para>
+    /// </summary>
+    [Fact]
+    public async Task The_modern_level_patterns_see_bare_numbered_chapters_the_legacy_pattern_cannot()
+    {
+        var path = SamplePath();
+        var oldLevels = await ChapterTreeDocument.LoadAsync(path, HeadingSyntax.LegacyPattern,
+            new TocHierarchyOptions { Enabled = true, Level1Pattern = OldLevel1, Level2Pattern = OldLevel2 });
+        var newLevels = await ChapterTreeDocument.LoadAsync(path, HeadingSyntax.LegacyPattern,
+            new TocHierarchyOptions
+            {
+                Enabled = true,
+                Level1Pattern = TocHierarchyOptions.DefaultLevel1Pattern,
+                Level2Pattern = TocHierarchyOptions.DefaultLevel2Pattern,
+            });
+
+        var oldLines = oldLevels.Entries.Where(e => e.TitleLineNumber.HasValue)
+            .Select(e => e.TitleLineNumber!.Value).ToHashSet();
+        var newOnly = newLevels.Entries.Where(e => e.TitleLineNumber.HasValue)
+            .Select(e => (Line: e.TitleLineNumber!.Value, e.Title))
+            .Where(e => !oldLines.Contains(e.Line)).ToArray();
+
+        Assert.Equal(7, newOnly.Length);
+        Assert.All(newOnly, e => Assert.DoesNotContain("第", e.Title));
+        Assert.All(newOnly, e => Assert.Matches(@"^[0-9０-９零〇一二两兩三四五六七八九十百千万萬]+章", e.Title.Trim()));
     }
 }
