@@ -1574,3 +1574,58 @@ README 说 v1.61.1，实际是 v1.61.2，读者无法据 README 核对任何东�
 | 12 | 旧文档"21 处"这个数字的口径 | **无法复现** | §8.4 第 4 条 |
 | 13 | 视觉模型转写底栏 45 字错 6 处 | 历史实测记录，**本轮未复现** | §11.2 第 4 条 |
 | 14 | 并发跑两个 `dotnet test` 产生 66 个假失败 | 历史实测记录，**本轮未复现** | §2.3 坑 3 |
+
+---
+
+### 14.1 ⚠️ 那条待查的红：`Imported_txt_is_automatically_analyzed_without_opening_the_preflight_window`
+
+**2026-09-19 的实测补记（比 §14 那条更精确，以此为准）。**
+
+**症状**（`MainWindowLayoutTests`，1 条红）：
+
+```
+Expected: "所选检查通过"
+Actual:   "必须处理 1"
+```
+
+**这条测试用的书只有两行**：`第一章 雨夜\r\n正文`（1 章、1 行正文）。
+
+**已经排除的**（可判定，不是猜）：
+
+1. **不是 P0-3 的 `repeated_heading_split`** —— 它要求 `RepeatedHeadingLinesSkipped > 0`，
+   而这棵树只有 1 个标题、没有重复行。
+2. **不是 P1-1 的 `numbering_unreadable`** —— 它要求标题数 ≥ 3（少于 3 视为证据不足）。
+3. **不是"警告"这一类** —— `必须处理 N` 出自 `MainWindow.xaml.cs:4696`
+   的 `_ when (_preflightErrorCount ?? 0) > 0`，即 **`PreflightSeverity.Error`**，
+   而上面两条都是 `Warning`。
+
+**剩下的两种可能，哪一种成立尚未确定**：
+
+- **(a) P0-2 的抛被转成了错误。** `ConversionRequest.RequiredOptions` 在 `Options` 为 null 时抛；
+  预检若把异常记成一条 Error，就会得到 `必须处理 1`。
+  **已知的反证**：Desktop 走的是 `BatchConversionRequestFactory.Create(..., options)`，
+  它**确实传了** `options`（`MainWindow.xaml.cs:3906-3926`）。
+  所以这条成立需要"某条自动分析路径绕过了那个工厂"，**未查证**。
+- **(b) 这条在我动手之前就是红的。** 有可能 —— 我从未在改动 Core **之前**跑过这个类做基线。
+  **这正是 §11 第一条忠告说的情况：我判断"是不是我造成的"时，凭的是印象不是基线。**
+
+**一条命令即可定论**（下一轮请先做这个，别先改代码）：
+
+```
+git stash list                 # 确认工作区干净（HEAD 9f50082）
+git checkout 26d6172 -- .      # 或直接 checkout 到本轮 Core 改动之前的提交
+dotnet test tests/EasyPub.Desktop.Tests --filter FullyQualifiedName~Imported_txt_is_automatically_analyzed
+```
+
+或者在测试里临时把 issue 打出来（最直接）：
+
+```csharp
+Assert.Fail(string.Join(" | ", book.PreflightIssues.Select(i => $"{i.Severity}:{i.Code}")));
+```
+
+**看 `Code` 是什么就知道了**：是 `input_unreadable` 之类 → 走 (a)；
+是别的既有码 → 走 (b)，与本次改动无关。
+
+**为什么值得单独写一节**：它是当前唯一一条没有定论的红，
+而"没定论"和"已知无关"在交接上是两件完全不同的事 —— 后者可以放着，
+前者会让下一个人以为自己弄坏了什么。
