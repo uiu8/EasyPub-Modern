@@ -65,6 +65,16 @@ public sealed record ConversionPreflightIssue(
 public static class PreflightIssueCodes
 {
     public const string RepeatedHeadingSplit = "repeated_heading_split";
+
+    /// <summary>
+    /// 识别规则认得出标题，但**一个章号都读不出来**（例如用户的正则认「第12话」，
+    /// 而写死的编号解析只认「第…章 / 回 / 节」）。
+    ///
+    /// <para>它进的是"检查项"而不是"章节树里可处理的问题"，理由同
+    /// <see cref="RepeatedHeadingSplit"/>：出口是**改识别规则或手工核对**，
+    /// 工作台里没有对应的处理动作。</para>
+    /// </summary>
+    public const string NumberingUnreadable = "numbering_unreadable";
 }
 
 public sealed record ConversionPreflightBook(
@@ -309,6 +319,29 @@ public sealed class ConversionPreflightInspector
                             if (review.TotalGroups > review.Groups.Count)
                                 issues.Add(new(request.InputPath, PreflightSeverity.Warning, "chapter_diagnostics_limit",
                                     $"共 {review.TotalGroups} 组提醒，已显示 {review.Groups.Count} 组；章节工作台可继续加载。", PreflightTargetKind.Chapters));
+
+                            // **识别规则与写死的编号解析不一致时，把"哪些检查不会工作"说出来。**
+                            //
+                            // 用户的 ChapterPattern 说了算（那是他的规则），但"标题里的编号长什么样"
+                            // 是写死的常量。两者不一致时上面那行 review 会**安静地少报几项** ——
+                            // 实测「第N话」那本：跳章提示与编号顺序检查直接消失，界面上没有任何提示。
+                            // 见 RecognitionConsistency 与 HANDOVER §8.2。
+                            if (RecognitionConsistency.Inspect(document) is { } numberingGap)
+                            {
+                                InteractionLog.Outcome("编号读不出", new
+                                {
+                                    文件 = System.IO.Path.GetFileName(request.InputPath),
+                                    标题数 = numberingGap.TitleCount,
+                                    例 = numberingGap.Example,
+                                    章正则 = options.ChapterPattern ?? "(默认)",
+                                });
+                                issues.Add(new ConversionPreflightIssue(
+                                    request.InputPath,
+                                    PreflightSeverity.Warning,
+                                    PreflightIssueCodes.NumberingUnreadable,
+                                    numberingGap.Describe(),
+                                    PreflightTargetKind.Chapters));
+                            }
 
                             // **没保存章节树时，转换走的是另一条识别路**（LegacyTextParser 逐行），
                             // 它不合并重复标题行。于是会出现"工作台说 467 章、转换产出 567 章"。

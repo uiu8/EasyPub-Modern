@@ -22,6 +22,9 @@ internal static class PreflightCta
         // （那张表是**章节树里可处理的问题**），所以不走下面的通用兜底 ——
         // 否则这里会说「处理章节」，而用户真正要做的是保存章节树。
         if (issue.Code == PreflightIssueCodes.RepeatedHeadingSplit) return "在工作台保存章节树";
+        // 编号读不出时用户要做的是**改识别规则**（或确认照旧），工作台里没有对应的处理动作，
+        // 所以也不能掉到「处理章节」那个兜底上。
+        if (issue.Code == PreflightIssueCodes.NumberingUnreadable) return "在工作台核对识别规则";
         var advice = IssueResolutionPolicy.Evaluate(issue);
         if (advice.HasChapterActions) return For(advice.Recommended);
         // 信息级的清理计划只是"看一眼确认"，与"去清理广告"不是一回事，措辞要分开。

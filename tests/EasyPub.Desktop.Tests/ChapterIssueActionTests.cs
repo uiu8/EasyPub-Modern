@@ -91,6 +91,19 @@ public class ChapterIssueActionTests
         Assert.NotEqual(ReadinessEvaluator.ActionLabel(PreflightTargetKind.Chapters), cta);
     }
 
+    /// <summary>
+    /// 识别规则能认出标题、但一个章号都读不出来时，报告窗口必须指向**核对识别规则**，
+    /// 而不是退回「处理章节」—— 工作台里没有对应的处理动作，用户要改的是规则本身。
+    /// </summary>
+    [Fact]
+    public void Unreadable_numbering_points_at_the_rule_not_at_a_generic_fallback()
+    {
+        var cta = PreflightCta.For(Issue(PreflightIssueCodes.NumberingUnreadable));
+
+        Assert.Equal("在工作台核对识别规则", cta);
+        Assert.NotEqual(ReadinessEvaluator.ActionLabel(PreflightTargetKind.Chapters), cta);
+    }
+
     [Fact]
     public void Both_surfaces_agree_on_what_the_action_is()
     {
