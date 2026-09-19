@@ -314,6 +314,16 @@ internal static class KindleGenLocator
 {
     public static string Resolve(string? configuredPath)
     {
+        // ⚠️ **下面这条是作者本机上的个人路径，不该出现在公开仓库里 —— 但它现在还不能删。**
+        //
+        // 实测（2026-09-18）：删掉它之后 4 条 MOBI 测试立刻变红 ——
+        // TocHierarchyTests / EpubToMobiTests ×2 / MobiContentPackagerTests，
+        // 它们都没传 MobiOptions.KindleGenPath，于是落到了这里。
+        // 也就是说这条路径**在作者本机上是测试套件的实际来源**。
+        //
+        // 正确的修法是让那些测试像 ArtifactValidationTests 那样显式指向
+        // work/easypub-compat/legacy-capture/bin/kindlegen_v2.9.exe（并且文件不在就跳过），
+        // 然后才能删掉这一行。**先改测试，再删路径**，不要反过来。
         var candidates = new[]
         {
             configuredPath,

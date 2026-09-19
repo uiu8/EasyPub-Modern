@@ -175,11 +175,12 @@ public partial class MainWindow : Window
         OutputDirectoryText.Text = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "EasyPub Modern");
+        // 只认安装包自带的那一份。以前这里还有一条作者机器上的硬编码路径
+        //（C:\Users\13168\Desktop\easypub\bin\...），对别人永远不存在，
+        // 却把个人路径留在了公开仓库里 —— 已删。
+        // 用户自己那份由 MOBI 选项里的「选择 kindlegen」指定，会覆盖这个默认值。
         var bundledKindleGen = Path.Combine(AppContext.BaseDirectory, "bin", "kindlegen_v2.9.exe");
-        var legacyKindleGen = @"C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe";
-        KindleGenText.Text = File.Exists(bundledKindleGen)
-            ? bundledKindleGen
-            : File.Exists(legacyKindleGen) ? legacyKindleGen : string.Empty;
+        KindleGenText.Text = File.Exists(bundledKindleGen) ? bundledKindleGen : string.Empty;
         Loaded += MainWindow_Loaded;
         Activated += MainWindow_Activated;
         Closing += MainWindow_Closing;

@@ -257,6 +257,9 @@ public sealed class LegacyCompatibilityTests
         Assert.Equal(Values(config), Values(bundledConfig));
 
         Assert.Equal(LegacyOutputFormat.Mobi, imported.OutputFormat);
+        // Load 忠实报告文件里写了什么 —— 这条原版 config.xml 原样收录，不改它
+        //（上面那行逐值比对就是"随包那份是原版文件原样"的保证）。
+        // "别人机器上的路径不该被采纳"是**导入方**的判断，见 ConversionSettingsDraft。
         Assert.Equal(@"C:\Users\13168\Desktop", imported.OutputDirectory);
         Assert.Equal(@"^\s*[第卷][0123456789一二三四五六七八九十零〇百千两]*[章回部节集卷].*", imported.Options.ChapterPattern);
         Assert.True(imported.Options.RemoveBlankLines);

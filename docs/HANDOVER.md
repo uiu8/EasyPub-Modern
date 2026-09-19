@@ -1071,9 +1071,50 @@ Desktop 的 `ChapterIssueActionTests` / `ChapterBatchTests` / `WorkbenchContextB
 | # | 缺陷 | 位置 | 影响 |
 |---|---|---|---|
 | 1 | ~~`sourceProblems` 被传进 `RepairCompilation` 但全文件从未 `Add`，永远为空~~ → **已查明：不是漏掉的校验，是从未写入的提示通道** | `RepairPlanCompiler.cs:134` | ✅ **查清，非缺陷**。真正拦住不可应用补丁的是 `SourcePatchNormalizer.Normalize` 的 `validation`，它失败时走 `CanApply=false` + `Problems`（第 5 个参数）。实测全解决方案里 `SourceProblems` **只被 `Describe()` 读过**，没有任何下游拿它判断"补丁可应用"。已在代码原位写下说明，免得下一个人重复怀疑 |
-| 2 | 硬编码的个人路径 `C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe` | `LegacyMobiWriter.cs:306` | 在公开仓库里，删掉 |
-| 3 | README 自相矛盾：徽章写 v1.56.0，正文写「当前正式版本为 v1.22.0」，实际 v1.61.0 | `README.md` | 对外可见 |
+| 2 | 硬编码的个人路径 `C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe` | `LegacyMobiWriter.cs:318`（`KindleGenLocator`） | ⏸ **部分处理，剩下的一条不能直接删 —— 见下方记录** |
+| 3 | ~~README 自相矛盾：徽章写 v1.56.0，正文写「当前正式版本为 v1.22.0」~~ | `README.md` | ✅ **v1.61.1 发布时已修**（徽章/下载链接改 v1.61.1，正文改为 v1.61.1，并指向 §8 作为未修项清单） |
 | 4 | 「原始 TXT 不变」在 Desktop 里**硬编码 21 处**，而默认落地模式是会改原文的 `EditSource` | Desktop 多处 | ⚠️ 纯树操作的多半成立，但**工作台底栏是 XAML 静态文字**，执行一次改原文修复后它仍会写「不变」。**代码层风险，未在界面验证** —— 需逐条对照落地模式审计 |
+
+#### §8.6 第 2 条：个人路径的实测记录（2026-09-18）
+
+**三条个人路径，两条已经删掉，一条不能删。**
+
+| 位置 | 处理 |
+|---|---|
+| `MainWindow.xaml.cs:179` KindleGen 默认值里的个人路径 | ✅ **已删** —— 现在只认安装包自带的 `bin\kindlegen_v2.9.exe` 那一份；用户自己那份由 MOBI 选项覆盖 |
+| `src/EasyPub.Desktop/config.xml` 的 `<outputfolder>` | ⚠️ **没改它，改的是采纳方** —— 见下 |
+| `LegacyMobiWriter.cs` `KindleGenLocator` 的候选路径 | ⏸ **不能删**，见下 |
+
+**`config.xml` 为什么不能手改。** 它是**原版文件原样**，
+`LegacyCompatibilityTests` 有一行逐值比对（`Assert.Equal(Values(capture), Values(bundled))`）
+锁着这一点 —— 那是"我们能原样读一份真的 v1.50 配置"这个兼容性承诺的凭据。
+它里面的 `<outputfolder>C:\Users\13168\Desktop</outputfolder>` 是**历史数据**，不是产品默认值。
+
+**真正的问题在采纳那一侧**：`ConversionSettingsDraft.ApplyLegacyConfig` 原来照单全收
+`import.OutputDirectory`，于是谁导入这份示例配置，**输出目录就变成原作者的桌面**。
+现在改成 `Directory.Exists(import.OutputDirectory) ? 采纳 : 保留原来的` ——
+目录在本机存在才采纳（用户导入自己那份配置的正常场景），否则忽略。
+
+> ⚠️ 这条测试的第一版写错了：拿"原作者的桌面"当反例，
+> 而**在作者本机上那个目录是存在的**，于是测试随机器而变、实测红。
+> 换成临时目录下保证不存在的随机路径，并加 `Assert.False(Directory.Exists(...))` 自证前提。
+
+**`KindleGenLocator` 那条为什么不能直接删。** 删掉之后实测 **4 条 MOBI 测试立刻变红**：
+
+```
+TocHierarchyTests.Hierarchical_toc_keeps_a_valid_joint_kindle_mobi
+EpubToMobiTests.Epub_is_converted_to_a_valid_joint_mobi ×2
+MobiContentPackagerTests.Optimized_text_conversion_produces_a_valid_joint_mobi
+```
+
+它们都没传 `MobiOptions.KindleGenPath`，于是落到了这条路径 ——
+**也就是说这条个人路径在作者本机上是测试套件的实际 kindlegen 来源。**
+
+正确的顺序是**先改测试、再删路径**：让它们像 `ArtifactValidationTests` 那样显式指向
+`work/easypub-compat/legacy-capture/bin/kindlegen_v2.9.exe`，并且文件不在就 `return`
+（那几条测试已经是这个写法）。做完那一步，这一行才能删。
+
+**代码里已经写下了这段理由**，就在那个候选数组上方 —— 免得下一个人（包括我）顺手删掉又把套件弄红。
 | 5 | 第 3 条状态测试缺覆盖（候选未确认 → 不落盘） | `ChapterCatalogPanel` | 关键路径要真实网络候选，面板没有可注入来源 |
 | 6 | Desktop 全量组合跑 flaky | 测试基建 | 见 §2.3 坑 2 |
 | 7 | 操作日志没有单元测试 | `InteractionLog` | 纯副作用设施，加抢全局状态的测试比没有更糟 |

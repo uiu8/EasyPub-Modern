@@ -53,6 +53,57 @@ public sealed class ConversionSettingsDraftTests
         Assert.Equal(@"C:\Legacy\config.xml", result.LegacyConfigPath);
     }
 
+    /// <summary>
+    /// **别人机器上的输出目录不许被采纳。**
+    ///
+    /// <para>随包那份 `config.xml` 是原版文件原样（`LegacyCompatibilityTests` 逐值比对锁着这一点），
+    /// 里面存的是原作者的桌面路径。原版文件不该为了这个被手改，所以判断放在采纳这一侧：
+    /// **目录在本机不存在就忽略**，否则用户导入一份示例配置，输出目录就变成了别人的桌面。</para>
+    ///
+    /// <para>⚠️ 路径必须**保证**不存在，不能拿"原作者的桌面"当反例 ——
+    /// 在作者本机上那个目录是存在的，测试会随机器而变（第一版就是这么写错的，实测红）。
+    /// 这里用临时目录下的一个随机名。</para>
+    /// </summary>
+    [Fact]
+    public void Legacy_import_does_not_adopt_an_output_directory_that_is_not_on_this_machine()
+    {
+        var original = ConversionSettingsDraft.CreateDefault(@"C:\Old", @"C:\Machine\kindlegen_v2.9.exe");
+        var notOnThisMachine = Path.Combine(Path.GetTempPath(), $"easypub-absent-{Guid.NewGuid():N}", "Desktop");
+        Assert.False(Directory.Exists(notOnThisMachine));
+
+        var result = original.ApplyLegacyConfig(Import(notOnThisMachine), @"C:\Machine\kindlegen_v2.9.exe");
+
+        Assert.Equal(@"C:\Old", result.OutputDirectory);
+    }
+
+    /// <summary>
+    /// 反方向：目录真的存在就采纳 —— 用户导入自己那份配置是正常用法，不能一起挡掉。
+    /// </summary>
+    [Fact]
+    public void Legacy_import_adopts_an_output_directory_that_really_exists()
+    {
+        var existing = Path.Combine(Path.GetTempPath(), $"easypub-out-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(existing);
+        try
+        {
+            var original = ConversionSettingsDraft.CreateDefault(@"C:\Old", @"C:\Machine\kindlegen_v2.9.exe");
+
+            var result = original.ApplyLegacyConfig(Import(existing), @"C:\Machine\kindlegen_v2.9.exe");
+
+            Assert.Equal(existing, result.OutputDirectory);
+        }
+        finally { Directory.Delete(existing, recursive: true); }
+    }
+
+    private static LegacyConfigImport Import(string outputDirectory) => new(
+        @"C:\Legacy\config.xml",
+        outputDirectory,
+        LegacyOutputFormat.Epub,
+        new ConversionOptions(),
+        false,
+        [],
+        []);
+
     [Fact]
     public async Task Missing_kindlegen_returns_a_real_missing_health_result()
     {

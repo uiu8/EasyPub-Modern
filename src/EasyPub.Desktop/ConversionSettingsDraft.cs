@@ -66,9 +66,18 @@ public sealed record ConversionSettingsDraft(
         };
         return this with
         {
-            OutputDirectory = string.IsNullOrWhiteSpace(import.OutputDirectory)
-                ? OutputDirectory
-                : import.OutputDirectory,
+            // **输出目录是"这台机器上的路径"，不该跟着别人的 config.xml 过来。**
+            //
+            // 随包那份 config.xml 是**原版文件原样**（`LegacyCompatibilityTests` 逐值比对锁着这一点），
+            // 里面存的是原作者的桌面路径。谁导入它，输出目录就会变成别人的桌面 —— 而原版文件
+            // 不该为了这个被手改，所以判断放在**采纳这一侧**。
+            //
+            // 判据是"这个目录在本机存不存在"：存在就采纳（用户导入自己那份配置的正常场景），
+            // 不存在或为空就保留原来的输出目录。上面对 MOBI 的处理已经是同样的思路 ——
+            // KindleGen 路径也是按机器解析的。
+            OutputDirectory = Directory.Exists(import.OutputDirectory)
+                ? import.OutputDirectory
+                : OutputDirectory,
             Profile = Profile with
             {
                 OutputFormat = import.OutputFormat == LegacyOutputFormat.Epub ? "epub" : "mobi",
