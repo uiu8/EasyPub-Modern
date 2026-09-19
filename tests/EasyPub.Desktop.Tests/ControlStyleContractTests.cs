@@ -161,13 +161,19 @@ public class ControlStyleContractTests
     public void A_type_key_falls_back_to_the_theme_but_a_string_key_does_not()
     {
         bool typeKeyResolves = false;
-        bool stringKeyResolves = true;
+        bool? stringKeyResolves = null;
         var thread = new Thread(() =>
         {
-            // 故意建**裸 Application**（不载 App.xaml）—— 复现那类测试宿主的环境。
-            if (Application.Current is null) _ = new Application();
+            // 只有**由本测试自己**建出裸 Application 时，才能断定字符串键解析不到 ——
+            // `Application.Current` 是进程级静态量，同类里另一条测试（载入真实 App 那条）
+            // 可能已经先跑过，那时 `Chip` 当然找得到，而那不是本测试要证明的事。
+            //
+            // **别把这里写成无条件断言。** 第一版就是那么写的，于是它按执行顺序偶发红 ——
+            // 而这个项目已经因为这类顺序相关的测试吃过一次亏（§11.3.0）。
+            var createdBare = Application.Current is null;
+            if (createdBare) _ = new Application();
             typeKeyResolves = Application.Current!.TryFindResource(typeof(System.Windows.Controls.Button)) is not null;
-            stringKeyResolves = Application.Current.TryFindResource("Chip") is not null;
+            if (createdBare) stringKeyResolves = Application.Current.TryFindResource("Chip") is not null;
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
@@ -175,9 +181,10 @@ public class ControlStyleContractTests
 
         Assert.True(typeKeyResolves,
             "Type 键居然解析不到 —— 说明这条兜底路径不存在，那 §11.3.0 的解释要重写。");
-        Assert.False(stringKeyResolves,
-            "裸 Application 环境里居然找到了 Chip —— 说明那些宿主真的有应用级资源，"
-            + "那么之前的测试失败另有原因，§11.3.0 的结论要重写。");
+        if (stringKeyResolves is { } resolves)
+            Assert.False(resolves,
+                "裸 Application 环境里居然找到了 Chip —— 说明那些宿主真的有应用级资源，"
+                + "那么 §11.3.0 的结论要重写。");
     }
 
     /// <summary>
