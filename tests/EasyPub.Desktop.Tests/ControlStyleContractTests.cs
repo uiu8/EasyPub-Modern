@@ -140,6 +140,47 @@ public class ControlStyleContractTests
     }
 
     /// <summary>
+    /// **解开上一个谜题**：为什么 `{x:Type Button}` 能解析，而 `Chip` 不能？
+    ///
+    /// <para>实测时（工作台开始用 <c>Style="{StaticResource Chip}"</c>）：</para>
+    /// <list type="bullet">
+    /// <item>`ChapterEditorWindow.xaml` 第 9 行 <c>BasedOn="{StaticResource {x:Type Button}}"</c> —— **能解析**；</item>
+    /// <item>第 163 行 <c>Style="{StaticResource Chip}"</c> —— **抛「无法找到名为 Chip 的资源」**。</item>
+    /// </list>
+    ///
+    /// <para>同一个窗口、同一个宿主，一个能一个不能，于是当时误以为"宿主有应用级资源"。
+    /// 其实差别在**键的类型**：WPF 在 <c>FindResource</c> 里对 <c>Type</c> 键有一条
+    /// **主题字典兜底**（拿该类型的默认样式），字符串键没有。所以
+    /// <c>{x:Type Button}</c> 在没有 App.xaml 的环境里照样解析得到，
+    /// 而任何自定义字符串键都会抛。</para>
+    ///
+    /// <para>这一条钉住那个区别。**别把它删掉** —— 它是"测试宿主到底有没有应用级资源"
+    /// 这个问题的判据，而那个问题决定界面能不能用新样式。</para>
+    /// </summary>
+    [Fact]
+    public void A_type_key_falls_back_to_the_theme_but_a_string_key_does_not()
+    {
+        bool typeKeyResolves = false;
+        bool stringKeyResolves = true;
+        var thread = new Thread(() =>
+        {
+            // 故意建**裸 Application**（不载 App.xaml）—— 复现那类测试宿主的环境。
+            if (Application.Current is null) _ = new Application();
+            typeKeyResolves = Application.Current!.TryFindResource(typeof(System.Windows.Controls.Button)) is not null;
+            stringKeyResolves = Application.Current.TryFindResource("Chip") is not null;
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.True(typeKeyResolves,
+            "Type 键居然解析不到 —— 说明这条兜底路径不存在，那 §11.3.0 的解释要重写。");
+        Assert.False(stringKeyResolves,
+            "裸 Application 环境里居然找到了 Chip —— 说明那些宿主真的有应用级资源，"
+            + "那么之前的测试失败另有原因，§11.3.0 的结论要重写。");
+    }
+
+    /// <summary>
     /// **只有一个实心主按钮样式。** 这条锁的是按钮规划的第 1 条：
     /// 每屏一个 PrimaryButton，它 = 这一屏此刻该做的事。
     /// 再冒出一个"看起来也是主按钮"的样式，就等于把推荐取消了。

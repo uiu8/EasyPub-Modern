@@ -1323,8 +1323,35 @@ XamlParseException: 无法找到名为"Chip"的资源。资源名称区分大小
 | `ChapterBatchTests` 那类宿主 | ❌ 构造窗口时**没有真实的 `App`**，所以找不到 `Chip` |
 | 仍未解释 | 同一个文件里 `BasedOn="{StaticResource {x:Type Button}}"` **却能解析** —— 说明那些宿主从**某条我还没查清的路径**拿到了部分资源。**在弄清这条路径之前不要动引导。** |
 
-**下一步就是查那一条**：`{x:Type Button}` 在 `Application.Current` 为 null（或为裸
-`Application`）时从哪里解析出来。查清了，引导才能安全地收成一个入口。
+#### ✅ 谜题解开：Type 键有主题字典兜底，字符串键没有（2026-09-19）
+
+那条"仍未解释"已经查清了，**而且它推翻了上一格里的猜测**：
+
+> **那些宿主的确没有应用级资源。** 我一度以为"既然 `{x:Type Button}` 能解析，
+> 说明宿主有 App.xaml 资源，那 §11.3.0 的定性要重写" —— **那是过度更正。**
+
+真正的差别在**键的类型**：WPF 在 `FindResource` 里对 `Type` 键有一条**主题字典兜底**
+（取该类型的默认样式），字符串键没有。所以：
+
+- `BasedOn="{StaticResource {x:Type Button}}"` 在**没有 App.xaml** 的环境里照样解析得到；
+- 任何自定义字符串键（`Chip`、`ToolButton`…）在那里都会抛。
+
+证据是 `ControlStyleContractTests.A_type_key_falls_back_to_the_theme_but_a_string_key_does_not`：
+故意建**裸 `Application`**（不载 App.xaml）复现那类宿主，然后
+`TryFindResource(typeof(Button))` 非空、`TryFindResource("Chip")` 为 null —— 两条都断言住了。
+
+**这条测试是判据，别删。** 它把"宿主到底有没有应用级资源"从猜测变成了可执行事实，
+而那个问题决定界面能不能用新样式。
+
+**于是修法明确了**（也是上一轮"25 条变红"的真实解释）：
+上一轮我**同时**改了两件事 —— 引导换成真实 `App`，**加上**工作台开始用
+`StaticResource Chip`。红掉的 25 条里，至少 `ChapterBatchTests` 那 21 条是**后者**造成的
+（报错就是"无法找到 Chip"）。**引导那一半从来没有被单独验证过。**
+
+所以下一步要**分开做、按顺序做**：
+
+1. **只**改引导（所有窗口测试宿主统一建真实 `App`），**XAML 一行不动** —— 先证明这一半是安全的；
+2. 绿了之后，再让工作台用 `Controls.xaml` 的样式。
 
 **在 1–3 做完之前，界面轨道不要用新的 `StaticResource` 样式** ——
 要么先用 `DynamicResource`（缺键不抛，但运行时也不会报），
