@@ -213,12 +213,13 @@ public sealed class ConversionPreflightInspector
                         }
                         }
                         var candidateCount = document.Entries.Count(entry => entry.TitleLineNumber.HasValue);
-                        // **这一条是为了回答"主界面看到几个条目"**。
+                        // **这一条是为了让"用户看到的章数"与"Core 认到的章数"能对账**。
                         //
-                        // 走查时主界面显示「已识别 560 项」，而 Core 加载同一份文件得到
-                        // Entries.Count = 468 —— 有标题行号的条目不可能多于全部条目，
-                        // 所以那两个数不可能来自同一个 document。把两者都记下来，
-                        // 下一次导入就能看出是哪一边、差在哪。
+                        // 走查时主界面显示「已识别 560 项」，一度被当成与 Core 的 468 冲突。
+                        // 实际是两个不同的识别配置：560 来自"旧正则 + 分层开"（该配置下
+                        // Entries.Count = 561，其中「序」没有标题行号，故候选 560），
+                        // 468 来自"现代默认 + 分层关"。两个数各自都自洽，
+                        // 差别全在配置与口径上 —— 这正是要先记录再判断的原因。
                         InteractionLog.Outcome("识别书稿", new
                         {
                             文件 = System.IO.Path.GetFileName(request.InputPath),
