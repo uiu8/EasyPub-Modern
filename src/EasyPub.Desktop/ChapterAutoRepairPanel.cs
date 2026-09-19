@@ -238,6 +238,7 @@ public partial class ChapterEditorWindow
             {
                 // The mode that has always existed: change the tree, leave the file alone. No transaction is
                 // created for it, and by the design's invariant none ever should be.
+                _landingModeCache = RepairLandingMode.TreeOnly;
                 var backup = store.EnsureSnapshot(snapshot, snapshotPlan);
                 var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
                 if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
@@ -249,6 +250,7 @@ public partial class ChapterEditorWindow
 
             // Writing the book: the applier compiles the decisions, takes the backup, renders beside the
             // source, freezes the manifest, replaces atomically and then moves the tree onto the new text.
+            _landingModeCache = RepairLandingMode.EditSource;
             var result = await applier.ApplyAsync(outcome, snapshot, RepairLandingMode.EditSource, chosen,
                 buildVolumeLevels: volumeLevels);
             if (!result.Changed)

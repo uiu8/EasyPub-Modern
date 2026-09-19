@@ -337,7 +337,7 @@
         </Grid>
         <DockPanel Grid.Row="4">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="14,0,0,0"><Button Content="取消" Click="Close_Click"/><Button x:Name="SaveChapterTreeButton" Content="应用并返回" Click="Save_Click" Margin="0" Padding="20,9" Background="{DynamicResource PrimaryActionBrush}" Foreground="{DynamicResource PrimaryActionTextBrush}"/></StackPanel>
-            <TextBlock x:Name="SaveStateText" Text="原始 TXT 不变 · 按章节树顺序输出" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="11"/>
+            <TextBlock x:Name="SaveStateText" Text="本次修复：只改章节树（不碰 TXT）· 已保存" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12"/>
         </DockPanel>
         <Popup x:Name="ChapterActionsPopup" PlacementTarget="{Binding ElementName=ReviewMoreButton}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
             <Border Background="{DynamicResource RaisedSurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8" MinWidth="280">

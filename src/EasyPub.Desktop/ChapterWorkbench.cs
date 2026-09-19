@@ -68,11 +68,33 @@ public partial class ChapterEditorWindow
     private string SettingsFingerprint() => JsonSerializer.Serialize(CaptureRules()) + "|" + TextEditorPath
         + "|" + string.Join(";", _confirmedGroups.Keys.Order()) + "|" + JsonSerializer.Serialize(SavedReference());
 
+    /// <summary>
+    /// 修复的落地方式。**底栏要说的是"这一次会发生什么"，不是一句固定标语。**
+    ///
+    /// <para>原来这里无条件写「原始 TXT 不变」，而默认设置下修复是会写回 TXT 的
+    /// （<see cref="RepairLandingMode.EditSource"/> 是 <c>DefaultRepairLandingMode</c> 的默认值）——
+    /// 于是**执行完一次改原文的修复，底栏仍然写着「不变」**。那不是排版问题，是界面在说假话。</para>
+    ///
+    /// <para>缓存一次，避免每次 <c>UpdateSaveState</c> 都读一遍设置文件；
+    /// 每次真的应用修复后由修复入口刷新成**实际用的那个**模式。</para>
+    /// </summary>
+    private RepairLandingMode? _landingModeCache;
+
+    private RepairLandingMode LandingMode =>
+        _landingModeCache ??= AppSettingsStore.CreateDefault().Load().DefaultRepairLandingMode;
+
     private void UpdateSaveState()
     {
         if (_document is null || SaveStateText is null || _initialSnapshot is null) return;
-        SaveStateText.Text = _sourceChanged ? "原始 TXT 已变化 · 点原文区的「原文已变化：迁移章节树…」，无需重新打开工作台"
-            : (HasUnsavedChanges() ? "工作台修改未提交 · " : "原始 TXT 不变 · ") + "应用并返回后自动保存；未命名项目保留恢复快照";
+        // 「原始 TXT 不变」是**错的说法**，见上面 _landingModeCache 的说明。
+        // 现在说的是：这一次的落地方式 + 工作台自己的改动有没有提交。
+        var landing = LandingMode == RepairLandingMode.EditSource
+            ? "本次修复：改原文（会写回 TXT，改动前自动备份）"
+            : "本次修复：只改章节树（不碰 TXT）";
+        SaveStateText.Text = _sourceChanged
+            ? "原始 TXT 已变化 · 点原文区的「原文已变化：迁移章节树…」，无需重新打开工作台"
+            : landing + (HasUnsavedChanges() ? " · 工作台改动未提交" : " · 已保存")
+              + "；返回后自动保存，未命名项目保留恢复快照";
         UpdateRuleGuidance();
         SaveChapterTreeButton.IsEnabled = !_sourceChanged;
         // 「刷新原文」是**双重身份**的，而且两个后果相反（设计文档 §1.5、§6 情况 G）：
