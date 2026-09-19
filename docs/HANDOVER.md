@@ -1264,6 +1264,53 @@ pwsh tools/publish-atomgit.ps1 -Version 1.61.0 -Codename next-step   # 可选
    执行完一次改原文的修复，底栏仍然写着「不变」。**那不是排版问题，是界面在说假话**，
    而且说的正是"可核对"那条约束最要紧的话。见 §8.6 第 4 条。
 
+### 11.3.0 🔴 **先修这个，再动界面**：窗口测试跑在没有真实资源的环境里
+
+**这是 2026-09-19 做界面重做时炸出来的，而且它是界面轨道的前置条件。**
+
+**现象**：工作台开始用 `Style="{StaticResource Chip}"`（来自新的 `Controls.xaml`）之后，
+`ChapterBatchTests` 21 条全红、`SampleBookRepairFlowTests` 红、`MainWindowLayoutTests` 红 3 条，
+报错都是：
+
+```
+XamlParseException: 无法找到名为"Chip"的资源。资源名称区分大小写。
+```
+
+**原因**：Desktop 测试里**每个文件各有一个 STA 引导**，各写各的
+`if (Application.Current is null) _ = new Application();`。
+- `Application.Current` 是**进程级**静态量，**谁先创建就决定了整轮测试有没有应用级资源**；
+- 建裸 `new Application()` **不载 `App.xaml`**，于是合并字典（`Controls.xaml`）、
+  那批画刷、`PrimaryButton` 全都不存在；
+- 而 `DynamicResource` 缺键**不抛**，所以这个洞一直躲着 ——
+  直到某个窗口用 `StaticResource`（它会抛）才炸，并且**按执行顺序偶发**。
+
+**仓库里早有一条血泪注释**（`SampleBookBackupWindowTests.cs:101`）：
+
+> 之后所有靠 `Application.Current` 解析资源或找窗口的测试会一起倒。
+> 曾经在这里加过 `if (Application.Current is null) _ = new Application();`，
+> 整份套件从偶发 1 个失败…
+
+**已经试过并回退的修法**（记下来，别重复走）：把 `WorkbenchHarness.OnStaThread` 与
+`SampleBookRepairFlowTests` 的引导统一换成 `new App(); app.InitializeComponent();`
++ 一个"已有 Application 但不是 App 就抛"的响亮闸门。
+**结果：25 条测试变红**，因为 `ChapterBatchTests` 那类窗口**根本没有 Application**
+（`Application.Current` 为 null），而它们的窗口照样在用
+`BasedOn="{StaticResource {x:Type Button}}"` —— 说明它们能跑过是靠别的路径拿到的资源。
+**在没弄清"这些窗口到底从哪里拿到 Button 隐式样式"之前，不要动这个引导。**
+
+**正确顺序**：
+
+1. 先查清每个窗口测试各自是怎么拿到应用级资源的（`Application.Current` 为 null 时
+   `BasedOn="{StaticResource {x:Type Button}}"` 为什么没炸？）；
+2. 把引导收成**一个**入口，并让"不是 App"变成响亮失败；
+3. 补一条断言：资源字典里的键在窗口里真的解析得出来（`ControlStyleContractTests` 已有一半）；
+4. **然后**才让工作台用 `Controls.xaml` 的样式。
+
+**在 1–3 做完之前，界面轨道不要用新的 `StaticResource` 样式** ——
+要么先用 `DynamicResource`（缺键不抛，但运行时也不会报），
+要么先把基础设施修对。**别用把资源塞进 `Window.Resources` 的办法绕过去**：
+那会让同一个字典在每个窗口各载一份，而且掩盖"测试环境没有真实资源"这件事。
+
 ### 11.3.1 ⚠️ 视觉模型不能用来验收**文案**，只能用来验收**布局**
 
 实测记录（2026-09-19）。同一张真实工作台截图，同一句话：
