@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>按钮与布局规划</title>
+<style>
+  :root{
+    --page:#F1F1F2; --card:#FFF; --line:#E5E5E5; --line2:#D4D4D8;
+    --t1:#18181B; --t2:#71717A; --t3:#A1A1AA;
+    --ink:#18181B; --amber:#B45309; --amberbg:#FDF3E3; --green:#15803D;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--t1);
+       font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif}
+  .wrap{width:1250px;margin:0 auto;padding:22px 0 30px}
+  h1{font-size:21px;font-weight:700;margin:0 0 6px}
+  .lede{font-size:13.5px;color:var(--t2);line-height:1.75;margin:0 0 20px}
+  .lede b{color:var(--t1)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px}
+  h2{font-size:15.5px;font-weight:700;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  h2 .tag{font-size:11.5px;font-weight:600;color:var(--t2);background:#F4F4F5;
+          border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .sub{font-size:12.5px;color:var(--t3);margin:0 0 12px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-weight:600;color:var(--t3);font-size:11.5px;letter-spacing:.03em;
+     border-bottom:1px solid var(--line);padding:0 8px 7px 0}
+  td{border-bottom:1px solid #F1F1F2;padding:8px 8px 8px 0;vertical-align:top;line-height:1.6}
+  tr:last-child td{border-bottom:none}
+  .now{color:var(--t2)}
+  .now code{font-family:Consolas,monospace;font-size:11.5px;background:#F4F4F5;
+            border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#3F3F46}
+  .keep{color:var(--green);font-weight:600}
+  .drop{color:#9F1239;font-weight:600}
+  .merge{color:var(--amber);font-weight:600}
+  .why{color:var(--t2)}
+  .why b{color:var(--t1)}
+  /* 迷你按钮示意 */
+  .b{display:inline-block;font-size:11.5px;font-weight:600;border-radius:6px;padding:4px 10px;
+     border:1px solid transparent;white-space:nowrap}
+  .b-p{background:var(--ink);color:#fff}
+  .b-s{background:#fff;color:var(--t1);border-color:var(--line2)}
+  .b-g{background:transparent;color:var(--t2);border-color:transparent;font-weight:500}
+  .b-x{background:#F4F4F5;color:var(--t3);border-color:var(--line);text-decoration:line-through}
+  /* 布局规则 */
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .rule{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:#FAFAFA}
+  .rule .k{font-size:12.5px;font-weight:700;margin-bottom:5px}
+  .rule .v{font-size:12.5px;color:var(--t2);line-height:1.7}
+  .blocks{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+  .blk{display:flex;align-items:center;gap:10px;font-size:12.5px}
+  .blk .nm{width:112px;font-weight:600}
+  .blk .st{font-size:11px;font-weight:700;border-radius:4px;padding:2px 7px}
+  .fix{background:#EFF6F1;color:var(--green)}
+  .chg{background:var(--amberbg);color:var(--amber)}
+  .blk .d{color:var(--t2);flex:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>按钮与布局规划</h1>
+  <p class="lede">
+    风格沿用现在的：<b>近黑实心主按钮 · 白卡片 · 浅灰描边 · 琥珀色只用于警示</b>，字号沿用现有层级。
+    改的是<b>按钮的数量与层级</b>——三屏加起来 30 多个按钮，其中一大半和主行动等重，
+    所以用户必须自己判断哪个是对的。<br>
+    规则一句话：<b>每屏只留一个实心按钮；危险动作离开主行；同一个动作的多个入口合并。</b>
+  </p>
+
+  <!-- ── 主窗口 ─────────────────────────── -->
+  <div class="card">
+    <h2>主窗口 · 导入书稿 <span class="tag">现有按钮 8 个 → 4 个</span></h2>
+    <p class="sub">这屏最大的问题不是按钮多，而是<b>没有任何一句话说"下一步做什么"</b>——用户看到一张表，要自己判断。</p>
+    <table>
+      <tr><th style="width:290px">现在</th><th style="width:74px">决定</th><th style="width:330px">改后</th><th>理由</th></tr>
+      <tr>
+        <td class="now"><code>+ 添加书稿</code> <code>导入文件夹</code> <code>从收藏导入 ▾</code></td>
+        <td class="merge">合并</td>
+        <td><span class="b b-p">添加书稿 ▾</span>（含 文件 / 文件夹 / 收藏）</td>
+        <td class="why">三个入口做的是同一件事。<b>它们等重，用户就得先读三个标签再选。</b></td>
+      </tr>
+      <tr>
+        <td class="now"><code>移除所选 ▾</code> <code>更多</code></td>
+        <td class="drop">移出主行</td>
+        <td>选中行时才出现，放在列表下方 <span class="b b-g">移除所选 ▾</span></td>
+        <td class="why">删除是危险动作，<b>不该和「添加」并排等重</b>；「更多」是垃圾桶，能收就收。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>开始转换所选 1 本</code></td>
+        <td class="keep">保留</td>
+        <td><span class="b b-p">开始转换所选 1 本</span>（唯一实心）</td>
+        <td class="why">它本来就是这屏的目标动作，位置和样式都对。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>检查问题</code></td>
+        <td class="merge">改名降级</td>
+        <td><span class="b b-s">转换前检查</span></td>
+        <td class="why">名字要和侧栏第 4 步「转换与验收」对得上；「问题」这个词让人以为坏了。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>查看并处理</code>（建议处理 201）</td>
+        <td class="drop">改文案升权</td>
+        <td><span class="b b-p">处理 201 项提醒</span></td>
+        <td class="why">「查看并处理」没说处理什么。<b>把数字放进按钮，点之前就知道要面对多少事。</b></td>
+      </tr>
+      <tr>
+        <td class="now"><code>编辑章节结构</code> <code>编辑封面信息</code> <code>文本清理</code></td>
+        <td class="keep">保留降级</td>
+        <td>同位置，去掉边框改成 <span class="b b-g">编辑章节结构 ›</span></td>
+        <td class="why">它们是有边框的次按钮，看起来和「处理提醒」一样重要——实际是可选深入操作。</td>
+      </tr>
+      <tr>
+        <td class="now" style="color:#9F1239">（缺）</td>
+        <td class="keep">新增</td>
+        <td>底部状态条加一句：<b>下一步：3 本里 1 本有 201 处提醒待处理 →</b></td>
+        <td class="why"><b>这一条是这屏最重要的改动。</b>现在整屏只有状态，没有指引。</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── 章节工作台 ─────────────────────── -->
+  <div class="card">
+    <h2>章节工作台 <span class="tag">现有 17 个按钮 → 主行 2 个 + 工具行 4 个</span></h2>
+    <p class="sub">这屏是你抱怨最狠的那屏。17 个按钮里，<b>只有 1 个是主行动，其余 16 个都在和它抢注意力</b>。</p>
+    <table>
+      <tr><th style="width:290px">现在</th><th style="width:74px">决定</th><th style="width:330px">改后</th><th>理由</th></tr>
+      <tr>
+        <td class="now"><code>按目录检查并生成建议</code></td>
+        <td class="merge">留位，文案随情境</td>
+        <td><span class="b b-p">获取参考目录</span> ／ <span class="b b-p">直接修复</span> ／ <span class="b b-p">保存章节树</span> …</td>
+        <td class="why">按钮位置对，但<b>文案写死了</b>。情境不同，该做的事就不同——详见效果图那七种情境。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>选择参考目录…</code> <code>识别设置…</code> <code>撤销</code> <code>重做</code></td>
+        <td class="merge">降级</td>
+        <td>底部工具行：<span class="b b-g">撤销</span><span class="b b-g">重做</span><span class="b b-g">专项处理 ▾</span></td>
+        <td class="why">前两个是<b>一次性设置</b>（设完就不动），后两个是标准编辑动作。<b>都不该占主行。</b></td>
+      </tr>
+      <tr>
+        <td class="now"><code>忘记这份目录</code>（常驻胶囊）</td>
+        <td class="drop">收进菜单</td>
+        <td>「参考目录」行尾 <span class="b b-g">▾</span> 里</td>
+        <td class="why">它是<b>破坏性</b>的（丢掉已保存的目录），现在却常驻在最显眼处，和状态文字并排。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>重新识别章节（会替换手工调整）</code></td>
+        <td class="drop">收进菜单</td>
+        <td><span class="b b-g">专项处理 ▾ → 重新识别章节</span></td>
+        <td class="why">会<b>丢掉手工调整</b>。破坏性动作放在右栏正文里，紧挨着只读信息，很容易误点。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>上一组</code> <code>下一组 →</code> <code>继续加载</code> <code>已加载 200/331 组</code></td>
+        <td class="merge">合并</td>
+        <td><span class="b b-s">下一组 →</span> 　<b>200 / 331</b>（自动加载到底）</td>
+        <td class="why"><b>四个控件做一件事</b>：翻页。「继续加载」是分页的实现细节，不该是用户的决定。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>取消</code> <code>应用并返回</code></td>
+        <td class="keep">保留 + 加量</td>
+        <td><span class="b b-s">取消</span> <span class="b b-p">应用并返回</span>，上方加「将改动原文 <b>12</b> 行 · 新增 <b>43</b> 章」</td>
+        <td class="why">按之前定的约定：<b>可核对的量就放在提交按钮正上方。</b>现在是空的。</td>
+      </tr>
+      <tr>
+        <td class="now" style="color:#9F1239"><code>原始 TXT 不变 · 应用并返回后自动保存</code></td>
+        <td class="drop">改成真话</td>
+        <td><b>本次修复：改原文</b>（会写回 TXT，改动前自动备份）</td>
+        <td class="why">这句是<b>硬编码的</b>，而默认落地模式是 <code>EditSource</code>——<b>执行一次改原文修复后它仍写「不变」</b>。这不是排版问题，是界面在说假话。</td>
+      </tr>
+      <tr>
+        <td class="now">三行小字（参考目录 / 当前章节树 / 原文版本，12.5px）</td>
+        <td class="merge">并成一行 chip</td>
+        <td>标题条下一行：<code>识别规则 现代默认 ▾</code> <code>章节树 已保存</code> <code>原文 正常</code>，13px</td>
+        <td class="why">你原话「有目录的小字也太小了」。<b>它们该并进标题条，而不是在正文上方再占三行。</b></td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── 确认窗 ─────────────────────────── -->
+  <div class="card">
+    <h2>目录修复确认窗 <span class="tag">现有 3 个按钮 → 3 个，但补两处</span></h2>
+    <p class="sub">这屏的按钮本来就少，问题是<b>文案和它旁边的说明自相矛盾</b>。</p>
+    <table>
+      <tr><th style="width:290px">现在</th><th style="width:74px">决定</th><th style="width:330px">改后</th><th>理由</th></tr>
+      <tr>
+        <td class="now"><code>应用所选修改</code></td>
+        <td class="keep">加量</td>
+        <td><span class="b b-p">应用 16 项修改</span></td>
+        <td class="why">数字进按钮。<b>「所选」是抽象词，16 是确定的。</b></td>
+      </tr>
+      <tr>
+        <td class="now"><code>暂不应用</code></td>
+        <td class="merge">改名</td>
+        <td><span class="b b-s">返回工作台</span></td>
+        <td class="why">「暂不应用」听起来像"等等再说"，实际是<b>放弃并退出</b>——用户会以为改动还在。</td>
+      </tr>
+      <tr>
+        <td class="now"><code>只改章节树</code> / <code>同时改原文</code></td>
+        <td class="keep">保留，修矛盾</td>
+        <td>选中「同时改原文」时，说明必须写成：<b>本次 16 项里有 0 项需要改正文，所以原文不会变</b></td>
+        <td class="why">截图里选中的是「同时改原文」，而下面写「原文不会有变化」——<b>两句话看起来在打架</b>，用户不知道该信哪句。实际两句都对，是措辞没交代清楚"为什么"。</td>
+      </tr>
+      <tr>
+        <td class="now" style="color:#9F1239">（缺）</td>
+        <td class="keep">新增</td>
+        <td>按钮正上方：<b>将改动原文 0 行 · 新增 11 章 · 并回正文 5 处</b></td>
+        <td class="why">之前定下的约定，这屏还没有。<b>四个大数字在顶部，离按钮太远。</b></td>
+      </tr>
+      <tr>
+        <td class="now"><code>0 章 · 待你核对</code>（占一个大数字位）</td>
+        <td class="drop">降灰</td>
+        <td>保留但弱化，不占主数字位</td>
+        <td class="why">0 是"没有事"，<b>不该和 11 章占同样的视觉权重</b>。</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── 布局规则 ───────────────────────── -->
+  <div class="card">
+    <h2>布局规则</h2>
+    <p class="sub">三屏共用的四条约束。目的是让用户<b>不需要重新找按钮</b>。</p>
+    <div class="rules">
+      <div class="rule"><div class="k">① 每屏一个实心按钮</div>
+        <div class="v">它 = 这一屏此刻该做的事。其余一律次按钮或纯文字。<b>等重按钮等于没有推荐。</b></div></div>
+      <div class="rule"><div class="k">② 状态与动作必须相邻</div>
+        <div class="v">每个数字旁边有动词（<code>9 需要参考目录 · 获取</code>）。判断来自同一处策略，<b>不会出现"总结说本地能修、点进去却要目录"</b>。</div></div>
+      <div class="rule"><div class="k">③ 写之前给可核对的量</div>
+        <div class="v">「将改动原文 N 行 / 新增 M 章」放在提交按钮<b>正上方</b>，不在页面另一头。</div></div>
+      <div class="rule"><div class="k">④ 底栏说这一次会发生什么</div>
+        <div class="v">不写固定标语。<b>没有要写回的改动时就说"只改章节树"</b>，而不是永远写「原文不变」。</div></div>
+    </div>
+    <div class="blocks">
+      <div class="blk"><span class="nm">标题条</span><span class="st fix">常驻不动</span><span class="d">文件名 · 章数 · 识别规则来源 ▾ · 章节树状态</span></div>
+      <div class="blk"><span class="nm">主行动区</span><span class="st chg">随情境变</span><span class="d">数字 + 一句话 + 唯一实心按钮 + 一个次按钮</span></div>
+      <div class="blk"><span class="nm">三个数字</span><span class="st fix">常驻不动</span><span class="d">需要参考目录 / 本地就能修 / 需要你核对，各带动词</span></div>
+      <div class="blk"><span class="nm">正文两栏</span><span class="st fix">常驻不动</span><span class="d">左：提醒列表　右：当前选中项的详情</span></div>
+      <div class="blk"><span class="nm">底栏</span><span class="st chg">随情境变</span><span class="d">落地方式（真话）+ 将改动的量 + 取消 / 应用</span></div>
+      <div class="blk"><span class="nm">工具行</span><span class="st fix">常驻不动</span><span class="d">专项处理 ▾ · 参考目录 ▾ · 撤销 · 重做</span></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

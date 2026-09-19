@@ -1,0 +1,243 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:local="clr-namespace:EasyPub.Desktop">
+
+    <!--
+      EasyPub Ink · 具名控件与文字样式
+
+      为什么需要这个文件：设计 token（暖纸色系那批画刷）本来就在 App.xaml 里，
+      缺的是**具名样式** —— 全应用只有 PrimaryButton 一个，其余按钮都得在每个窗口里
+      自己写 setters。结果就是"每屏的次按钮长得都不太一样""同一个动作两种写法"，
+      30 多个按钮各写各的。
+
+      本文件只**新增**，不移动 App.xaml 里已有的样式 —— 19 个对话框依赖它们，
+      搬家对这次界面重做没有价值，却会让每一屏都要重新验一遍。
+
+      约定（见 docs/mockups/ui-plan.html）：
+        · 每屏只留一个 PrimaryButton（实心近黑），它 = 这一屏此刻该做的事
+        · 次级动作用默认 Button（白底描边）
+        · 第三级/工具行用 GhostButton（无边框，纯文字）
+        · 警示色只用于**真的需要人注意**的数字与边框，不做装饰
+    -->
+
+    <!-- ── 文字 ───────────────────────────────────────────── -->
+
+    <!-- 屏标题，如「章节工作台」。一个窗口只用一次。 -->
+    <Style x:Key="ScreenTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="23"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- 卡片/区块标题，如「本次处理结果」「44 处提醒」。 -->
+    <Style x:Key="CardHeading" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="15.5"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+    </Style>
+
+    <!-- 主行动标题，比 CardHeading 大、比 ScreenTitle 小。 -->
+    <Style x:Key="ActionHeading" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="17"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- 正文。13px 是这批界面里"说明文字"的基准字号。 -->
+    <Style x:Key="BodyText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="LineHeight" Value="21"/>
+    </Style>
+
+    <!-- 行标题（提醒列表那一行）。14.5px —— 走查时被抱怨过小字太小。 -->
+    <Style x:Key="RowTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14.5"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+
+    <!-- 次要说明（行下方的行号、来源等）。12.5px。 -->
+    <Style x:Key="MetaText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+
+    <!-- 大数字：主行动卡与三个数字块里那个数。 -->
+    <Style x:Key="BigNumber" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="30"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="TallyNumber" TargetType="TextBlock" BasedOn="{StaticResource BigNumber}">
+        <Setter Property="FontSize" Value="25"/>
+    </Style>
+
+    <!-- 警示色大数字：只在"这里真的有事"时用。 -->
+    <Style x:Key="TallyNumberWarning" TargetType="TextBlock" BasedOn="{StaticResource TallyNumber}">
+        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}"/>
+    </Style>
+
+    <Style x:Key="RowActionText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- ── 按钮 ───────────────────────────────────────────── -->
+
+    <!--
+      第三级：无边框纯文字（工具行、行内动作）。
+      **模板是自包含的**，不 BasedOn App.xaml 里那个隐式 Button 样式 ——
+      合并字典里的 StaticResource 看不见父字典的局部资源，BasedOn 会解析失败。
+    -->
+    <Style x:Key="GhostButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="10,7"/>
+        <Setter Property="MinHeight" Value="32"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{DynamicResource SubtleSurfaceBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="B" Property="Background" Value="{DynamicResource SelectedSurfaceBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="B" Property="Opacity" Value="0.42"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 工具行里的 GhostButton：更矮一点，一行放得下四个。 -->
+    <Style x:Key="ToolButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+        <Setter Property="Padding" Value="9,5"/>
+        <Setter Property="MinHeight" Value="28"/>
+        <Setter Property="FontSize" Value="12.5"/>
+    </Style>
+
+    <!-- ── 容器 ───────────────────────────────────────────── -->
+
+    <!-- 状态胶囊（标题条下面那行：识别规则 / 章节树 / 原文）。 -->
+    <Style x:Key="Chip" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SubtleSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="999"/>
+        <Setter Property="Padding" Value="11,4"/>
+        <Setter Property="Margin" Value="0,0,8,0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="ChipText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+    </Style>
+
+    <!-- 提醒条目的分类标签。默认中性色；只有"需要参考目录"用警示色。 -->
+    <Style x:Key="Badge" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SubtleSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="4"/>
+        <Setter Property="Padding" Value="7,2"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="MinWidth" Value="72"/>
+    </Style>
+
+    <Style x:Key="BadgeText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- 警示标签：琥珀底＋琥珀字。只给"需要参考目录"这类真的需要人介入的类别。 -->
+    <Style x:Key="BadgeWarning" TargetType="Border" BasedOn="{StaticResource Badge}">
+        <Setter Property="Background" Value="{DynamicResource WarningSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource WarningBorderBrush}"/>
+    </Style>
+
+    <Style x:Key="BadgeWarningText" TargetType="TextBlock" BasedOn="{StaticResource BadgeText}">
+        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}"/>
+    </Style>
+
+    <!-- 列表容器：外框 + 顶部条 + 行之间一条发丝线。 -->
+    <Style x:Key="Pane" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="9"/>
+        <Setter Property="ClipToBounds" Value="True"/>
+    </Style>
+
+    <Style x:Key="PaneHeader" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource RaisedSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        <Setter Property="Padding" Value="14,10"/>
+    </Style>
+
+    <!-- 行分隔（发丝线）。 -->
+    <Style x:Key="RowSeparator" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+    </Style>
+
+    <!-- 主行动卡：外框比普通卡片重一档，让它是全屏视觉焦点。 -->
+    <Style x:Key="ActionCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource StrongBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="9"/>
+        <Setter Property="Padding" Value="16,18"/>
+    </Style>
+
+    <!-- 数字块：三个数字各一个。IsWarning 由代码加 BadgeWarning 式的替换样式。 -->
+    <Style x:Key="TallyCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="9"/>
+        <Setter Property="Padding" Value="12,15"/>
+    </Style>
+
+    <Style x:Key="TallyCardWarning" TargetType="Border" BasedOn="{StaticResource TallyCard}">
+        <Setter Property="Background" Value="{DynamicResource WarningSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource WarningBorderBrush}"/>
+    </Style>
+
+    <!-- 代码/原文预览块。 -->
+    <Style x:Key="SourcePreview" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource SubtleSurfaceBrush}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Padding" Value="9,11"/>
+    </Style>
+
+</ResourceDictionary>

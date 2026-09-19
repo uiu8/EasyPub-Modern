@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>章节工作台 · 效果图</title>
+<style>
+  :root{
+    --page:#F4F4F5; --card:#FFFFFF; --line:#E4E4E7; --line2:#D4D4D8;
+    --t1:#18181B; --t2:#52525B; --t3:#8A8A93;
+    --accent:#0F6CBD; --accent-weak:#EAF2FA;
+    --amber:#B45309; --amber-weak:#FEF6E7;
+    --green:#15803D; --green-weak:#EDF7F0;
+    --slate:#475569; --slate-weak:#F1F3F6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;color:var(--t1)}
+  .win{width:1260px;margin:0 auto;background:var(--card);border:1px solid var(--line2);
+       border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  /* ── 标题条 ───────────────────────────── */
+  .titlebar{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--line)}
+  .file{font-size:16px;font-weight:600}
+  .count{font-size:16px;font-weight:600;color:var(--accent)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--t2);
+        background:var(--slate-weak);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+  .chip b{color:var(--t1);font-weight:600}
+  .spacer{flex:1}
+  .saved{font-size:13px;color:var(--green);display:flex;align-items:center;gap:6px}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+  /* ── 主行动卡 ─────────────────────────── */
+  .action{margin:18px 22px 0;border:1px solid var(--accent);background:var(--accent-weak);
+          border-radius:10px;padding:18px 20px;display:flex;gap:18px;align-items:flex-start}
+  .action .n{font-size:30px;font-weight:700;color:var(--accent);line-height:1;min-width:52px;text-align:center}
+  .action h2{margin:0 0 6px;font-size:20px;font-weight:600;line-height:1.35}
+  .action p{margin:0;font-size:14px;color:var(--t2);line-height:1.6}
+  .row{display:flex;gap:10px;margin-top:14px;align-items:center}
+  .btn{font:inherit;font-size:14px;font-weight:600;border-radius:7px;padding:9px 18px;cursor:pointer;border:1px solid transparent}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-ghost{background:transparent;color:var(--accent);border-color:var(--line2)}
+  .btn-quiet{background:transparent;color:var(--t2);border-color:transparent;font-weight:500}
+  /* ── 三个数字 ─────────────────────────── */
+  .tally{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 22px 0}
+  .t{border:1px solid var(--line);border-radius:9px;padding:13px 16px;display:flex;align-items:center;gap:12px}
+  .t .num{font-size:26px;font-weight:700;line-height:1}
+  .t .lbl{font-size:13.5px;color:var(--t2);line-height:1.45}
+  .t .go{margin-left:auto;font-size:13.5px;font-weight:600;white-space:nowrap}
+  .t.amber .num,.t.amber .go{color:var(--amber)} .t.amber{background:var(--amber-weak);border-color:#F3DFC0}
+  .t.green .num,.t.green .go{color:var(--green)} .t.green{background:var(--green-weak);border-color:#D5E9DC}
+  .t.slate .num,.t.slate .go{color:var(--slate)} .t.slate{background:var(--slate-weak)}
+  /* ── 提醒列表 ─────────────────────────── */
+  .listhead{display:flex;align-items:baseline;gap:10px;margin:22px 22px 10px}
+  .listhead h3{margin:0;font-size:15px;font-weight:600}
+  .listhead span{font-size:13px;color:var(--t3)}
+  .item{display:flex;align-items:center;gap:12px;padding:13px 22px;border-top:1px solid var(--line)}
+  .item:hover{background:#FAFAFB}
+  .badge{font-size:12.5px;font-weight:600;border-radius:5px;padding:3px 8px;white-space:nowrap}
+  .b-amber{background:var(--amber-weak);color:var(--amber)}
+  .b-green{background:var(--green-weak);color:var(--green)}
+  .b-slate{background:var(--slate-weak);color:var(--slate)}
+  .item .txt{flex:1;min-width:0}
+  .item .ti{font-size:14.5px;line-height:1.45}
+  .item .sub{font-size:13px;color:var(--t3);margin-top:3px}
+  .item .act{font-size:13.5px;font-weight:600;color:var(--accent);white-space:nowrap}
+  /* ── 底栏：说真话 ─────────────────────── */
+  .foot{margin-top:20px;border-top:1px solid var(--line);background:#FBFBFC;padding:14px 22px;
+        display:flex;align-items:center;gap:18px}
+  .mode{font-size:13.5px;line-height:1.55}
+  .mode b{color:#B45309}
+  .mode .hint{color:var(--t3);font-size:12.5px}
+  .delta{margin-left:auto;display:flex;gap:16px;align-items:center;font-size:13.5px;color:var(--t2)}
+  .delta b{color:var(--t1)}
+  /* ── 次级工具 ─────────────────────────── */
+  .tools{display:flex;gap:4px;padding:10px 22px 14px;border-top:1px solid var(--line)}
+  .tools .btn{padding:7px 12px}
+  .note{margin:12px auto 0;width:1260px;font-size:13px;color:var(--t3);line-height:1.7}
+</style>
+</head>
+<body>
+
+<div class="win">
+
+  <!-- ① 标题条：把「现在是几章」和「按哪套规则数的」并排，来源可点 -->
+  <div class="titlebar">
+    <span class="file">缺陷样书.txt</span>
+    <span class="count">468 章</span>
+    <span class="chip">识别规则 <b>现代默认</b> · 来自设置 ▾</span>
+    <span class="spacer"></span>
+    <span class="saved"><i class="dot"></i>章节树已保存</span>
+  </div>
+
+  <!-- ② 主行动：整屏只有这一个实心按钮 -->
+  <div class="action">
+    <div class="n">9</div>
+    <div style="flex:1">
+      <h2>有 9 处提醒需要参考目录才能判断</h2>
+      <p>这 9 处是「疑似漏章」和「编号对不上」。软件不会在没有依据的情况下替你补章节 ——
+         补错了就是把别人的正文搬进你的书里，所以它需要一份目录来对照。</p>
+      <div class="row">
+        <button class="btn btn-primary">获取参考目录</button>
+        <button class="btn btn-ghost">先看是哪些</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 三个数字，每个自带动词 —— 直接回答「哪类错该用哪种办法」 -->
+  <div class="tally">
+    <div class="t amber"><span class="num">9</span><span class="lbl">需要参考目录<br>才能判断</span><span class="go">获取 ›</span></div>
+    <div class="t green"><span class="num">1</span><span class="lbl">本地就能修<br>不用任何外部依据</span><span class="go">现在修 ›</span></div>
+    <div class="t slate"><span class="num">34</span><span class="lbl">需要你核对<br>软件不替你决定</span><span class="go">逐条看 ›</span></div>
+  </div>
+
+  <!-- ④ 提醒列表：每条一个动作，正文 14.5px -->
+  <div class="listhead">
+    <h3>44 处提醒</h3>
+    <span>按「要不要参考目录」排序 · 先处理前 20 条</span>
+  </div>
+
+  <div class="item">
+    <span class="badge b-amber">需要参考目录</span>
+    <span class="txt">
+      <div class="ti">第 12 章之后编号跳到第 14 章</div>
+      <div class="sub">原文第 843 行 · 中间可能漏了一章</div>
+    </span>
+    <span class="act">核对原文</span>
+  </div>
+
+  <div class="item">
+    <span class="badge b-green">本地就能修</span>
+    <span class="txt">
+      <div class="ti">标题重复：第 7 章 出现两次</div>
+      <div class="sub">原文第 512、744 行 · 两处正文不同，会保留两份内容、只合并标题</div>
+    </span>
+    <span class="act">清理重复</span>
+  </div>
+
+  <div class="item">
+    <span class="badge b-slate">需要你核对</span>
+    <span class="txt">
+      <div class="ti">同名章节的正文重复（第 9 章）</div>
+      <div class="sub">两处正文逐字相同 · 软件不会替你决定留哪一份</div>
+    </span>
+    <span class="act">对比这两份</span>
+  </div>
+
+  <!-- ⑤ 底栏：说真话的落地方式 + 可核对的量，就在按钮正上方 -->
+  <div class="foot">
+    <div class="mode">
+      本次修复：<b>改原文</b>（会写回 TXT，改动前自动备份）
+      <div class="hint">想只动章节树、不碰 TXT，去设置里改成「只改章节树」</div>
+    </div>
+    <div class="delta">
+      <span>将改动原文 <b>12</b> 行</span>
+      <span>新增 <b>43</b> 章</span>
+      <span>移除 <b>6</b> 行</span>
+      <button class="btn btn-primary">预览改动</button>
+    </div>
+  </div>
+
+  <!-- ⑥ 次级工具降级成一行 ghost -->
+  <div class="tools">
+    <button class="btn btn-quiet">专项工具 ▾</button>
+    <button class="btn btn-quiet">参考目录 ▾</button>
+    <button class="btn btn-quiet">重新识别 ▾</button>
+    <span class="spacer"></span>
+    <button class="btn btn-quiet">返回</button>
+  </div>
+
+</div>
+
+<div class="note">
+  对照现版的主要变化：① 标题条并排给出章节数与<b>识别规则来源</b>（原先只有数字）；
+  ② 整屏只剩<b>一个</b>实心按钮（原先是 6 个等重黑按钮一排）；
+  ③ 三个数字各自带动词（原先只有数字，你得自己想点哪）；
+  ④ 提醒正文 14.5px、说明 13px（原先小字是 12.5px）；
+  ⑤ 底栏不再写死「原始 TXT 不变」，而是说出当前落地方式与将改动的行数。
+</div>
+
+</body>
+</html>

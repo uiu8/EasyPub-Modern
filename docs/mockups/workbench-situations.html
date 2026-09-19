@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>章节工作台 · 七种情境</title>
+<style>
+  :root{
+    --page:#F4F4F5; --card:#FFFFFF; --line:#E4E4E7; --line2:#D4D4D8;
+    --t1:#18181B; --t2:#52525B; --t3:#8A8A93;
+    --accent:#0F6CBD; --accent-weak:#EAF2FA;
+    --amber:#B45309; --amber-weak:#FEF6E7;
+    --green:#15803D; --green-weak:#EDF7F0;
+    --slate:#475569; --slate-weak:#F1F3F6;
+    --rose:#9F1239; --rose-weak:#FDF2F4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;color:var(--t1)}
+  .wrap{width:1260px;margin:0 auto}
+  h1{font-size:18px;font-weight:600;margin:22px 0 4px}
+  .lede{font-size:13.5px;color:var(--t2);line-height:1.7;margin:0 0 18px}
+  .lede b{color:var(--t1)}
+  .case{background:var(--card);border:1px solid var(--line2);border-radius:10px;margin-bottom:12px;
+        display:grid;grid-template-columns:210px 1fr 250px;overflow:hidden}
+  .who{padding:14px 16px;border-right:1px solid var(--line);background:#FAFAFB}
+  .who .idx{font-size:12px;font-weight:700;color:var(--t3);letter-spacing:.04em}
+  .who .nm{font-size:14.5px;font-weight:600;margin-top:5px;line-height:1.4}
+  .who .src{font-size:11.5px;color:var(--t3);margin-top:8px;line-height:1.5;
+            border-top:1px dashed var(--line2);padding-top:7px}
+  .who .src code{font-family:Consolas,monospace;font-size:11px;color:var(--slate)}
+  .body{padding:14px 18px}
+  .body .head{display:flex;align-items:flex-start;gap:11px}
+  .body .n{font-size:22px;font-weight:700;line-height:1.1;min-width:34px;text-align:center}
+  .body h2{margin:0;font-size:16px;font-weight:600;line-height:1.4}
+  .body .why{margin:6px 0 0 45px;font-size:13px;color:var(--t2);line-height:1.6}
+  .body .row{display:flex;gap:9px;margin:11px 0 0 45px;align-items:center}
+  .btn{font:inherit;font-size:13.5px;font-weight:600;border-radius:7px;padding:8px 16px;
+       cursor:pointer;border:1px solid transparent}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-ghost{background:transparent;color:var(--accent);border-color:var(--line2)}
+  .btn-quiet{background:transparent;color:var(--t2);font-weight:500;padding:8px 8px}
+  .side{padding:14px 16px;border-left:1px solid var(--line);background:#FBFBFC}
+  .side .cap{font-size:11.5px;font-weight:700;color:var(--t3);letter-spacing:.04em}
+  .side .d{font-size:12.5px;color:var(--t2);line-height:1.65;margin-top:7px}
+  .side .d b{color:var(--t1)}
+  .side .warn{color:var(--amber);font-weight:600}
+  .c-amber .n{color:var(--amber)} .c-amber .head{}
+  .c-green .n{color:var(--green)}
+  .c-slate .n{color:var(--slate)}
+  .c-rose  .n{color:var(--rose)}
+  .situations{margin-top:22px}
+  .situations h1{margin-top:0}
+  .strip{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:16px 18px;margin-bottom:12px}
+  .strip .cap{font-size:13px;font-weight:600;margin-bottom:10px}
+  .fixed{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .fx{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#FAFAFB}
+  .fx .k{font-size:12px;font-weight:700;color:var(--t3)}
+  .fx .v{font-size:13px;color:var(--t2);margin-top:4px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>同一屏 · 七种情境</h1>
+  <p class="lede">
+    这是这次设计最关键的一张。<b>布局不动、位置不跳，只有「主行动卡」和「底栏」两处会变</b> ——
+    所以用户不需要重新找按钮，他只需要读那一句话。右栏是每个情境背后的<b>真实信号</b>：
+    七种里有三种是这一轮 Core 改动<strong>新造出来的能力</strong>，不是画出来的。
+  </p>
+
+  <!-- 1 -->
+  <div class="case c-green">
+    <div class="who">
+      <div class="idx">情境 01</div>
+      <div class="nm">刚打开，提醒都能本地修</div>
+      <div class="src">信号：<code>IssueResolutionPolicy.Summarize</code><br>需要参考目录 = 0</div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">1</div><h2>有 1 处提醒本地就能修，不需要参考目录</h2></div>
+      <div class="why">重复标题、编号倒序这类问题，软件凭原文自己就能判断对错 —— 不必去找目录。</div>
+      <div class="row"><button class="btn btn-primary">直接修复</button>
+        <button class="btn btn-ghost">看是哪一处</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d">本次修复：<b>改原文</b>（已备份）<br>将改动原文 <b>2</b> 行 · 新增 <b>0</b> 章</div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="case c-amber">
+    <div class="who">
+      <div class="idx">情境 02</div>
+      <div class="nm">有提醒需要参考目录</div>
+      <div class="src">信号：<code>Summarize</code><br>需要参考目录 = 9</div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">9</div><h2>有 9 处提醒需要参考目录才能判断</h2></div>
+      <div class="why">这 9 处是「疑似漏章」和「编号对不上」。补错了就是把别人的正文搬进你的书里，
+        所以它需要一份目录来对照。</div>
+      <div class="row"><button class="btn btn-primary">获取参考目录</button>
+        <button class="btn btn-ghost">先看是哪些</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d">本次修复：<b>改原文</b>（已备份）<br>将改动原文 <b>12</b> 行 · 新增 <b>43</b> 章</div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="case c-amber">
+    <div class="who">
+      <div class="idx">情境 03 <span style="color:#0F6CBD">★新</span></div>
+      <div class="nm">识别规则读不出章号</div>
+      <div class="src">信号：<code>RecognitionConsistency</code><br><code>numbering_unreadable</code></div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">468</div><h2>标题都认出来了，但一个章号都读不出来</h2></div>
+      <div class="why">你的规则认「第12话 起点」，而读编号那一步只认「第…章 / 回 / 节」。
+        识别本身没问题 —— 但<b>跳章提示、编号顺序检查不会工作</b>。</div>
+      <div class="row"><button class="btn btn-primary">核对识别规则</button>
+        <button class="btn btn-ghost">知道，继续</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d"><span class="warn">本次修复：只改章节树</span><br>原始 TXT 不动</div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="case c-slate">
+    <div class="who">
+      <div class="idx">情境 04 <span style="color:#0F6CBD">★新</span></div>
+      <div class="nm">转换章数会与工作台不一致</div>
+      <div class="src">信号：<code>PreflightIssueCodes</code><br><code>repeated_heading_split</code></div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">100</div><h2>工作台 468 章，直接转换会产出 568 章</h2></div>
+      <div class="why">本书有 100 处标题连着印了两遍。没保存章节树时转换走 v1.50 原样识别，
+        不合并它们，第二遍各自成了一个空章。</div>
+      <div class="row"><button class="btn btn-primary">保存章节树，按这份转换</button>
+        <button class="btn btn-ghost">就按原样转</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d">本次修复：<b>改原文</b>（已备份）<br>将改动原文 <b>0</b> 行 · 新增 <b>0</b> 章</div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="case c-amber">
+    <div class="who">
+      <div class="idx">情境 05 <span style="color:#0F6CBD">★新</span></div>
+      <div class="nm">识别规则是已被取代的旧默认</div>
+      <div class="src">信号：<code>UpgradeSupersededPatterns</code><br>章节正则 == 旧默认</div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">7</div><h2>当前识别规则是旧默认，会漏掉 7 个章节</h2></div>
+      <div class="why">这 7 章的标题没有「第」字（如「一百零一章 断后险路」），旧规则看不见它们 ——
+        它们会被并进上一章的正文，那是<b>正文被改写</b>，不只是目录少 7 行。</div>
+      <div class="row"><button class="btn btn-primary">改用现代识别规则</button>
+        <button class="btn btn-ghost">保持旧规则</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d">本次修复：<b>改原文</b>（已备份）<br>将改动原文 <b>0</b> 行 · 新增 <b>7</b> 章</div>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="case c-green">
+    <div class="who">
+      <div class="idx">情境 06</div>
+      <div class="nm">提醒处理完了</div>
+      <div class="src">信号：提醒数 = 0<br>章节树已保存</div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">0</div><h2>44 处提醒都已处理，可以转换了</h2></div>
+      <div class="why">转换会沿用工作台这份章节树 —— 你在这里看到的 468 章，就是成品里的 468 章。</div>
+      <div class="row"><button class="btn btn-primary">返回并转换</button>
+        <button class="btn btn-ghost">再检查一遍</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d">本次修复：<b>改原文</b>（已备份）<br>将改动原文 <b>12</b> 行 · 新增 <b>43</b> 章</div>
+    </div>
+  </div>
+
+  <!-- 7 -->
+  <div class="case c-rose">
+    <div class="who">
+      <div class="idx">情境 07</div>
+      <div class="nm">原文在程序外被改过</div>
+      <div class="src">信号：<code>ChapterRepairContextSnapshot</code><br><code>SourceChanged</code></div>
+    </div>
+    <div class="body">
+      <div class="head"><div class="n">!</div><h2>TXT 在程序外被改过，行号已经对不上了</h2></div>
+      <div class="why">基于行号的动作（定位、补建、改原文）现在都会指向错的位置。
+        这一条优先于所有提醒 —— 先把它处理掉。</div>
+      <div class="row"><button class="btn btn-primary">迁移到新原文</button>
+        <button class="btn btn-ghost">放弃本次修复</button></div>
+    </div>
+    <div class="side">
+      <div class="cap">底栏</div>
+      <div class="d"><span class="warn">已禁用</span> —— 行号失效期间<br>不允许写回 TXT</div>
+    </div>
+  </div>
+
+  <div class="situations">
+    <h1>不变的三个区块</h1>
+    <p class="lede">情境 03 里底栏显示「只改章节树」，是因为该情境下没有要写回 TXT 的改动 ——
+      底栏说的是<b>这一次实际会发生什么</b>，不是一句固定标语。<br>
+      下面三块在七种情境下位置与内容都不变，用户不需要重新找。</p>
+    <div class="strip">
+      <div class="fixed">
+        <div class="fx"><div class="k">标题条（常驻）</div><div class="v">文件名 · 章数 · 识别规则来源 ▾ · 是否已保存章节树</div></div>
+        <div class="fx"><div class="k">三个数字（常驻）</div><div class="v">需要参考目录 / 本地就能修 / 需要你核对 —— 每个自带一个动词</div></div>
+        <div class="fx"><div class="k">次级工具行（常驻）</div><div class="v">专项工具 ▾ · 参考目录 ▾ · 重新识别 ▾ · 返回</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
