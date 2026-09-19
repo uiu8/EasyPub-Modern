@@ -421,33 +421,64 @@ RepairPlanCompiler.Compile(plan, decisions, mode)
 
 ## 8. 已知缺陷与未解之谜
 
-### 8.1 ⚠️ 主界面与分析用的**不是同一棵树**（已查明，**未修**）
+### 8.1 ⚠️ 同一本书能识别出 468 / 561 / 568 三种章节数（已查明，**未修**）
 
-**这是目前已知最严重的缺陷。** 它不报错、不影响转换结果，但**界面上显示的所有数字都可能对应另一棵树**。
+**这是目前已知最严重的缺陷族。** 它不报错、不影响文件能否生成，
+但**界面上显示的一切数字、以及最终转换出的目录结构，都可能对应不同的树**。
 
-#### 现象与根因
+#### 实测矩阵（2026-09-18，样书，`ChapterTreeDocument.LoadAsync`）
 
-走查时主界面显示「章节树 已识别 **560** 项」，而 Core 加载同一份文件得到 `Entries.Count = 468`。
+| 章节正则 | 分层 | Level 正则 | 条目 | 非前置 | 正文为空的章 |
+|---|---|---|---|---|---|
+| 现代默认 | 关 | — | **468** | 467 | 0 |
+| 旧 `LegacyPattern` | 关 | — | **461** | 460 | 0 |
+| 现代默认 | **开** | 新 | **568** | 567 | **100** |
+| 旧 `LegacyPattern` | **开** | 旧 | **561** | **560** | **100** |
+| 现代默认 | 开 | 旧 | 568 | 567 | 100 |
+| 旧 `LegacyPattern` | 开 | 新 | 568 | 567 | 100 |
 
-**根因是一行**：
+**走查时界面上那个「560 项」= 第四行的 `非前置=560`**（「序」没有标题行号，
+所以 `ChapterCandidateCount` 是 560 而不是 561）。
 
-```csharp
-// ConversionPreflightInspector.cs:88
-var options = request.Options ?? ConversionOptions.LegacyDefault;
+#### 两个独立的成因，必须分开看
+
+**成因一：`?? ConversionOptions.LegacyDefault`（9 处，5 个文件）**
+
+```
+ConversionPreflightInspector.cs:88      PublicationChangeReceipt.cs:17
+BookPreviewService.cs:51, :58           LegacyMobiWriter.cs:22,35,78,112
+LegacyEpubWriter.cs:30
 ```
 
-```csharp
-// ConversionRequest.cs:17
-public static ConversionOptions LegacyDefault { get; } = new() { ChapterPattern = HeadingSyntax.LegacyPattern };
-```
+`Options` 为 null 时静默回退到 `ChapterPattern = HeadingSyntax.LegacyPattern`
+（2015 年的宽松正则：连「第一章回」都吃，也不排除"回头/回来/回事"）。
+**但它单独只能把 468 变成 461 —— 要得到 561 还需要第二个成因。**
 
-**`request.Options` 为 null 时，静默回退到一套 2015 年的宽松正则**：
+**成因二：分层识别拆开重复标题行**
 
-```
-^\s*[第卷][0123456789一二三四五六七八九十零〇百千两]*[章回部节集卷].*
-```
+样书第六卷每章标题连写两次（100 章）。分层**关**时 `SkipRepeatedHeadingRun` 把它们合并成一章；
+分层**开**时这 100 章各被拆成「正文 0 行的空章 + 带正文的同名章」——
+矩阵里那 `正文空=100` 就是它。**这是 §8.4 单独记的缺陷。**
 
-它比现代默认正则宽松得多（连「第一章回」都吃，也不排除"回头/回来/回事"）。
+**所以 561 = 成因一（旧正则）+ 成因二（分层开）+ 旧 Level 正则，三者同时成立。**
+
+#### ⚠️ 本文档上一版在这里写错了两次
+
+1. **写「Core 层面任何参数组合都给不出 560」—— 不成立。** 当时只做了**逐字段替换**
+   （一次换一个字段），**组合效应根本没测到**。这是方法错误：逐字段扫描只能证明
+   "单个字段不改变结果"，不能证明"任何组合都不改变"。
+2. **算错了口径**：拿 `Entries.Count`（561）去对界面上的 560，而界面数的是
+   **非前置且有标题行号**的条目。**561 和 560 本来就不该相等。**
+
+#### 后果
+
+**同一本书转出来是 468 章还是 568 章，取决于用户有没有保存过章节树、开没开层级目录。**
+
+- **预检**（预检路径不传 `Options`）→ 468 或 561
+- **有章节树的转换** → 用树里的条目
+- **没有章节树的转换**（走 `LegacyTextParser`）→ 568，含 101 个空章（含「序」）
+
+**用户导入时看到的结构、他在工作台里编辑的、最终转换用的，三者可能互不相同。**
 
 #### 实测证据（交互日志，2026-09-18）
 
@@ -471,42 +502,48 @@ outcome · 识别书稿
 - 「建议处理 155」基于 **561** 那棵树
 - 「待核对 155 组」基于 **561** 那棵树
 - 而样书基线测试锁的是 **468** 那棵树（44 组）
-- 报告窗口那句「参考目录里有 **120** 章在章节树中没有」，描述的也是那棵旧正则的树
+- 报告窗口那句「参考目录里有 **120** 章在章节树中没有」，描述的也是那棵旧正则 + 分层开的树
 
 **排查时排除过的**（都是实测）：Core 完整修复后 `absent = 43 = outcome.Missing`（本来就一致）；
-只应用部分动作 absent 只到 51；三套 `chapterPattern` 给 461/462/468；逐字段换旧值无一改变条目数。
-**结论：Core 层面任何参数组合都给不出 560 —— 它只来自那条 `?? LegacyDefault`。**
+只应用部分动作 absent 只到 51。
+**但这些只排除了"120 由修复逻辑造成"，没有排除"输入树不同" —— 恰恰是后者。**
 
-#### 怎么修（**三种做法，需要产品决定，未实现**）
+#### 怎么修（**分两个成因，未实现**）
 
-1. **自动分析传 `Options`**（与转换一致）—— 最一致，把"分析与转换用同一棵树"变成结构保证
-2. **把 `LegacyDefault.ChapterPattern` 换成现代默认** —— 一行改动，**但有副作用**：
-   `LegacyEpubWriter` / `LegacyMobiWriter` / `LegacyTextParser` / `PublicationChangeReceipt` / `BookPreviewService`
-   都在用 `LegacyDefault`。**那几个 `Legacy*` 名字里的 "Legacy" 指的是输出格式兼容 EasyPub v1.50，
-   不是"用旧正则"** —— 改它会顺带改掉它们的识别行为
-3. **`Options` 为 null 时直接报错**，逼调用方显式给出 —— 最安全但可能打破若干现有路径
+**成因一：把 9 处 `?? LegacyDefault` 收敛成一个入口。**
 
-**推荐 1。**
+分析和预检路径在 `Options` 为 null 时应当**直接报错**，而不是悄悄回退到 2015 年的正则；
+只有 `Legacy*Writer` 那几个兼容出口保留显式的 `LegacyDefault`。
 
-#### ⚠️ 顺带撞到的一个真实陷阱
+⚠️ **不要直接把 `LegacyDefault.ChapterPattern` 改成现代默认** ——
+那几个 `Legacy*` 名字里的 "Legacy" 指的是**输出格式兼容 EasyPub v1.50**，不是"用旧正则"。
+直接改值会顺带改掉它们的识别行为，而那是产品决定，不是重构。
 
-**`ChapterTreeDocument.Load/LoadAsync` 的 `hierarchy` 参数，对样书不起作用。**
+**成因二：见 §8.4（重复标题行），那是一个独立的纯 bug。**
 
-传 `Enabled = false`（关闭分层识别）或一条绝不可能匹配的 `Level2Pattern`，条目数**都是 468**。
-原因在 `ChapterTree.cs:151`：
+**只修成因一不够** —— 默认设置下预检会显示 468，而"没保存过章节树"的转换仍然产出 568。
+
+**完整的分阶段计划见 §8.5。**
+
+#### ⚠️ 一个容易误判的陷阱（我自己误判过一次）
+
+**`TocHierarchyOptions` 的 `Enabled` 默认是 `false`。**
 
 ```csharp
-var candidates = editingDocument.Candidates ...              // ← 条目的主来源
-var level = MatchLevel(line.Text, levelPatterns);
-if (level == 0 && !candidates.TryGetValue(...)) continue;    // ← levelPatterns 只是补充
+var levelPatterns = hierarchyOptions.Enabled ? [Compile(Level1), Compile(Level2), Compile(Level3)] : [];
 ```
 
-**Candidates 由另一个参数 `chapterPattern` 决定。**
+**所以传一条自定义 `Level2Pattern` 而不把 `Enabled` 设成 `true`，那条正则根本不会被使用。**
+条目仍然来自 `ChapterEditingDocument.Candidates`（由 `chapterPattern` 决定），于是你会看到
+"我改了正则但结果没变"，然后**误以为参数被忽略**。
 
-**也就是说：改 `TocHierarchyOptions.Level1/2Pattern` 这类设置，在"候选已覆盖全部标题行"的书上
-完全没有效果，而界面不会有任何提示。** 排查"设置不生效"的问题时，**先确认你改的参数是不是真正的来源**。
+**我上一版文档就是这么误判的** —— 我传了一条绝不可能匹配的 `Level2Pattern`，得到 468 不变，
+就写下了"`hierarchy` 参数对样书不起作用"。**真正的原因是那个 `Enabled` 默认为 false。**
 
-**这一条与 §8.2 是同一个病根：系统里对"什么算标题"有不止一个答案。**
+**教训**：看到"改了参数没反应"时，先确认**这个参数在当前配置下会不会被读到**，
+再去怀疑它被忽略。矩阵里"分层开/关"两行的差异就是它生效的证据。
+
+**这一条与 §8.2 是同一个病根：系统里对"什么算标题"有不止一个答案，而且哪个在生效并不显而易见。**
 
 ### 8.2 ⚠️ 正则表达式是整个系统的输入，而系统对它的假设散落在多处
 
@@ -639,19 +676,66 @@ internal static readonly Regex Numbering     = new(NumberPrefix + @"[章回节�
 **现状**：表里只有两条（`Level1Pattern` / `Level2Pattern` 的一个旧版本）。
 **每次改任何默认值，都应该往这张表里加一条。**
 
-### 8.4 其他已知缺陷
+### 8.4 ⚠️ 重复标题行：同一本书 468 还是 568，取决于两个开关
+
+**样书第六卷每章标题连写两次（100 章）。** 这个形状在不同路径下被处理得不同：
+
+| 路径 | 结果 |
+|---|---|
+| `ChapterTreeDocument.Load`，分层**关** | **468** 条 —— 重复行被合并（有专门的 `SkipRepeatedHeadingRun`） |
+| `ChapterTreeDocument.Load`，分层**开** | **568** 条 —— 那 100 章各被拆成「正文 0 行的空章 + 带正文的同名章」，**100/100** |
+| `LegacyTextParser`（**没保存章节树时的默认转换路径**） | **568** 章、**101 个空章**（含「序」）—— 它逐行匹配，**没有重复行保护** |
+
+> **上表前两行我在矩阵里复现过**（`正文空=100`）。
+> **第三行是使用方实测的，我没有独立复现** —— 要验证它需要构造一个不带
+> `ChapterTree` 的 `ConversionRequest` 走转换路径。
+
+**所以**：同一本书转出来是 468 章还是 568 章，取决于**用户有没有保存过章节树、开没开层级目录**。
+而 §8.1 推荐的修法（让分析传 `Options`）**修不了这一条** —— 默认设置下预检显示 468，
+而"没保存过章节树"的转换仍产出 568。
+
+#### ⚠️ 一个需要产品决定的问题（**未决**）
+
+**`LegacyTextParser` 不做重复行合并，可能是刻意的 v1.50 兼容行为。**
+
+从代码判断不出作者意图。**这一条要拍板**：
+
+- 若**是刻意的** —— 它需要一条界面上可见的说明（"原版兼容排版会多出 100 个空章"），
+  以及 P0-3 里那个 `RepeatedHeadingPolicy` 来把两条路分开
+- 若**不是** —— P0-4 的合并应当同时补进 `LegacyTextParser`
+
+**在拍板之前，不要动 `LegacyTextParser` 的行为。**
+
+### 8.5 章节数不一致的修复计划（**已排定，未开始**）
+
+沿用本文档的边界：**不碰对齐算法、补丁编译、事务语义**；每步**先探针后断言**。
+
+| 阶段 | 做什么 | 验收 |
+|---|---|---|
+| **P0-1** | **契约测试**：同一本书、同一 `Options` 下，**预检 / 章节树 / 无树转换**三条路径的章节数必须一致（矩阵：分层开/关 × 新/旧正则） | **先红**，并作为后续基线 |
+| **P0-2** | 把 9 处 `?? LegacyDefault` 收敛成一个 `Resolve(request)` 入口。分析与预检路径 `Options` 为 null 时**直接报错**；只在 `Legacy*Writer` 的兼容出口保留显式 `LegacyDefault` | 契约测试里"旧正则"那几行消失 |
+| **P0-3** | 新增 `RepeatedHeadingPolicy`：无树转换委托 `ChapterTreeDocument.Load` 建树，或复用同一个合并函数。「原版兼容」排版保留旧行为，「现代排版」默认合并 | 两种排版下章节数符合预期；v1.50 兼容测试不红 |
+| **P0-4** | `Load` 的分层路径补重复行合并 —— **这是纯 bug，不涉及兼容** | 分层开时样书 = 468，空章仅「序」 |
+| **P0-5** | 升级表把 `ChapterPattern` 的旧值也纳入；**更正 v1.61.0 发布说明里那句「560 → 468」** | 旧设置机器与新装结果一致 |
+| **P1-1** | 做 §8.2 的方案 A：用户正则能匹配但读不出编号时，明确列出"不可用功能"。**先用 `^第\d+话` 小样本实测那张影响表** | 样本上表格每行有实测值 |
+| **P1-2** | 界面显示**当前生效的识别配置来源**（默认 / 本书 / 全局 / 导入 config.xml） | 能解释任意一个章节数 |
+| **P2** | 清理 §8.6 里那些小问题 | — |
+
+### 8.6 其他已知缺陷（P2）
 
 | # | 缺陷 | 位置 | 影响 |
 |---|---|---|---|
-| 1 | 第 3 条状态测试缺覆盖（候选未确认 → 不落盘） | `ChapterCatalogPanel` | 关键路径要真实网络候选，面板没有可注入来源 |
-| 2 | Desktop 全量组合跑 flaky | 测试基建 | 见 §2.3 坑 2 |
-| 3 | 操作日志没有单元测试 | `InteractionLog` | 纯副作用设施，加抢全局状态的测试比没有更糟 |
-| 4 | `LegacyMobiWriter.cs:306` 附近有硬编码开发路径 | Core | 未验证是否影响发布包 |
-| 5 | `RepairPlanCompiler.cs:134` 的 `sourceProblems` 是死变量 | Core | 无害但误导 |
-| 6 | `RepairEffectCompiler.Indeterminate(string _)` 丢弃参数 | Core | 诊断信息丢失 |
-| 7 | `SnapshotRecognitionPath` 从未被写入 | Core | 某个恢复路径可能退化 |
+| 1 | `sourceProblems` 被传进 `RepairCompilation` 但**全文件从未 `Add`**，永远为空 | `RepairPlanCompiler.cs:134` | ⚠️ **要先查下游有没有拿它判断"补丁可应用"** —— 有的话这道校验形同虚设 |
+| 2 | 硬编码的个人路径 `C:\Users\13168\Desktop\easypub\bin\kindlegen_v2.9.exe` | `LegacyMobiWriter.cs:306` | 在公开仓库里，删掉 |
+| 3 | README 自相矛盾：徽章写 v1.56.0，正文写「当前正式版本为 v1.22.0」，实际 v1.61.0 | `README.md` | 对外可见 |
+| 4 | 「原始 TXT 不变」在 Desktop 里**硬编码 21 处**，而默认落地模式是会改原文的 `EditSource` | Desktop 多处 | ⚠️ 纯树操作的多半成立，但**工作台底栏是 XAML 静态文字**，执行一次改原文修复后它仍会写「不变」。**代码层风险，未在界面验证** —— 需逐条对照落地模式审计 |
+| 5 | 第 3 条状态测试缺覆盖（候选未确认 → 不落盘） | `ChapterCatalogPanel` | 关键路径要真实网络候选，面板没有可注入来源 |
+| 6 | Desktop 全量组合跑 flaky | 测试基建 | 见 §2.3 坑 2 |
+| 7 | 操作日志没有单元测试 | `InteractionLog` | 纯副作用设施，加抢全局状态的测试比没有更糟 |
+| 8 | `RepairEffectCompiler.Indeterminate(string _)` 丢弃参数 | Core | 诊断信息丢失 |
+| 9 | `SnapshotRecognitionPath` 从未被写入 | Core | 某个恢复路径可能退化 |
 
-### 8.5 两个"看着像 bug 但不是"的地方
+### 8.7 两个"看着像 bug 但不是"的地方
 
 - **`chapter_content_duplicate` 归到"需要你核对"而不是"本地就能修"** ——
   对比窗只是辅助，**留哪一份必须人定**。这是刻意的。
