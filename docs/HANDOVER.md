@@ -1306,6 +1306,26 @@ XamlParseException: 无法找到名为"Chip"的资源。资源名称区分大小
 3. 补一条断言：资源字典里的键在窗口里真的解析得出来（`ControlStyleContractTests` 已有一半）；
 4. **然后**才让工作台用 `Controls.xaml` 的样式。
 
+#### ✅ 已经查清的一半（2026-09-19，决定性的那条测试）
+
+**`Controls.xaml` 的合并本身是好的，真实应用没问题。** 证据是一条新测试
+`ControlStyleContractTests.Loading_the_real_app_makes_the_new_styles_findable`：
+真的建 `App` + `InitializeComponent()`，再逐个查那 25 个样式键 —— **全部解析得到**。
+（它和 `App_merges_the_controls_dictionary` 的区别很实际：后者只证明
+`App.xaml` 文本里有 `Source="Controls.xaml"` 这句话，前者证明**运行时真的合进来了**。
+相对 URI 是会被解析的，文本对不代表找得到。）
+
+**所以 §11.3.0 的定性要说准一点**：不是"测试环境完全没有资源"，而是 ——
+
+| | 结论 |
+|---|---|
+| 真实应用 | ✅ 合并生效，样式全部可用（已用测试钉住） |
+| `ChapterBatchTests` 那类宿主 | ❌ 构造窗口时**没有真实的 `App`**，所以找不到 `Chip` |
+| 仍未解释 | 同一个文件里 `BasedOn="{StaticResource {x:Type Button}}"` **却能解析** —— 说明那些宿主从**某条我还没查清的路径**拿到了部分资源。**在弄清这条路径之前不要动引导。** |
+
+**下一步就是查那一条**：`{x:Type Button}` 在 `Application.Current` 为 null（或为裸
+`Application`）时从哪里解析出来。查清了，引导才能安全地收成一个入口。
+
 **在 1–3 做完之前，界面轨道不要用新的 `StaticResource` 样式** ——
 要么先用 `DynamicResource`（缺键不抛，但运行时也不会报），
 要么先把基础设施修对。**别用把资源塞进 `Window.Resources` 的办法绕过去**：

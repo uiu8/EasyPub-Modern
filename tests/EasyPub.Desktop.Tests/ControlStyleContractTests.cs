@@ -110,6 +110,36 @@ public class ControlStyleContractTests
     }
 
     /// <summary>
+    /// **决定性的一条**：真的建一个 `App`（载 App.xaml），查 `Chip` 在不在。
+    ///
+    /// <para>上面那条只证明"文本里有这句话"，这条证明**合并真的生效**。两者的区别很实际：
+    /// `<c>Source="Controls.xaml"</c>` 是相对 URI，文本对不代表运行时找得到。
+    /// 实测时工作台在测试里报「无法找到名为 Chip 的资源」，而**同一个文件**里第 9 行的
+    /// `<c>BasedOn="{StaticResource {x:Type Button}}"</c>` 却能解析 ——
+    /// 说明那个宿主**有** App.xaml 的资源，缺的正是被合并进来的这一份。</para>
+    /// </summary>
+    [Fact]
+    public void Loading_the_real_app_makes_the_new_styles_findable()
+    {
+        string[] missing = [];
+        var thread = new Thread(() =>
+        {
+            if (Application.Current is null)
+            {
+                var app = new App();
+                app.InitializeComponent();
+            }
+            missing = StyleKeys.Where(key => Application.Current?.TryFindResource(key) is null).ToArray();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.True(missing.Length == 0,
+            "载入 App 之后仍然解析不出来的样式：" + string.Join("、", missing));
+    }
+
+    /// <summary>
     /// **只有一个实心主按钮样式。** 这条锁的是按钮规划的第 1 条：
     /// 每屏一个 PrimaryButton，它 = 这一屏此刻该做的事。
     /// 再冒出一个"看起来也是主按钮"的样式，就等于把推荐取消了。
