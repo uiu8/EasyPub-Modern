@@ -18,6 +18,10 @@ internal static class PreflightCta
     internal static string For(ConversionPreflightIssue issue)
     {
         ArgumentNullException.ThrowIfNull(issue);
+        // 「工作台数出的章数」与「转换会产出的章数」不一致。它不在 IssueResolutionPolicy 的表里
+        // （那张表是**章节树里可处理的问题**），所以不走下面的通用兜底 ——
+        // 否则这里会说「处理章节」，而用户真正要做的是保存章节树。
+        if (issue.Code == PreflightIssueCodes.RepeatedHeadingSplit) return "在工作台保存章节树";
         var advice = IssueResolutionPolicy.Evaluate(issue);
         if (advice.HasChapterActions) return For(advice.Recommended);
         // 信息级的清理计划只是"看一眼确认"，与"去清理广告"不是一回事，措辞要分开。

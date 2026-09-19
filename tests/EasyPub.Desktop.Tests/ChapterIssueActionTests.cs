@@ -74,6 +74,23 @@ public class ChapterIssueActionTests
         Assert.Equal("检查并清理本组…", ChapterIssueAction.CtaFor(Action("chapter_duplicate")));
     }
 
+    /// <summary>
+    /// 「工作台数出的章数」与「转换会产出的章数」不一致时，报告窗口必须说**加章节树**，
+    /// 而不是退回「处理章节」。
+    ///
+    /// <para>这条码故意不进 <see cref="IssueResolutionPolicy"/>（那张表是章节树里可处理的问题），
+    /// 所以它没有 Recommended 动作可走，会掉到 <c>ReadinessEvaluator.ActionLabel</c> 的通用兜底 ——
+    /// 那正是走查时被抱怨的「处理章节」。用户真正要做的是保存章节树。</para>
+    /// </summary>
+    [Fact]
+    public void The_chapter_count_mismatch_points_at_saving_the_tree_not_at_a_generic_fallback()
+    {
+        var cta = PreflightCta.For(Issue(PreflightIssueCodes.RepeatedHeadingSplit));
+
+        Assert.Equal("在工作台保存章节树", cta);
+        Assert.NotEqual(ReadinessEvaluator.ActionLabel(PreflightTargetKind.Chapters), cta);
+    }
+
     [Fact]
     public void Both_surfaces_agree_on_what_the_action_is()
     {

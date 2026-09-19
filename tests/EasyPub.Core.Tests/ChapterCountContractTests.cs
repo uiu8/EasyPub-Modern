@@ -95,7 +95,7 @@ public class ChapterCountContractTests
     [InlineData(true, true, true, "旧正则 + 分层开")]
     [InlineData(true, false, true, "现代默认 + 分层开 + 旧 Level")]
     [InlineData(true, true, false, "旧正则 + 分层开 + 新 Level")]
-    public async Task All_three_paths_count_the_same_chapters(
+    public async Task The_workbench_and_the_pre_conversion_check_count_the_same_chapters(
         bool layered, bool oldChapterPattern, bool oldLevelPatterns, string label)
     {
         var path = SamplePath();
@@ -103,12 +103,75 @@ public class ChapterCountContractTests
 
         var byTree = await ByTreeAsync(path, options);
         var byPreflight = await ByPreflightAsync(path, options);
-        var byLegacy = await ByLegacyParseAsync(path, options);
 
-        Assert.True(byTree == byPreflight && byPreflight == byLegacy,
-            $"[{label}] 三条路径数出了不同的章节数 —— "
-            + $"章节树={byTree} 预检={byPreflight} 无树转换={byLegacy}。"
-            + "用户看到哪个数，取决于他有没有保存过章节树。");
+        Assert.True(byTree == byPreflight,
+            $"[{label}] 工作台与转换前检查数出了不同的章节数 —— 章节树={byTree} 预检={byPreflight}。"
+            + "这两个数出现在同一批界面上（工作台标题栏与预检窗），必须一致。");
+    }
+
+    /// <summary>
+    /// **差异永远不许沉默。**
+    ///
+    /// <para>没保存章节树时，转换走的是 v1.50 原样识别（<c>LegacyTextParser</c> 逐行），
+    /// 它不合并连着印两遍的标题行。于是会出现"工作台说 467 章、转换产出 567 章"。
+    /// 这是产品**有意保留**的兼容行为（2026-09-18 决定：不改行为，只让它说出来），
+    /// 所以这里锁的**不是**"两条路径的数必须相等"，而是：</para>
+    ///
+    /// <list type="bullet">
+    /// <item>差异一旦存在，<b>转换前检查必须报出来</b>，并且报的是**实测**的两个数；</item>
+    /// <item>没有差异时不许报 —— 一条永远出现的提醒等于没有提醒。</item>
+    /// </list>
+    ///
+    /// <para>⚠️ 这条测试的前身是 <c>All_three_paths_count_the_same_chapters</c>，
+    /// 它要求三条路径的数完全相等。那个契约在产品决定之后是**错的**：
+    /// 它会逼着实现去掉 v1.50 兼容行为。契约与产品决定冲突时改契约，
+    /// 但**要换成一条更硬的**，不是删掉 —— 所以现在是"差异必须可见"。</para>
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, false, "现代默认 + 分层关")]
+    [InlineData(true, true, true, "旧正则 + 分层开")]
+    public async Task When_the_conversion_would_count_differently_the_pre_conversion_check_says_so(
+        bool layered, bool oldChapterPattern, bool oldLevelPatterns, string label)
+    {
+        var path = SamplePath();
+        var options = Options(layered, oldChapterPattern, oldLevelPatterns);
+        var byTree = await ByTreeAsync(path, options);
+        var withoutTree = await ByLegacyParseAsync(path, options);
+
+        var inspector = new ConversionPreflightInspector();
+        var report = await inspector.InspectAsync(
+            [new ConversionRequest(path, path + ".epub", Options: options)], CancellationToken.None);
+        var warning = report.Issues.SingleOrDefault(
+            i => i.Code == PreflightIssueCodes.RepeatedHeadingSplit);
+
+        Assert.True(withoutTree != byTree,
+            $"[{label}] 这组配置没有差异（章节树={byTree} 无树转换={withoutTree}）—— "
+            + "那这条测试就失去意义了，请换一组真有差异的配置。");
+        Assert.True(warning is not null,
+            $"[{label}] 差异存在却没有报出来：章节树={byTree} 无树转换={withoutTree}，"
+            + "用户在工作台看到 {byTree} 章，点转换得到 {withoutTree} 章，中间一句话都没有。");
+        Assert.Contains(byTree.ToString(), warning!.Message);
+        Assert.Contains(withoutTree.ToString(), warning.Message);
+        Assert.Equal(PreflightTargetKind.Chapters, warning.Target);
+    }
+
+    /// <summary>
+    /// 反方向：**保存了章节树就没有差异，那时不许再报**。
+    /// 一条永远出现的提醒等于没有提醒 —— 这正是走查里"155 项"被无视的原因。
+    /// </summary>
+    [Fact]
+    public async Task Saving_a_chapter_tree_removes_the_warning()
+    {
+        var path = SamplePath();
+        var options = Options(layered: false, oldChapterPattern: false, oldLevelPatterns: false);
+        var tree = await ChapterTreeDocument.LoadAsync(path, options.ChapterPattern, options.TocHierarchy);
+
+        var inspector = new ConversionPreflightInspector();
+        var report = await inspector.InspectAsync(
+            [new ConversionRequest(path, path + ".epub", Options: options) { ChapterTree = tree.CreatePlan(tree.Entries) }],
+            CancellationToken.None);
+
+        Assert.DoesNotContain(report.Issues, i => i.Code == PreflightIssueCodes.RepeatedHeadingSplit);
     }
 
     /// <summary>

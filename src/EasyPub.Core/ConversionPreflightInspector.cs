@@ -30,6 +30,23 @@ public sealed record ConversionPreflightIssue(
     int? LineNumber = null,
     string? RelatedValue = null);
 
+/// <summary>
+/// 「工作台数出的章数」与「直接转换会产出的章数」不一致。
+///
+/// <para>它不是缺陷，是**没保存章节树时走 v1.50 原样识别**这条产品决定的可见化
+/// （见 HANDOVER §8.1 与 §8.5 的 P0-3）。原先它完全沉默 —— 用户在工作台上看到 467 章、
+/// 点转换得到 567 章，中间没有任何一句话。</para>
+///
+/// <para>这条码**不进** <see cref="IssueResolutionPolicy.Definitions"/>：那张表是
+/// **章节树里可处理的问题**的词汇表（工作台逐项给出处理建议），而这一条没有"在树里处理"
+/// 的动作 —— 它的出口只有"保存章节树"或"照旧转换"。混进那张表会让工作台为它渲染一个
+/// 根本不存在的处理入口。</para>
+/// </summary>
+public static class PreflightIssueCodes
+{
+    public const string RepeatedHeadingSplit = "repeated_heading_split";
+}
+
 public sealed record ConversionPreflightBook(
     string InputPath,
     int ChapterCandidateCount);
@@ -245,6 +262,43 @@ public sealed class ConversionPreflightInspector
                             if (review.TotalGroups > review.Groups.Count)
                                 issues.Add(new(request.InputPath, PreflightSeverity.Warning, "chapter_diagnostics_limit",
                                     $"共 {review.TotalGroups} 组提醒，已显示 {review.Groups.Count} 组；章节工作台可继续加载。", PreflightTargetKind.Chapters));
+
+                            // **没保存章节树时，转换走的是另一条识别路**（LegacyTextParser 逐行），
+                            // 它不合并重复标题行。于是会出现"工作台说 467 章、转换产出 567 章"。
+                            //
+                            // 这个差异是产品有意保留的 v1.50 原样兼容行为，不能悄悄改掉；
+                            // 但它更不能**悄悄发生** —— 用户在转换前看到的最后一个数，
+                            // 必须是他真正会得到的那个数（或至少被告知不是）。
+                            //
+                            // 这里不推断差异，而是**实测**：用转换将要用的同一份 options、
+                            // 同一条无树路径真的跑一遍。同一个入口，不可能与实际转换漂移。
+                            if (request.ChapterTree is null)
+                            {
+                                var withoutTree = await LegacyTextParser.ParseAsync(
+                                    request.InputPath, options, null, token);
+                                // 减 1：开头那个「序」是合成的前置条目，不是识别出来的章节。
+                                var withoutTreeCount = withoutTree.Count - 1;
+                                var emptyBodies = withoutTree.Skip(1).Count(chapter => chapter.Paragraphs.Count == 0);
+                                if (withoutTreeCount != candidateCount)
+                                {
+                                    InteractionLog.Outcome("无树转换差异", new
+                                    {
+                                        文件 = System.IO.Path.GetFileName(request.InputPath),
+                                        章节树 = candidateCount,
+                                        无树转换 = withoutTreeCount,
+                                        正文空 = emptyBodies,
+                                    });
+                                    issues.Add(new ConversionPreflightIssue(
+                                        request.InputPath,
+                                        PreflightSeverity.Warning,
+                                        PreflightIssueCodes.RepeatedHeadingSplit,
+                                        $"工作台识别出 {candidateCount} 章，但直接转换会产出 {withoutTreeCount} 章"
+                                        + $"（多 {withoutTreeCount - candidateCount} 章，其中 {emptyBodies} 章正文是空的）。"
+                                        + "两条路径的识别规则不同：没保存章节树时走 v1.50 原样识别，且不合并连着印两遍的标题行。"
+                                        + "这是为兼容旧成品保留的行为。要按工作台那份转换，请先在工作台保存章节树。",
+                                        PreflightTargetKind.Chapters));
+                                }
+                            }
                         }
                         if (Check(PreflightTargetKind.Chapters) && candidateCount == 0
                             && !issues.Any(i => i.InputPath == request.InputPath && i.Code == "numeric_chapters_suspected"))
