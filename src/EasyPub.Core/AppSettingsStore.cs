@@ -15,6 +15,13 @@ public sealed record ConversionProfile(
     public int FontSizePercent => Options.FontSizePercent;
     public MobiCompression MobiCompression => Options.Mobi.Compression;
     public ConversionMode Mode { get; init; } = ConversionMode.OriginalCompatible;
+
+    /// <summary>把这份配置里等于旧默认值的识别正则升到当前默认值。</summary>
+    public ConversionProfile UpgradeSupersededChapterPattern(out bool changed)
+    {
+        var options = Options.UpgradeSupersededChapterPattern(out changed);
+        return changed ? this with { Options = options } : this;
+    }
 }
 
 public enum ConversionMode
@@ -141,10 +148,24 @@ public sealed class AppSettingsStore
     /// 代价是每次 <c>Load</c> 都会重新升一次，所以日志只记第一次：否则启动一次会看到两条
     /// 一模一样的记录，读日志的人会以为发生了两次不同的升级（这是实测踩到的）。</para>
     /// </summary>
-    private static EasyPubAppSettings UpgradeSupersededPatterns(EasyPubAppSettings settings)
+    internal static EasyPubAppSettings UpgradeSupersededPatterns(EasyPubAppSettings settings)
     {
-        var upgraded = settings.NumericHeadingDefaults.UpgradeSupersededPatterns(out var changed);
-        if (!changed) return settings;
+        var upgraded = settings.NumericHeadingDefaults.UpgradeSupersededPatterns(out var levelsChanged);
+
+        // 章节正则不在 EasyPubAppSettings 上，而在各个 ConversionProfile 里
+        //（LastProfile + 每个预设各一份），所以必须逐个走一遍 —— 只升全局那份等于没升。
+        var chapterChanged = false;
+        var lastProfile = settings.LastProfile.UpgradeSupersededChapterPattern(out var lastChanged);
+        chapterChanged |= lastChanged;
+        var presets = settings.Presets.Select(preset =>
+        {
+            var profile = preset.Profile.UpgradeSupersededChapterPattern(out var presetChanged);
+            chapterChanged |= presetChanged;
+            return presetChanged ? preset with { Profile = profile } : preset;
+        }).ToArray();
+
+        if (!levelsChanged && !chapterChanged) return settings;
+
         if (!_upgradeLogged)
         {
             _upgradeLogged = true;
@@ -154,9 +175,17 @@ public sealed class AppSettingsStore
                 原Level2 = settings.NumericHeadingDefaults.Level2Pattern,
                 新Level1 = upgraded.Level1Pattern,
                 新Level2 = upgraded.Level2Pattern,
+                章节正则原值 = settings.LastProfile.Options.ChapterPattern,
+                章节正则升级 = chapterChanged,
             });
         }
-        return settings with { NumericHeadingDefaults = upgraded };
+
+        return settings with
+        {
+            NumericHeadingDefaults = upgraded,
+            LastProfile = lastProfile,
+            Presets = presets,
+        };
     }
 
     private static bool _upgradeLogged;

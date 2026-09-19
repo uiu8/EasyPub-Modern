@@ -40,6 +40,29 @@ public sealed record ConversionOptions
     public static ConversionOptions LegacyDefault { get; } = new() { ChapterPattern = HeadingSyntax.LegacyPattern };
 
     public string? ChapterPattern { get; init; }
+
+    /// <summary>
+    /// 把**等于旧版默认值**的章节正则升到当前默认值（当前默认 = <c>null</c>，即用内置规则）。
+    ///
+    /// <para><b>为什么这条字符串只可能是旧默认残留，而不是用户的选择。</b>
+    /// 全代码库里产生 <see cref="HeadingSyntax.LegacyPattern"/> 的地方只有
+    /// <see cref="LegacyDefault"/> 一处，而它只被两个 <c>Legacy*Writer</c> 的兜底用到。
+    /// 界面上的"原版兼容"（<c>ConversionMode.OriginalCompatible</c>）讲的是
+    /// <b>版式</b>——字号 / 行高 / 段间距 / 边距 / 首行缩进，与章节正则无关；
+    /// 章节正则只有一个自由输入框，用户真改过就不会恰好等于这一长串。</para>
+    ///
+    /// <para>这与 <see cref="TocHierarchyOptions.UpgradeSupersededPatterns"/> 是同一个判据、
+    /// 同一套理由 —— 那一套已经在 v1.61.0 上线。</para>
+    ///
+    /// <para><b>不做这一步的代价是实测的</b>：旧设置下章节正则为旧值、分层又是默认关，
+    /// Level 正则根本不被读取，于是那 7 个裸数字标题（「一百零一章」这类没有「第」字的）
+    /// 永远认不出来，会被并进上一章的正文。</para>
+    /// </summary>
+    public ConversionOptions UpgradeSupersededChapterPattern(out bool changed)
+    {
+        changed = string.Equals(ChapterPattern, HeadingSyntax.LegacyPattern, StringComparison.Ordinal);
+        return changed ? this with { ChapterPattern = null } : this;
+    }
     public TocHierarchyOptions TocHierarchy { get; init; } = new();
     public TextEncodingMode TextEncoding { get; init; } = TextEncodingMode.Auto;
     public bool RemoveBlankLines { get; init; } = true;
