@@ -36,6 +36,7 @@ public partial class ChapterEditorWindow
         {
             _initialRulesFingerprint ??= SettingsFingerprint();
             EditSourceButton.ToolTip = "使用 " + Path.GetFileNameWithoutExtension(TextEditorPath) + " 编辑独立副本；原稿不变，副本需重新识别";
+            SyncLandingModeOptions();
             UpdateSaveState();
             RefreshCatalogState();
             if (_allReviewIssues.FirstOrDefault(i => i.Code == "numeric_chapters_suspected") is { } numericSuggestion)
@@ -72,7 +73,7 @@ public partial class ChapterEditorWindow
     /// 修复的落地方式。**底栏要说的是"这一次会发生什么"，不是一句固定标语。**
     ///
     /// <para>原来这里无条件写「原始 TXT 不变」，而默认设置下修复是会写回 TXT 的
-    /// （<see cref="RepairLandingMode.EditSource"/> 是 <c>DefaultRepairLandingMode</c> 的默认值）——
+    /// （旧版本默认 <see cref="RepairLandingMode.EditSource"/>，新版本默认只改树）——
     /// 于是**执行完一次改原文的修复，底栏仍然写着「不变」**。那不是排版问题，是界面在说假话。</para>
     ///
     /// <para>缓存一次，避免每次 <c>UpdateSaveState</c> 都读一遍设置文件；
@@ -82,6 +83,24 @@ public partial class ChapterEditorWindow
 
     private RepairLandingMode LandingMode =>
         _landingModeCache ??= AppSettingsStore.CreateDefault().Load().DefaultRepairLandingMode;
+
+    private void SyncLandingModeOptions()
+    {
+        if (TreeOnlyOption is null || EditSourceOption is null) return;
+        TreeOnlyOption.IsChecked = LandingMode == RepairLandingMode.TreeOnly;
+        EditSourceOption.IsChecked = LandingMode == RepairLandingMode.EditSource;
+    }
+
+    private void RepairLandingMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton { IsChecked: true } option) return;
+        _landingModeCache = ReferenceEquals(option, EditSourceOption)
+            ? RepairLandingMode.EditSource
+            : RepairLandingMode.TreeOnly;
+        RefreshActionGuide();
+        UpdateSaveState();
+        RefreshRepairButton();
+    }
 
     private void UpdateSaveState()
     {
@@ -136,18 +155,58 @@ public partial class ChapterEditorWindow
                 // 用户这次亲自确认过的目录 → 「已选用」；只是磁盘上有记录 → 「已保存（未重新选择）」。
                 // 两者对主按钮的行为一样，差别只在要不要给他一个"我的动作生效了"的确认。
                 selectedCatalog: _catalogChosenThisSession ? SavedReference() : null);
+        if (!_repairBasisChosenThisSession && LocalRepairOnlyOption is not null && _document is not null)
+        {
+            _syncingRepairBasis = true;
+            LocalRepairOnlyOption.IsChecked = _context.CatalogAvailability == CatalogAvailability.None;
+            _syncingRepairBasis = false;
+        }
         if (ContextCatalogText is null || _document is null) return;
         ContextCatalogText.Text = _context.CatalogLine;
         ContextTreeText.Text = _context.TreeLine;
         ContextSourceText.Text = _context.SourceChanged
-            ? "已在程序之外变化 —— 章节位置可能失效，请先刷新原文"
+            ? "与当前章节树的版本不一致或无法校验，请先核对原文"
             : "正常";
+        if (CompactCatalogStatusText is not null)
+            CompactCatalogStatusText.Text = _context.CatalogAvailability == CatalogAvailability.None
+                ? "目录未确认"
+                : "目录已确认 · " + _context.CatalogLine;
+        if (CompactCatalogStatusDot is not null)
+            CompactCatalogStatusDot.SetResourceReference(TextBlock.ForegroundProperty,
+                _context.CatalogAvailability == CatalogAvailability.None ? "WarningBrush" : "SuccessBrush");
+        if (CompactSourceStatusText is not null)
+            CompactSourceStatusText.Text = _context.SourceChanged ? "原文版本待核对" : "原文版本一致";
+        if (CompactSourceStatusDot is not null)
+            CompactSourceStatusDot.SetResourceReference(TextBlock.ForegroundProperty,
+                _context.SourceChanged ? "WarningBrush" : "SuccessBrush");
         // 没有记录可忘时按钮不出现 —— 一个永远点不出结果的按钮比没有按钮更让人困惑。
         if (ForgetCatalogButton is not null)
             ForgetCatalogButton.Visibility = _context.CatalogAvailability == CatalogAvailability.None
                 ? Visibility.Collapsed : Visibility.Visible;
         RefreshRepairButton();
         RefreshNextStep();
+        RefreshActionGuide();
+    }
+
+    /// <summary>
+    /// P4-1 的固定操作说明：把“依据、改哪里、怎么撤回”放在按钮附近。
+    /// </summary>
+    private void RefreshActionGuide()
+    {
+        if (GuideBasisText is null) return;
+        GuideBasisText.Text = UseLocalRepairOnly
+            ? "当前章节树；不读取目录、不联网。"
+            : _context.CatalogAvailability == CatalogAvailability.None
+                ? "当前章节树；没有参考目录时只做本地判断。"
+                : "当前选用的参考目录；目录只提供标题与位置。";
+        GuideApplyText.Text = LandingMode == RepairLandingMode.EditSource
+            ? "勾选后会写入 TXT；执行前自动备份。"
+            : "只更新成品章节树；原始 TXT 保持不变。";
+        if (ApplyScopeSummaryText is not null)
+            ApplyScopeSummaryText.Text = LandingMode == RepairLandingMode.EditSource
+                ? "先预览，备份后写入当前 TXT"
+                : "仅整理章节树（TXT 不变）";
+        GuideUndoText.Text = "应用前可取消；应用后可撤销/重做。另存副本不会覆盖原稿。";
     }
 
     /// <summary>
@@ -201,6 +260,11 @@ public partial class ChapterEditorWindow
         if (workload.LocalCount > 0) parts.Add($"{workload.LocalCount} 处本地就能修");
         if (workload.ManualCount > 0) parts.Add($"{workload.ManualCount} 处需要你核对");
         NextStepHeadline.Text = string.Join(" · ", parts);
+        if (UseLocalRepairOnly)
+        {
+            NextStepDetail.Text = "本次只生成本地检查建议；需要目录核对的问题会保留。需要完整核对时，请选择参考目录。";
+            return;
+        }
         // 只有"需要目录、而且手上还没有"时才指路。其余情况点主按钮就够了，
         // 再给一句指示反而让人以为还有前置步骤。
         NextStepDetail.Text = workload.NeedsCatalogFirst
@@ -219,6 +283,7 @@ public partial class ChapterEditorWindow
     {
         if (_document is null) return;
         ForgetSavedCatalog();
+        _repairBasisChosenThisSession = false;
         RefreshContextBar();
         SetReviewResult("已忘记这份参考目录。当前章节树**没有变化** —— 它仍然是按那份目录校验过的结果；"
             + "要让它回到本地规则识别的样子，请用原文区的「重新识别章节（会替换手工调整）…」。");
@@ -228,17 +293,37 @@ public partial class ChapterEditorWindow
     /// 主按钮**按本次依据变名**（设计文档 §5.2）。
     ///
     /// <para>"本次依据"就是 <see cref="ChapterRepairContextSnapshot.CatalogAvailability"/>：
-    /// 磁盘上有本书保存过的目录就用它，否则走当前章节树。这个判断与
+    /// 明确仅本地时跳过目录；否则磁盘上有本书保存过的目录就用它。这个判断与
     /// <c>ChapterAutoRepair.ReadSavedCatalog</c> 读的是同一处记录，所以按钮上写的和点下去用的是同一个依据
     /// —— 这正是它以前叫「预览目录修复」却在无目录时走自修复的反面。</para>
     ///
     /// <para>Tooltip 明说两件事：本次**不会**重新读取参考目录；以及能否同时改原文要等到预览才算得出来
     /// （§3.2 要点 4、§2.2）。后者不写会变成一个假承诺。</para>
     /// </summary>
+    private void RepairBasis_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_document is null) return;
+        if (!_syncingRepairBasis) _repairBasisChosenThisSession = true;
+        // “参考目录”只有在本书确实有已保存/本次选定目录时才是可用依据。
+        // 防止用户把当前书稿取消勾选后，界面看似切到目录，实际又退回本地启发式。
+        if (LocalRepairOnlyOption.IsChecked != true
+            && _context.CatalogAvailability == CatalogAvailability.None
+            && !_catalogChosenThisSession)
+        {
+            LocalRepairOnlyOption.IsChecked = true;
+            return;
+        }
+        RefreshRepairButton();
+        RefreshNextStep();
+        RefreshActionGuide();
+    }
+
+    private bool UseLocalRepairOnly => LocalRepairOnlyOption?.IsChecked == true;
+
     private void RefreshRepairButton()
     {
         if (AutoRepairButtonText is null || AutoRepairButton is null) return;
-        var byCatalog = _context.CatalogAvailability != CatalogAvailability.None;
+        var byCatalog = !UseLocalRepairOnly && _context.CatalogAvailability != CatalogAvailability.None;
         // **按钮只说做什么，依据单独一行说。**
         //
         // 原来整句依据塞在按钮里（「基于当前章节树检查并生成建议…」），于是这一行六个控件排不下，
@@ -301,11 +386,16 @@ public partial class ChapterEditorWindow
 
     private void ValidateRules()
     {
-        _ = ReadHierarchyOptions();
+        var hierarchy = ReadHierarchyOptions();
         NumericHeadingRule.Compile(_numericPattern);
         HeadingTypoRules.Parse(_headingNumberCorrections);
-        foreach (var expression in new[] { ChapterPatternText.Text, Level1PatternText.Text, Level2PatternText.Text, Level3PatternText.Text })
-            if (!string.IsNullOrWhiteSpace(expression)) _ = new Regex(expression, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(200));
+        _ = ChapterRecognitionRegex.Compile(ChapterPatternText.Text, ChapterEditingDocument.DefaultChapterPattern, "普通章节标题");
+        if (hierarchy.Enabled)
+        {
+            _ = ChapterRecognitionRegex.Compile(hierarchy.Level1Pattern, TocHierarchyOptions.DefaultLevel1Pattern, "卷层级规则");
+            _ = ChapterRecognitionRegex.Compile(hierarchy.Level2Pattern, TocHierarchyOptions.DefaultLevel2Pattern, "章层级规则");
+            _ = ChapterRecognitionRegex.Compile(hierarchy.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern, "节层级规则");
+        }
     }
 
     private void RecognitionSettings_Click(object sender, RoutedEventArgs e)
@@ -597,6 +687,8 @@ public partial class ChapterEditorWindow
         void Add(MenuItem category, string title, RoutedEventHandler action, bool enabled = true)
         { var item = new MenuItem { Header = title, IsEnabled = enabled }; item.Click += action; category.Items.Add(item); }
         var all = Category("全书整理");
+        var selection = Category("选中章节");
+        Add(selection, "移动到指定章节之前（仅成品，预览）…", RelocateChapters_Click, !_sourceChanged && OperationSelection().Length > 0);
         Add(all, "重建编号分组与结构（预览）…", RecoverStructure_Click, !_sourceChanged);
         Add(all, "清理全书重复标题…", CleanDuplicateTitles_Click, !_sourceChanged);
         Add(all, "规范化全书数字标题…", NormalizeAll_Click, !_sourceChanged);

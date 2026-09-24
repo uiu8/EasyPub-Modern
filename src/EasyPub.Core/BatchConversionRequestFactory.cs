@@ -32,6 +32,7 @@ public static class BatchConversionRequestFactory
         return sources.Select(source =>
         {
             var metadataOverrides = source.MetadataOverrides ?? new BookMetadataOverrides();
+            var hasRecognitionSnapshot = source.ChapterTree?.RecognitionOptions is not null;
             return new ConversionRequest(
                 source.InputPath,
                 Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(source.InputPath) + extension),
@@ -40,8 +41,12 @@ public static class BatchConversionRequestFactory
                 Options: baseOptions with
                 {
                     CoverImagePath = source.CoverImagePath,
-                    TocHierarchy = source.ChapterTree?.NumericHeadingRecognition is not null
-                        ? baseOptions.TocHierarchy.ForBook(source.ChapterTree) : baseOptions.TocHierarchy,
+                    ChapterPattern = hasRecognitionSnapshot
+                        ? source.ChapterTree!.ChapterPattern
+                        : baseOptions.ChapterPattern,
+                    TocHierarchy = hasRecognitionSnapshot
+                        ? source.ChapterTree!.RecognitionOptions!
+                        : baseOptions.TocHierarchy.ForBook(source.ChapterTree),
                     TextCleanup = source.CleanupOverride ?? baseOptions.TextCleanup,
                     Illustrations = source.Illustrations ?? [],
                     Metadata = MetadataMappingResolver.Apply(baseOptions.Metadata, metadataOverrides),

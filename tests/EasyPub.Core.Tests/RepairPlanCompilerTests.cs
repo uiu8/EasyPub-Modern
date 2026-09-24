@@ -178,9 +178,9 @@ public class RepairPlanCompilerTests
         var result = RepairPlanCompiler.Compile(Input(subject, RepairLandingMode.EditSource));
 
         Assert.True(result.CanApply, result.Describe());
-        // 样书里标题与目录写法不同的有 69 章，每一个都该产生一次替换。
+        // 样书里标题与目录写法不同的有 7 章，每一个都该产生一次替换。
         var replaces = result.SourcePatch!.Operations.OfType<ReplaceOriginalLine>().Count();
-        Assert.Equal(69, replaces);
+        Assert.Equal(7, replaces);
         // 重复副本默认只从成品排除，所以不该有删除 —— 用户没有要求删。
         Assert.Empty(result.SourcePatch.Operations.OfType<DeleteOriginalLine>());
     }

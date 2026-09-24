@@ -10,6 +10,331 @@ namespace EasyPub.Desktop.Tests;
 public class ChapterBatchTests
 {
     [Fact]
+    public async Task Relocation_menu_preview_cancel_apply_undo_redo_preserves_source()
+    {
+        await Run((window, document, path) =>
+        {
+            window.Roots.ToList().ForEach(n => n.IsExpanded = true);
+            var sourceVolume = window.Roots.Single(n => n.Title == "第二卷 后续");
+            window.SelectChapterForOperation(sourceVolume.Children[0], System.Windows.Input.ModifierKeys.None);
+            window.SelectChapterForOperation(sourceVolume.Children[1], System.Windows.Input.ModifierKeys.Control);
+            var original = window.Roots.SelectMany(n => n.Children).Select(n => n.Title).ToArray();
+            void Open(bool accept)
+            {
+                Exception? failure = null;
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+                timer.Tick += (_, _) =>
+                {
+                    var dialog = window.OwnedWindows.OfType<ChapterRelocationWindow>().FirstOrDefault();
+                    if (dialog == null) return;
+                    timer.Stop();
+                    try
+                    {
+                        var apply = (Button)dialog.FindName("RelocationApply");
+                        Assert.False(apply.IsEnabled);
+                        ((TextBox)dialog.FindName("RelocationSearch")).Text = "第四章";
+                        var list = (ListBox)dialog.FindName("RelocationTargets");
+                        Assert.Single(list.Items.Cast<object>());
+                        Assert.False(apply.IsEnabled);
+                        list.SelectedIndex = 0;
+                        Assert.True(apply.IsEnabled);
+                        Assert.Contains("第一卷", ((TextBlock)dialog.FindName("RelocationSummary")).Text);
+                        if (accept && Environment.GetEnvironmentVariable("EASYPUB_RELOCATION_CAPTURE") is { } capture)
+                        {
+                            dialog.UpdateLayout();
+                            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)dialog.ActualWidth, (int)dialog.ActualHeight,
+                                96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                            bitmap.Render(dialog);
+                            var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                            using var stream = File.Create(capture); encoder.Save(stream);
+                        }
+                        ((Button)dialog.FindName(accept ? "RelocationApply" : "RelocationCancel")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    catch (Exception error) { failure = error; dialog.DialogResult = false; }
+                };
+                timer.Start();
+                try
+                {
+                    ((Button)window.FindName("WorkbenchMoreButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    var menu = ((Button)window.FindName("WorkbenchMoreButton")).ContextMenu!;
+                    var category = menu.Items.OfType<MenuItem>().Single(i => (string)i.Header == "选中章节");
+                    var action = category.Items.OfType<MenuItem>().Single();
+                    Assert.True(action.IsEnabled);
+                    menu.IsOpen = false;
+                    action.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                }
+                finally { timer.Stop(); }
+                if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+            }
+            Open(false);
+            Assert.Equal(original, window.Roots.SelectMany(n => n.Children).Select(n => n.Title));
+            Open(true);
+            var expected = new[] { "第一章 甲", "第二章 乙", "第三章 丙", "第四章 丁" };
+            Assert.Equal(expected, window.Roots.Single(n => n.Title == "第一卷 起点").Children.Select(n => n.Title));
+            Assert.Single(window.Roots.Single(n => n.Title == "第二卷 后续").Children);
+            ((Button)window.FindName("UndoButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(original, window.Roots.SelectMany(n => n.Children).Select(n => n.Title));
+            ((Button)window.FindName("RedoButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(expected, window.Roots.Single(n => n.Title == "第一卷 起点").Children.Select(n => n.Title));
+            return Task.CompletedTask;
+        }, "第一卷 起点\n第一章 甲\n正文甲\n第四章 丁\n正文丁\n第二卷 后续\n第二章 乙\n正文乙\n第三章 丙\n正文丙\n第五章 戊\n正文戊", false, true);
+    }
+
+    [Fact]
+    public async Task Relocation_menu_exports_revised_copy_without_changing_current_tree()
+    {
+        var backupRoot = Path.Combine(Path.GetTempPath(), "relocation-ui-copy-" + Guid.NewGuid().ToString("N"));
+        var previous = Environment.GetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH");
+        Environment.SetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH", backupRoot);
+        try
+        {
+            await Run((window, document, path) =>
+            {
+                window.Roots.ToList().ForEach(n => n.IsExpanded = true);
+                var volume = window.Roots.Single(n => n.Title == "第二卷 后续");
+                window.SelectChapterForOperation(volume.Children[0], System.Windows.Input.ModifierKeys.None);
+                window.SelectChapterForOperation(volume.Children[1], System.Windows.Input.ModifierKeys.Control);
+                var before = window.Roots.SelectMany(n => n.Children).Select(n => n.Title).ToArray();
+                Exception? failure = null;
+                var frame = new System.Windows.Threading.DispatcherFrame();
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
+                timer.Tick += (_, _) =>
+                {
+                    var dialog = window.OwnedWindows.OfType<ChapterRelocationWindow>().FirstOrDefault();
+                    if (dialog == null) return;
+                    try
+                    {
+                        ((TextBox)dialog.FindName("RelocationSearch")).Text = "第四章";
+                        ((ListBox)dialog.FindName("RelocationTargets")).SelectedIndex = 0;
+                        ((Button)dialog.FindName("RelocationExport")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        frame.Continue = false;
+                    }
+                    catch (Exception error) { failure = error; frame.Continue = false; }
+                };
+                timer.Start();
+                ((Button)window.FindName("WorkbenchMoreButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var menu = ((Button)window.FindName("WorkbenchMoreButton")).ContextMenu!;
+                var category = menu.Items.OfType<MenuItem>().Single(i => (string)i.Header == "选中章节");
+                menu.IsOpen = false; category.Items.OfType<MenuItem>().Single().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                System.Windows.Threading.Dispatcher.PushFrame(frame); timer.Stop();
+                var wait = DateTime.UtcNow.AddSeconds(2);
+                while (window.LastRelocationCopy is null && DateTime.UtcNow < wait)
+                {
+                    var settle = new System.Windows.Threading.DispatcherFrame();
+                    var tick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+                    tick.Tick += (_, _) => { tick.Stop(); settle.Continue = false; }; tick.Start();
+                    System.Windows.Threading.Dispatcher.PushFrame(settle);
+                }
+                Assert.NotNull(window.LastRelocationCopy);
+                Assert.True(window.LastRelocationCopy!.Succeeded, window.LastRelocationCopy.Transaction.Message);
+                Assert.True(File.Exists(window.LastRelocationCopy.CopyPath + ".movement.json"));
+                Assert.True(File.Exists(window.LastRelocationCopy.ProjectPath));
+                if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+                Assert.Equal(before, window.Roots.SelectMany(n => n.Children).Select(n => n.Title));
+                return Task.CompletedTask;
+            }, "第一卷 起点\n第一章 甲\n正文甲\n第四章 丁\n正文丁\n第二卷 后续\n第二章 乙\n正文乙\n第三章 丙\n正文丙\n第五章 戊\n正文戊", false, true);
+            await Task.Delay(700);
+            // The handler stores the result so the test does not depend on the user's configured backup root.
+            // The result itself points at the physical TXT, project, movement manifest and backup.
+        }
+        finally { Environment.SetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH", previous); }
+    }
+
+    [Theory]
+    [InlineData(2, "6,7", "2,3,4")]
+    [InlineData(3, "6,7,2", "3,4")]
+    [InlineData(3, "6,7,2", "3,4", true)]
+    [InlineData(3, "6,7,2", "3,4", false, true)]
+    [InlineData(3, "6,7,2", "3,4", true, true)]
+    public async Task Manual_split_buttons_undo_redo_and_project_reopen_preserve_reading_order(
+        int splitLine, string expectedBefore, string expectedAfter, bool exportCopy = false, bool selectCatalogTitle = false)
+    {
+        var previousCatalog = WorkbenchHarness.IsolateCatalogStore();
+        var backupRoot = Path.Combine(Path.GetTempPath(), "split-ui-copy-" + Guid.NewGuid().ToString("N"));
+        var previousBackupRoot = Environment.GetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH");
+        Environment.SetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH", backupRoot);
+        try
+        {
+        await Run((window, document, path) =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(
+                System.Windows.Threading.Dispatcher.CurrentDispatcher));
+            // Model a chapter previously moved and merged: reading order differs from source order.
+            var merged = new ChapterTreeEntry("merged", "合并章节", 1, true, 1,
+                [new(6, 7), new(2, 4)]) { RecognitionSource = "manual" };
+            window.ApplyRepairEntries(document.WithEntries([merged]));
+            if (selectCatalogTitle)
+            {
+                ReferenceCatalogInput.SaveCatalog(document.SourceSha256, new ReferenceCatalog("验收参考目录", "同名跨卷", [
+                    new("第三章 人工确认的边界", ReferenceNodeKind.Chapter, null, "第一卷"),
+                    new("第三章 人工确认的边界", ReferenceNodeKind.Chapter, null, "第二卷")]));
+                typeof(ChapterEditorWindow).GetField("_referenceCatalogLoaded", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(window, false);
+            }
+            static string Body(IEnumerable<ChapterTreeEntry> entries) => string.Join(",", entries
+                .SelectMany(e => e.ContentRanges).SelectMany(r => Enumerable.Range(r.StartLine, r.EndLine - r.StartLine + 1)));
+            ChapterTreeEntry[] Entries() => window.Roots.Select(n => n.ToEntry()).ToArray();
+            void Click(string name) => ((Button)window.FindName(name)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            window.NavigateToSourceLine(6);
+            Assert.False(((Button)window.FindName("SplitButton")).IsEnabled);
+            window.NavigateToSourceLine(splitLine);
+            Assert.True(((Button)window.FindName("SplitButton")).IsEnabled);
+            void ReviewSplit(bool apply)
+            {
+                Exception? failure = null;
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
+                timer.Tick += (_, _) =>
+                {
+                    var dialog = window.OwnedWindows.OfType<ChapterSplitWindow>().SingleOrDefault();
+                    if (dialog is null) return;
+                    timer.Stop();
+                    try
+                    {
+                        Assert.False(dialog.ConfirmButton.IsEnabled);
+                        dialog.TitleInput.Text = "   ";
+                        Assert.False(dialog.ConfirmButton.IsEnabled);
+                        Assert.Single(Entries()); // Opening/editing the preview must not mutate the tree.
+                        dialog.TitleInput.Text = "  第三章 人工确认的边界  ";
+                        if (selectCatalogTitle)
+                        {
+                            dialog.TitleInput.Text = "临时输入，不应自动覆盖";
+                            dialog.CatalogSearch.Text = "第二卷";
+                            Assert.Single(dialog.CatalogTitles.Items.Cast<object>());
+                            dialog.CatalogTitles.SelectedIndex = 0;
+                            Assert.Equal("临时输入，不应自动覆盖", dialog.ChapterTitle);
+                            dialog.UseCatalogTitle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            Assert.Equal("第三章 人工确认的边界", dialog.ChapterTitle);
+                        }
+                        Assert.True(dialog.ConfirmButton.IsEnabled);
+                        dialog.ExportCopyOption.IsChecked = exportCopy;
+                        var capture = Environment.GetEnvironmentVariable("EASYPUB_SPLIT_CAPTURE");
+                        if (capture is not null && apply)
+                        {
+                            ThemeManager.Apply("Light", dialog);
+                            dialog.UpdateLayout();
+                            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                                (int)((FrameworkElement)dialog.Content).ActualWidth + 48,
+                                (int)((FrameworkElement)dialog.Content).ActualHeight + 48,
+                                96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                            bitmap.Render(dialog);
+                            var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                            using var stream = File.Create(capture); encoder.Save(stream);
+                        }
+                        (apply ? dialog.ConfirmButton : dialog.CancelButton).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    catch (Exception ex) { failure = ex; dialog.Close(); }
+                };
+                timer.Start();
+                try { Click("SplitButton"); }
+                finally { timer.Stop(); }
+                if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+            }
+            ReviewSplit(apply: false);
+            Assert.Single(Entries());
+            Assert.Equal(Body([merged]), Body(Entries()));
+            Assert.False(Directory.Exists(backupRoot));
+            ReviewSplit(apply: true);
+            if (!window.IsEnabled)
+            {
+                var frame = new System.Windows.Threading.DispatcherFrame();
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(25) };
+                timer.Tick += (_, _) => { if (window.IsEnabled || DateTime.UtcNow > deadline) frame.Continue = false; };
+                timer.Start();
+                try { System.Windows.Threading.Dispatcher.PushFrame(frame); }
+                finally { timer.Stop(); }
+                Assert.True(window.IsEnabled);
+            }
+            if (exportCopy)
+            {
+                var copyProject = Assert.Single(Directory.GetFiles(backupRoot, "*.easypubproj", SearchOption.AllDirectories));
+                var exported = new EasyPubProjectStore(copyProject).LoadAsync().GetAwaiter().GetResult();
+                var copyBook = Assert.Single(exported.Books);
+                Assert.NotEqual(path, copyBook.InputPath);
+                Assert.Equal("第三章 人工确认的边界", copyBook.ChapterTree!.Entries[1].Title);
+                Assert.Equal(splitLine, copyBook.ChapterTree.Entries[1].TitleLineNumber);
+                var reopenedCopy = ChapterTreeDocument.LoadAsync(copyBook.InputPath, existingPlan: copyBook.ChapterTree).GetAwaiter().GetResult();
+                Assert.Equal(document.GetSourceLines(merged).Select(l => l.Text),
+                    reopenedCopy.Entries.SelectMany(reopenedCopy.GetSourceLines).Select(l => l.Text));
+                Assert.Equal("第三章 人工确认的边界", reopenedCopy.Entries[1].Title);
+            }
+            var split = Entries();
+            Assert.Equal(2, split.Length);
+            Assert.Equal(expectedBefore, Body([split[0]]));
+            Assert.Equal(expectedAfter, Body([split[1]]));
+            Assert.Equal("第三章 人工确认的边界", split[1].Title);
+            Assert.Null(split[1].TitleLineNumber);
+            Assert.Equal("manual", split[1].RecognitionSource);
+            Assert.Equal(Body([merged]), Body(split));
+            RepairIntegrity.Verify([merged], split, []);
+
+            Click("UndoButton");
+            Assert.Single(Entries());
+            Assert.Equal("merged", Entries()[0].Id);
+            Assert.Equal(Body([merged]), Body(Entries()));
+            Click("RedoButton");
+            Assert.Equal(split.Select(e => e.Id), Entries().Select(e => e.Id));
+            Assert.Equal(Body(split), Body(Entries()));
+
+            var projectPath = path + ".easypubproj";
+            ChapterEditorWindow? reopened = null;
+            try
+            {
+                var plan = document.CreatePlan(Entries());
+                var project = new EasyPubProjectDocument(EasyPubProjectDocument.CurrentSchemaVersion,
+                    projectPath, Path.GetDirectoryName(path), ConversionProfile.Default,
+                    [new EasyPubProjectBook(path, "测试", null, null, []) { ChapterTree = plan }], DateTimeOffset.Now);
+                var store = new EasyPubProjectStore(projectPath);
+                store.SaveAsync(project).GetAwaiter().GetResult();
+                var loaded = store.LoadAsync().GetAwaiter().GetResult();
+                var saved = Assert.Single(loaded.Books).ChapterTree!;
+                var reopenedDocument = ChapterTreeDocument.LoadAsync(path, existingPlan: saved).GetAwaiter().GetResult();
+                reopened = new ChapterEditorWindow(reopenedDocument, reopenedDocument.RecognitionOptions, null,
+                    TextEncodingMode.Auto, savedPlan: saved) { Opacity = 0, ShowInTaskbar = false };
+                reopened.Show(); reopened.UpdateLayout();
+                var restored = reopened.Roots.Select(n => n.ToEntry()).ToArray();
+                Assert.Equal(split.Select(e => e.Id), restored.Select(e => e.Id));
+                Assert.Equal(split.Select(e => e.Title), restored.Select(e => e.Title));
+                Assert.Equal(expectedBefore, Body([restored[0]]));
+                Assert.Equal(expectedAfter, Body([restored[1]]));
+                Assert.Null(restored[1].TitleLineNumber);
+                RepairIntegrity.Verify([merged], restored, []);
+            }
+            finally { reopened?.DiscardChangesAndClose(); File.Delete(projectPath); }
+            return Task.CompletedTask;
+        }, "第一章 原章\n正文甲\n正文乙\n正文丙\n第二章 后章\n正文丁\n正文戊", numericEnabled: false);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EASYPUB_SOURCE_BACKUPS_PATH", previousBackupRoot);
+            WorkbenchHarness.RestoreCatalogStore(previousCatalog);
+        }
+    }
+
+    [Fact]
+    public async Task Applying_a_new_source_version_cannot_undo_into_old_line_numbers()
+    {
+        const string newText = "第一章 开始\n新增的一行正文\n原有正文\n第二章 继续\n后续正文";
+        await Run((window, document, path) =>
+        {
+            window.ApplyRepairEntries(document.WithEntries(document.Entries.Select(e => e with { Title = e.Title + " 修订" }).ToArray()));
+            Assert.True(((Button)window.FindName("UndoButton")).IsEnabled);
+            File.WriteAllText(path, newText);
+            var updated = ChapterTreeDocument.Load(path, File.ReadAllBytes(path));
+            window.ApplyRepairEntries(updated);
+            Assert.False(((Button)window.FindName("UndoButton")).IsEnabled);
+            Assert.False(((Button)window.FindName("RedoButton")).IsEnabled);
+            ((Button)window.FindName("UndoButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(updated.Entries.Select(e => e.Title), window.Roots.Select(n => n.Title));
+            Assert.Equal(newText, File.ReadAllText(path));
+            return Task.CompletedTask;
+        }, "第一章 开始\n原有正文", numericEnabled: false, expectedSource: newText);
+    }
+
+    [Fact]
     public async Task Rule_guidance_tracks_pending_changes_without_replacing_the_tree()
     {
         await Run((window, document, path) =>
@@ -533,7 +858,7 @@ public class ChapterBatchTests
         });
     }
 
-    private static async Task Run(Func<ChapterEditorWindow, ChapterTreeDocument, string, Task> action, string? suppliedSource = null, bool numericEnabled = true, bool hierarchyEnabled = false)
+    private static async Task Run(Func<ChapterEditorWindow, ChapterTreeDocument, string, Task> action, string? suppliedSource = null, bool numericEnabled = true, bool hierarchyEnabled = false, string? expectedSource = null)
     {
         var path = Path.Combine(Path.GetTempPath(), $"chapter-batch-{Guid.NewGuid():N}.txt");
         var source = suppliedSource ?? "第一章 A\n甲\n1：原文条目\n乙\n2：第二条目\n丙\n第二章 D\n丁\n3：第三条目\n戊\n4：第四条目\n己";
@@ -549,7 +874,8 @@ public class ChapterBatchTests
                 try
                 {
                     var capture = Environment.GetEnvironmentVariable("EASYPUB_REVIEW_CAPTURE");
-                    if (capture is not null && Application.Current is null) { captureApp = new App(); captureApp.InitializeComponent(); }
+                    if ((capture is not null || Environment.GetEnvironmentVariable("EASYPUB_SPLIT_CAPTURE") is not null)
+                        && Application.Current is null) { captureApp = new App(); captureApp.InitializeComponent(); }
                     window = new ChapterEditorWindow(document) { Opacity = 0, ShowInTaskbar = false };
                     window.ConfirmAction = _ => true;
                     window.Show(); window.UpdateLayout();
@@ -582,7 +908,7 @@ public class ChapterBatchTests
             thread.SetApartmentState(ApartmentState.STA); thread.Start();
             Assert.True(thread.Join(TimeSpan.FromSeconds(20)));
             if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
-            Assert.Equal(source, await File.ReadAllTextAsync(path));
+            Assert.Equal(expectedSource ?? source, await File.ReadAllTextAsync(path));
         }
         finally { File.Delete(path); }
     }

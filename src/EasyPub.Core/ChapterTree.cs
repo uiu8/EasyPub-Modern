@@ -38,6 +38,17 @@ public sealed record ChapterTreePlan(
     string SourceSha256,
     IReadOnlyList<ChapterTreeEntry> Entries)
 {
+    /// <summary>
+    /// The exact chapter recognition rule used to build this tree. A null value means the built-in
+    /// current rule, but <see cref="RecognitionOptions"/> being non-null is also the marker that this
+    /// plan has a complete recognition snapshot. Older project files do not have that marker and must
+    /// continue to use the caller's current defaults when they are reopened.
+    /// </summary>
+    public string? ChapterPattern { get; init; }
+
+    /// <summary>The complete per-book recognition snapshot captured with the tree.</summary>
+    public TocHierarchyOptions? RecognitionOptions { get; init; }
+
     public bool? NumericHeadingRecognition { get; init; }
     public int? NumericHeadingMinimumBodyLines { get; init; }
     public string? NumericHeadingPattern { get; init; }
@@ -82,6 +93,7 @@ public sealed class ChapterTreeDocument
     internal IReadOnlyList<ChapterTreeSourceLine> SourceLines => _sourceLines;
     public IReadOnlyList<ChapterTreeEntry> Entries { get; }
     public TocHierarchyOptions RecognitionOptions { get; private init; } = new();
+    public string? ChapterPattern { get; private init; }
 
     /// <summary>
     /// 识别时跳过了多少行"连着印两遍的标题"（见 <c>SkipRepeatedHeadingRun</c>）。
@@ -98,7 +110,12 @@ public sealed class ChapterTreeDocument
 
     /// <summary>Creates a new in-memory tree for the same TXT, preserving its source hash and recognition options.</summary>
     public ChapterTreeDocument WithEntries(IEnumerable<ChapterTreeEntry> entries)
-        => new(SourcePath, SourceSha256, _sourceLines, entries.ToArray()) { RecognitionOptions = RecognitionOptions };
+        => new(SourcePath, SourceSha256, _sourceLines, entries.ToArray())
+        {
+            RecognitionOptions = RecognitionOptions,
+            ChapterPattern = ChapterPattern,
+            RepeatedHeadingLinesSkipped = RepeatedHeadingLinesSkipped,
+        };
 
     public static async Task<ChapterTreeDocument> LoadAsync(
         string sourcePath,
@@ -136,9 +153,13 @@ public sealed class ChapterTreeDocument
         ArgumentNullException.ThrowIfNull(bytes);
         var fullPath = Path.GetFullPath(sourcePath);
         var sourceHash = Convert.ToHexString(SHA256.HashData(bytes));
-        var hierarchyOptions = hierarchy ?? new TocHierarchyOptions();
+        var savedRecognition = existingPlan?.RecognitionOptions;
+        var hierarchyOptions = savedRecognition ?? hierarchy ?? new TocHierarchyOptions();
+        var effectiveChapterPattern = savedRecognition is not null
+            ? existingPlan!.ChapterPattern
+            : chapterPattern;
         var editingDocument = ChapterEditingDocument.FromBytes(
-            fullPath, bytes, chapterPattern, encodingMode, cancellationToken);
+            fullPath, bytes, effectiveChapterPattern, encodingMode, cancellationToken);
         var sourceLines = editingDocument.GetLines()
             .Select(line => new ChapterTreeSourceLine(line.LineNumber, line.Text))
             .ToArray();
@@ -149,15 +170,19 @@ public sealed class ChapterTreeDocument
                 throw new InvalidDataException("TXT 内容已发生变化，已保存的章节树不能继续套用，请重新识别。");
             existingPlan = NormalizePersistedPlan(existingPlan);
             ValidatePlan(existingPlan, sourceLines.Length);
-            return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries) { RecognitionOptions = hierarchyOptions.ForBook(existingPlan) };
+            return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, existingPlan.Entries)
+            {
+                RecognitionOptions = hierarchyOptions.ForBook(existingPlan),
+                ChapterPattern = effectiveChapterPattern,
+            };
         }
 
         var levelPatterns = hierarchyOptions.Enabled
             ? new[]
             {
-                CompilePattern(hierarchyOptions.Level1Pattern, TocHierarchyOptions.DefaultLevel1Pattern),
-                CompilePattern(hierarchyOptions.Level2Pattern, TocHierarchyOptions.DefaultLevel2Pattern),
-                CompilePattern(hierarchyOptions.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern),
+                CompilePattern(hierarchyOptions.Level1Pattern, TocHierarchyOptions.DefaultLevel1Pattern, "卷层级规则"),
+                CompilePattern(hierarchyOptions.Level2Pattern, TocHierarchyOptions.DefaultLevel2Pattern, "章层级规则"),
+                CompilePattern(hierarchyOptions.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern, "节层级规则"),
             }
             : [];
         var candidates = editingDocument.Candidates
@@ -167,7 +192,8 @@ public sealed class ChapterTreeDocument
         {
             var numericRegex = NumericHeadingRule.Compile(hierarchyOptions.NumericHeadingPattern);
             foreach (var line in sourceLines)
-                if (!candidates.ContainsKey(line.LineNumber) && NumericHeadingRule.Matches(numericRegex, line.Text))
+                if (!candidates.ContainsKey(line.LineNumber)
+                    && NumericHeadingRule.Matches(numericRegex, line.Text, line.LineNumber))
                     candidates.Add(line.LineNumber, new ChapterCandidate(line.LineNumber, line.Text.Trim(), line.Text.Trim(), ChapterCandidateKind.NumericTitle));
         }
         var headings = new List<(int LineNumber, string Title, int Level)>();
@@ -183,7 +209,7 @@ public sealed class ChapterTreeDocument
         foreach (var line in sourceLines)
         {
             if (line.LineNumber < repeatedRunEnd) continue;
-            var level = MatchLevel(line.Text, levelPatterns);
+            var level = MatchLevel(line.Text, levelPatterns, line.LineNumber);
             if (level == 0 && !candidates.TryGetValue(line.LineNumber, out var candidate)) continue;
             var suggested = candidates.TryGetValue(line.LineNumber, out candidate)
                 ? candidate.OriginalTitle
@@ -198,7 +224,7 @@ public sealed class ChapterTreeDocument
             hierarchyOptions.NumericHeadingMinimumBodyLines);
         headings.RemoveAll(heading => candidates.TryGetValue(heading.LineNumber, out var candidate)
             && candidate.Kind == ChapterCandidateKind.NumericTitle
-            && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns) == 0
+            && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns, heading.LineNumber) == 0
             && !numericLines.Contains(heading.LineNumber - 1));
 
         var entries = new List<ChapterTreeEntry>();
@@ -243,7 +269,7 @@ public sealed class ChapterTreeDocument
                 HeadingLevel = heading.Level,
                 RecognitionSource = candidates.TryGetValue(heading.LineNumber, out var sourceCandidate)
                     && sourceCandidate.Kind == ChapterCandidateKind.NumericTitle
-                    && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns) == 0 ? "numeric" : "pattern",
+                    && MatchLevel(sourceLines[heading.LineNumber - 1].Text, levelPatterns, heading.LineNumber) == 0 ? "numeric" : "pattern",
             });
         }
 
@@ -253,6 +279,7 @@ public sealed class ChapterTreeDocument
         return new ChapterTreeDocument(fullPath, sourceHash, sourceLines, entries)
         {
             RecognitionOptions = hierarchyOptions,
+            ChapterPattern = chapterPattern,
             RepeatedHeadingLinesSkipped = repeatedHeadingLinesSkipped,
         };
     }
@@ -270,8 +297,20 @@ public sealed class ChapterTreeDocument
     }
 
     public ChapterTreePlan CreatePlan(IEnumerable<ChapterTreeEntry> entries)
+        => CreatePlan(entries, RecognitionOptions, ChapterPattern);
+
+    /// <summary>Creates a plan while binding it to the recognition settings shown by the editor.</summary>
+    public ChapterTreePlan CreatePlan(
+        IEnumerable<ChapterTreeEntry> entries,
+        TocHierarchyOptions recognitionOptions,
+        string? chapterPattern)
     {
-        var plan = new ChapterTreePlan(SourceSha256, entries.ToArray());
+        ArgumentNullException.ThrowIfNull(recognitionOptions);
+        var plan = new ChapterTreePlan(SourceSha256, entries.ToArray())
+        {
+            RecognitionOptions = recognitionOptions,
+            ChapterPattern = chapterPattern,
+        };
         ValidatePlan(plan, LineCount);
         return plan;
     }
@@ -356,23 +395,35 @@ public sealed class ChapterTreeDocument
         return line;
     }
 
-    private static Regex CompilePattern(string? pattern, string fallback) =>
-        new(string.IsNullOrWhiteSpace(pattern) ? fallback : pattern, RegexOptions.Compiled);
+    private static Regex CompilePattern(string? pattern, string fallback, string ruleName) =>
+        ChapterRecognitionRegex.Compile(pattern, fallback, ruleName);
 
-    private static int MatchLevel(string line, IReadOnlyList<Regex> patterns)
+    private static int MatchLevel(string line, IReadOnlyList<Regex> patterns, int? lineNumber = null)
     {
         for (var index = 0; index < patterns.Count; index++)
         {
-            if (patterns[index].IsMatch(line)) return index + 1;
+            if (ChapterRecognitionRegex.IsMatch(patterns[index], line, $"{LevelName(index)}规则", lineNumber))
+                return index + 1;
         }
         return 0;
     }
+
+    private static string LevelName(int index) => index switch
+    {
+        0 => "卷层级",
+        1 => "章层级",
+        2 => "节层级",
+        _ => "目录层级",
+    };
 
     private static ChapterTreePlan NormalizeLegacyFrontMatter(ChapterTreePlan plan)
     {
         if (plan.Entries.Count == 0) return plan;
         var first = plan.Entries[0];
         if (first.IsFrontMatter || first.TitleLineNumber.HasValue) return plan;
+        // Synthetic/manual volume roots have no source heading. They are not legacy prefaces.
+        // Keep their children attached when reopening a saved structure-recovery result.
+        if (first.RecognitionSource is "manual" or "reference-volume" or "inferred-volume") return plan;
         var startsAtBeginning = first.ContentRanges.Count == 0 || first.ContentRanges.Min(range => range.StartLine) == 1;
         if (!startsAtBeginning) return plan;
         var entries = plan.Entries.ToArray();

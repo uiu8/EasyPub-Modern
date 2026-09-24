@@ -17,28 +17,27 @@ public partial class ChapterEditorWindow
     /// pre-repair file, so a repair that had just written the TXT left the window claiming "原文已变化 · 刷新"
     /// about the program's own edit.</para>
     /// </summary>
-    internal void ApplyRepairEntries(ChapterTreeDocument document, string? catalogFingerprint = null)
+    internal void ApplyRepairEntries(ChapterTreeDocument document, string? catalogFingerprint = null,
+        bool usedReferenceCatalog = false)
     {
         // A snapshot written in the old numbering cannot be replayed onto the new one, so the history goes
         // with the version it belongs to.
         var changedSource = !string.Equals(document.SourceSha256, _document.SourceSha256, StringComparison.OrdinalIgnoreCase);
-        _document = document;
-        // 这棵树刚刚被**目录方案**改过 —— 来源标记必须跟着走。它是唯一能回答"当前树是怎么来的"的
-        // 事实来源：RecognitionSource 装不下它（手工编辑会覆盖 reference 标记），而
-        // ChapterTreePlan.ReferenceCatalog 只证明"保存过一份目录"。
-        //
-        // 标记放在这里而不是调用点，是因为两个落地模式都经过这个方法 —— 漏掉任一处，
-        // 那棵树在版本迁移之后就会被当成"本地识别"。
-        _provenance = PersistedTreeProvenance.FromCatalog(catalogFingerprint);
+        var repairedRoots = BuildTree(document.Entries).ToArray();
         _sourceChanged = false;
-        _baselineSource = TryLoadBaseline(document.SourcePath, _encodingMode);
-        if (changedSource) { _undo.Clear(); _redo.Clear(); _confirmedGroups.Clear(); }
         Mutate(() =>
         {
+            _document = document;
+            // 来源与树一起进入撤销快照；本地修复保留此前的目录历史。
+            if (usedReferenceCatalog)
+                _provenance = PersistedTreeProvenance.FromCatalog(catalogFingerprint);
             Roots.Clear();
-            foreach (var root in BuildTree(document.Entries)) Roots.Add(root);
+            foreach (var root in repairedRoots) Roots.Add(root);
             _selectedNode = Flatten().FirstOrDefault();
         }, markManual: false);
+        _baselineSource = TryLoadBaseline(document.SourcePath, _encodingMode);
+        // Mutate 也会写入历史，必须在完成替换后清空，避免把旧行号恢复到新 TXT 上。
+        if (changedSource) { _undo.Clear(); _redo.Clear(); _confirmedGroups.Clear(); }
         // The pass just wrote the directory it used next to this source hash, so re-read it: the rows can
         // now name the chapters the release has and this file does not.
         InvalidateBreakpoints();
@@ -87,7 +86,7 @@ public partial class ChapterEditorWindow
         var plan = result.State?.Plan;
         if (plan is null) throw new InvalidDataException("原文已替换，但没有得到迁移后的章节树。");
         return ChapterTreeDocument.Load(before.SourcePath, File.ReadAllBytes(before.SourcePath),
-            chapterPattern: null, hierarchy: before.RecognitionOptions, existingPlan: plan);
+            chapterPattern: before.ChapterPattern, hierarchy: before.RecognitionOptions, existingPlan: plan);
     }
 
     /// <summary>
@@ -101,8 +100,8 @@ public partial class ChapterEditorWindow
     /// the report categories, and this one could not run from a directory the user had just pasted.
     /// Routing both here is what makes "the button does what the code does" true rather than hopeful.
     ///
-    /// <paramref name="reference"/> is the directory to use. When it is null the saved directory is read
-    /// (and the network is asked only if there is none), which is the one-click behaviour. When it is not
+    /// <paramref name="reference"/> is the directory to use. When it is null, the local-only choice skips
+    /// catalog acquisition; otherwise the saved directory is read without network access. When it is not
     /// null it is used as given — that is how a just-pasted directory reaches this pass without a disk
     /// round-trip, and how the confirmation window ends up showing the caller's directory rather than a
     /// stale saved one.
@@ -111,6 +110,9 @@ public partial class ChapterEditorWindow
         Action<string>? report = null)
     {
         if (_sourceChanged || !IsEnabled) return;
+        // Selecting a catalog in the catalog panel explicitly chooses that basis.
+        if (reference is not null) LocalRepairOnlyOption.IsChecked = false;
+        var localOnly = UseLocalRepairOnly;
         var snapshot = _document.WithEntries(Flatten().Select(node => node.ToEntry()).ToArray());
         // The tree the reader arranged, as a plan that can be saved beside the bytes it belongs to.
         //
@@ -142,6 +144,7 @@ public partial class ChapterEditorWindow
 
         IsEnabled = false;
         var finished = false;
+        RepairApplicationResult? submittedResult = null;
         try
         {
             var sink = report is null
@@ -156,11 +159,11 @@ public partial class ChapterEditorWindow
             // 于是它有四种结果，而用户点之前一种都看不出来（§1.1）。
             var acquisition = reference is { } given
                 ? CatalogAcquisition.Given(given)
-                : ChapterAutoRepair.ReadSavedCatalog(snapshot);
+                : localOnly ? CatalogAcquisition.NotRequested : ChapterAutoRepair.ReadSavedCatalog(snapshot);
             // 依据是这一整条路上最要紧的岔路口：选错它，后面每个数字都是错的。
             InteractionLog.Decision("选择依据", new
             {
-                来源 = reference is null ? "磁盘上保存的目录" : "调用方给定的目录",
+                来源 = reference is not null ? "调用方给定的目录" : localOnly ? "明确仅按本地检查" : "磁盘上保存的目录",
                 有目录 = acquisition.Catalog is not null,
                 章数 = acquisition.Catalog?.Titles.Count ?? 0,
                 出处 = acquisition.Catalog?.Source,
@@ -169,8 +172,10 @@ public partial class ChapterEditorWindow
             RepairRequest request = acquisition.Catalog is { } found
                 ? new ReferenceRepairRequest(found)
                 : new CurrentTreeHeuristicRequest();
-            var outcome = await ChapterAutoRepair.RepairAsync(snapshot.SourcePath, request, cancellation.Token,
-                sink, snapshot, acquisition);
+            var store = SourceBackupStore.CreateDefault();
+            var session = await ChapterRepairSession.AnalyzeAsync(snapshot, request,
+                new ChapterRepairApplier(store.DirectoryPath), cancellation.Token, sink, acquisition);
+            var outcome = session.Outcome;
             cancellation.Token.ThrowIfCancellationRequested();
             finished = true;
             progress?.Close();
@@ -206,20 +211,14 @@ public partial class ChapterEditorWindow
             // TXT, and that decision is made in the window and carried out by the same applier the tests
             // drive — there is no second path that only the button can reach.
             IReadOnlyCollection<ReferenceAction>? chosen = null;
-            var store = SourceBackupStore.CreateDefault();
-            var volumeLevels = outcome.Catalog?.VolumeTitles.Count > 0;
             // No backup callback: the applier takes the pre-edit snapshot itself, through the backup layer,
             // and hands it both the text and the tree. That is what makes 「恢复原文与当时的章节树」 possible
             // for this version later — every snapshot used to come out bytes-only.
-            var applier = new ChapterRepairApplier(store.DirectoryPath);
             var dialog = new RepairReviewWindow(outcome, snapshot.Entries, actions => chosen = actions, snapshot,
-                // Read from settings rather than fixed here: which mode the window opens on is a preference
-                // about how much the program may do on its own, and the window still shows both options and
-                // still says what the chosen one will change.
-                defaultMode: AppSettingsStore.CreateDefault().Load().DefaultRepairLandingMode,
-                previewMode: (mode, actions) => applier.Preview(outcome, snapshot, mode, actions, volumeLevels),
-                decisionsFor: (mode, actions) => ChapterRepairApplier.DecisionsFor(
-                    ChapterRepairApplier.ProposalFor(outcome, snapshot)!, mode, actions));
+                // Use the same per-workbench mode as the footer. Re-reading global settings
+                // here would silently undo the mode chosen on the previous application.
+                defaultMode: LandingMode,
+                previewMode: session.Preview);
             // Same reason as ThemedWindow: this runs after an await, where the workbench may have been closed
             // and an exception would take the process down rather than fail the repair.
             try { dialog.Owner = _rulesDialog ?? this; }
@@ -231,45 +230,77 @@ public partial class ChapterEditorWindow
             // Rebuilt before anything is written: a plan that cannot be applied must fail here, where
             // the tree and the source are still untouched, not after a backup has been taken.
             var decisions = dialog.SelectedDecisions();
-            var applied = ChapterAutoRepair.RebuildWithSelection(snapshot, outcome, chosen);
-            if (applied.Count == 0) throw new InvalidDataException("修复方案没有章节树。");
-
-            if (dialog.LandingMode == RepairLandingMode.TreeOnly)
+            _landingModeCache = dialog.LandingMode;
+            var result = await session.ApplyAsync(dialog.LandingMode, decisions);
+            submittedResult = result;
+            if (result.NeedsAttention)
             {
-                // The mode that has always existed: change the tree, leave the file alone. No transaction is
-                // created for it, and by the design's invariant none ever should be.
-                _landingModeCache = RepairLandingMode.TreeOnly;
+                SetReviewResult(DescribeIncompleteRepair(snapshot, result.Message, result.Transaction?.BackupPath));
+                return;
+            }
+            if (!result.Changed)
+            {
+                await CheckSourceVersionAsync();
+                SetReviewResult(result.Message);
+                return;
+            }
+            if (result.Transaction is null)
+            {
+                // Both modes can produce a tree-only result. Use exactly the compilation
+                // that was validated, including its selection-specific removal receipt.
+                var compilation = result.Compilation ?? throw new InvalidDataException("修复结果缺少章节树。");
+                if (compilation.RebuiltEntries.Count == 0) throw new InvalidDataException("修复方案没有章节树。");
                 var backup = store.EnsureSnapshot(snapshot, snapshotPlan);
-                var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, outcome.RemovedSourceLines);
+                var receipt = await RepairIntegrity.SaveRemovedAsync(snapshot, compilation.RemovedLines);
                 if (outcome.Catalog is { } catalog) ReferenceCatalogInput.SaveCatalog(snapshot.SourceSha256, catalog);
-                ApplyRepairEntries(_document.WithEntries(applied), outcome.Catalog?.Source);
-                SetReviewResult(outcome.Verdict + "。可撤销。备份：" + backup
+                ApplyRepairEntries(snapshot.WithEntries(compilation.RebuiltEntries),
+                    ReferenceCatalogFingerprint.Compute(outcome.Catalog), outcome.CatalogFound);
+                SetReviewResult(result.Message + "可撤销。备份：" + backup
                     + (receipt is null ? "" : "；移除清单：" + receipt));
                 return;
             }
 
-            // Writing the book: the applier compiles the decisions, takes the backup, renders beside the
-            // source, freezes the manifest, replaces atomically and then moves the tree onto the new text.
-            _landingModeCache = RepairLandingMode.EditSource;
-            var result = await applier.ApplyAsync(outcome, snapshot, RepairLandingMode.EditSource, chosen,
-                buildVolumeLevels: volumeLevels);
-            if (!result.Changed)
-            {
-                SetReviewResult("未改动原文：" + result.Message);
-                return;
-            }
             var movedDocument = ReloadAfterEdit(result, snapshot);
             if (outcome.Catalog is { } usedCatalog)
                 ReferenceCatalogInput.SaveCatalog(movedDocument.SourceSha256, usedCatalog);
-            ApplyRepairEntries(movedDocument, outcome.Catalog?.Source);
+            ApplyRepairEntries(movedDocument,
+                ReferenceCatalogFingerprint.Compute(outcome.Catalog), outcome.CatalogFound);
             SetReviewResult(outcome.Verdict + "。" + result.Message);
         }
-        catch (OperationCanceledException) { SetReviewResult("目录修复已取消，当前章节树保持不变。"); }
-        catch (Exception ex) { SetReviewResult("未应用修复：" + ex.Message); }
+        catch (OperationCanceledException)
+        {
+            SetReviewResult(DescribeIncompleteRepair(snapshot, "操作已取消。", submittedResult?.Transaction?.BackupPath));
+        }
+        catch (Exception ex)
+        {
+            SetReviewResult(DescribeIncompleteRepair(snapshot, ex.Message, submittedResult?.Transaction?.BackupPath));
+        }
         finally
         {
             if (!finished) progress?.Close();
             IsEnabled = true;
+            UpdateActionButtons();
+            UpdateSaveState();
+        }
+    }
+
+    internal string DescribeIncompleteRepair(ChapterTreeDocument before, string detail, string? backupPath = null)
+    {
+        var backup = backupPath is null ? "可在原文备份中查看修改前版本。" : "修改前备份：" + backupPath + "。";
+        try
+        {
+            var currentHash = SourceFileHasher.HashOf(before.SourcePath);
+            _sourceChanged = !string.Equals(currentHash, _document.SourceSha256, StringComparison.OrdinalIgnoreCase);
+            if (!string.Equals(currentHash, before.SourceSha256, StringComparison.OrdinalIgnoreCase))
+                return "操作未全部完成：原文与操作前版本已不同，不代表未写入。"
+                    + "请先核对事务记录，并同步章节树或从备份恢复。" + backup + "详情：" + detail;
+            return "操作未全部完成；已核对原文仍为操作前版本。请核对当前章节树后再继续。详情：" + detail;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _sourceChanged = true;
+            return "操作未全部完成，且无法核实原文是否已写入。请先检查文件和事务记录，暂停继续修复。"
+                + backup + "详情：" + detail + "；校验失败：" + error.Message;
         }
     }
 }

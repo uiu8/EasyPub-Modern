@@ -87,7 +87,8 @@ public class LandingModeEquivalenceTests
 
         Assert.True(treeOnlyModel.EqualsByContent(editSourceModel),
             "两种落地模式产出了不同的书：" + treeOnlyModel.DescribeFirstDifference(editSourceModel));
-        Assert.Equal(444, treeOnlyModel.Chapters.Count);
+        // Reuse the six real volume headings; do not create a false preface from the first volume.
+        Assert.Equal(443, treeOnlyModel.Chapters.Count);
     }
 
     /// <summary>

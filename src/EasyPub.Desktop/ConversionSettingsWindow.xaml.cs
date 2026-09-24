@@ -137,6 +137,8 @@ public partial class ConversionSettingsWindow : UserControl
             OutputDirectoryText.Text = draft.OutputDirectory;
             SelectByTag(LayoutModeCombo, draft.Profile.Mode.ToString());
             var mobi = draft.Profile.Options.Mobi;
+            SelectByTag(KindleEngineCombo, mobi.Engine.ToString());
+            KindlingPathText.Text = mobi.KindlingPath ?? string.Empty;
             PreserveEpubRadio.IsChecked = mobi.EpubInputMode == EpubInputMode.PreserveOriginal;
             ReflowEpubRadio.IsChecked = mobi.EpubInputMode == EpubInputMode.EasyPubCompatible;
             SelectByTag(CompressionCombo, ((int)mobi.Compression).ToString(CultureInfo.InvariantCulture));
@@ -168,6 +170,8 @@ public partial class ConversionSettingsWindow : UserControl
         var currentOptions = _draft.Profile.Options;
         var mobi = currentOptions.Mobi with
         {
+            Engine = Enum.Parse<KindleConversionEngine>(SelectedTag(KindleEngineCombo, "KindleGen")),
+            KindlingPath = EmptyToNull(KindlingPathText.Text),
             KindleGenPath = string.IsNullOrWhiteSpace(_context.KindleGenPath) ? null : _context.KindleGenPath,
             Compression = (MobiCompression)int.Parse(SelectedTag(CompressionCombo, "1"), CultureInfo.InvariantCulture),
             StripSourceArchive = StripSourceCheck.IsChecked == true,
@@ -301,9 +305,18 @@ public partial class ConversionSettingsWindow : UserControl
 
     private void ArtifactValidationCheck_Changed(object sender, RoutedEventArgs e) => UpdateDependentControls();
 
+    private void KindleEngine_Changed(object sender, SelectionChangedEventArgs e) => UpdateDependentControls();
+
     private void UpdateDependentControls()
     {
-        if (AsinText is not null) AsinText.IsEnabled = ReadingSyncCheck?.IsChecked == true;
+        var kindling = KindleEngineCombo is not null && SelectedTag(KindleEngineCombo, "KindleGen") == "Kindling";
+        if (KindlingSettingsPanel is not null) KindlingSettingsPanel.Visibility = kindling ? Visibility.Visible : Visibility.Collapsed;
+        if (KindleGenStatusCard is not null) KindleGenStatusCard.Visibility = kindling ? Visibility.Collapsed : Visibility.Visible;
+        if (CompressionCombo is not null) CompressionCombo.IsEnabled = !kindling;
+        if (ReadingSyncCheck is not null) ReadingSyncCheck.IsEnabled = !kindling;
+        if (KindleGenArgumentsText is not null) KindleGenArgumentsText.IsEnabled = !kindling;
+        if (OptimizeLongBookCheck is not null) OptimizeLongBookCheck.IsEnabled = !kindling;
+        if (AsinText is not null) AsinText.IsEnabled = !kindling && ReadingSyncCheck?.IsChecked == true;
         if (ReportRetentionCombo is not null) ReportRetentionCombo.IsEnabled = ArtifactValidationCheck?.IsChecked == true;
     }
 

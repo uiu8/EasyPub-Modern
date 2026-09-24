@@ -31,9 +31,10 @@ internal static partial class LegacyTextParser
 
         var hierarchy = options.TocHierarchy ?? new TocHierarchyOptions();
         var chapters = new List<MutableChapter> { new("序", hierarchy.Enabled ? 1 : 2) };
-        var chapterRegex = string.IsNullOrWhiteSpace(options.ChapterPattern)
-            ? ChapterRegex()
-            : new Regex(options.ChapterPattern, RegexOptions.Compiled);
+        var chapterRegex = ChapterRecognitionRegex.Compile(
+            options.ChapterPattern,
+            ChapterEditingDocument.DefaultChapterPattern,
+            "普通章节标题");
         var hierarchyRegexes = hierarchy.Enabled
             ? CreateHierarchyRegexes(hierarchy)
             : [];
@@ -44,9 +45,9 @@ internal static partial class LegacyTextParser
             var numericRegex = NumericHeadingRule.Compile(hierarchy.NumericHeadingPattern);
             var headingLines = Enumerable.Range(0, sourceLines.Count)
                 .Where(index => !TextCleanupPipeline.IsRemovedLine(sourceLines[index])
-                    && (TryGetTocLevel(sourceLines[index], hierarchyRegexes, out _)
-                        || chapterRegex.IsMatch(sourceLines[index])
-                        || NumericHeadingRule.Matches(numericRegex, sourceLines[index])))
+                    && (TryGetTocLevel(sourceLines[index], hierarchyRegexes, out _, index + 1)
+                        || ChapterRecognitionRegex.IsMatch(chapterRegex, sourceLines[index], "普通章节标题", index + 1)
+                        || NumericHeadingRule.Matches(numericRegex, sourceLines[index], index + 1)))
                 .ToArray();
             numericHeadings = NumericHeadingFilter.AcceptedLines(sourceLines, headingLines, hierarchy.NumericHeadingMinimumBodyLines);
         }
@@ -72,7 +73,8 @@ internal static partial class LegacyTextParser
             {
                 if (!options.RemoveBlankLines) chapters[^1].Paragraphs.Add(string.Empty);
             }
-            else if (TryGetTocLevel(rawLine, hierarchyRegexes, out var tocLevel) || chapterRegex.IsMatch(rawLine)
+            else if (TryGetTocLevel(rawLine, hierarchyRegexes, out var tocLevel, index + 1)
+                || ChapterRecognitionRegex.IsMatch(chapterRegex, rawLine, "普通章节标题", index + 1)
                 || numericHeadings.Contains(index))
                 chapters.Add(new MutableChapter(line, tocLevel == 0 ? 2 : tocLevel));
             else
@@ -143,16 +145,20 @@ internal static partial class LegacyTextParser
 
     private static Regex[] CreateHierarchyRegexes(TocHierarchyOptions hierarchy) =>
     [
-        new Regex(NormalizePattern(hierarchy.Level1Pattern, TocHierarchyOptions.DefaultLevel1Pattern), RegexOptions.Compiled),
-        new Regex(NormalizePattern(hierarchy.Level2Pattern, TocHierarchyOptions.DefaultLevel2Pattern), RegexOptions.Compiled),
-        new Regex(NormalizePattern(hierarchy.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern), RegexOptions.Compiled),
+        ChapterRecognitionRegex.Compile(hierarchy.Level1Pattern, TocHierarchyOptions.DefaultLevel1Pattern, "卷层级规则"),
+        ChapterRecognitionRegex.Compile(hierarchy.Level2Pattern, TocHierarchyOptions.DefaultLevel2Pattern, "章层级规则"),
+        ChapterRecognitionRegex.Compile(hierarchy.Level3Pattern, TocHierarchyOptions.DefaultLevel3Pattern, "节层级规则"),
     ];
 
-    private static bool TryGetTocLevel(string line, IReadOnlyList<Regex> regexes, out int level)
+    private static bool TryGetTocLevel(
+        string line,
+        IReadOnlyList<Regex> regexes,
+        out int level,
+        int? lineNumber = null)
     {
         for (var index = 0; index < regexes.Count; index++)
         {
-            if (!regexes[index].IsMatch(line)) continue;
+            if (!ChapterRecognitionRegex.IsMatch(regexes[index], line, $"{LevelName(index)}规则", lineNumber)) continue;
             level = index + 1;
             return true;
         }
@@ -160,11 +166,13 @@ internal static partial class LegacyTextParser
         return false;
     }
 
-    private static string NormalizePattern(string? pattern, string fallback) =>
-        string.IsNullOrWhiteSpace(pattern) ? fallback : pattern;
-
-    [GeneratedRegex(ChapterEditingDocument.DefaultChapterPattern)]
-    private static partial Regex ChapterRegex();
+    private static string LevelName(int index) => index switch
+    {
+        0 => "卷层级",
+        1 => "章层级",
+        2 => "节层级",
+        _ => "目录层级",
+    };
 
     private sealed record MutableChapter(string Title, int TocLevel)
     {

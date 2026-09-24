@@ -10,6 +10,48 @@ namespace EasyPub.Core.Tests;
 /// </summary>
 public class ReferenceAlignmentRegressionTests
 {
+    [Fact]
+    public void Missing_heading_does_not_borrow_the_next_volumes_exact_chapter()
+    {
+        var catalog = ReferenceCatalogInput.ParseText("第一卷\n第1章 北城起点\n第2章 北城旅程\n第3章 北城终点\n第二卷\n第1章 南城起点\n第2章 南城旅程\n第3章 南城终点")!;
+        string[] lines = ["第1章 北城起点", "", "正文。", "",
+            "第3章 北城终点", "", "正文。", "",
+            "第1章 南城起点", "", "正文。", "",
+            "第2章 南城旅程", "", "正文。", "",
+            "第3章 南城终点", "", "正文。"];
+
+        var location = ReferenceLocator.Locate(lines, catalog);
+
+        Assert.Null(location.Chapters[1].Line);
+        Assert.Equal(13, location.Chapters[4].Line);
+        Assert.Equal(1, location.Missing);
+    }
+
+    [Fact]
+    public void Exact_heading_inside_a_missing_chapters_gap_is_not_taken_by_rescue()
+    {
+        var catalog = ReferenceCatalogInput.ParseText("第1章 起点\n第2章 北城旅程\n第3章 终点\n第2章 南城旅程")!;
+        // No blank neighbours: the heading is considered only by the final rescue pass.
+        string[] lines = ["第1章 起点", "", "正文。", "第2章 南城旅程", "正文。", "", "第3章 终点"];
+        var location = ReferenceLocator.Locate(lines, catalog);
+        Assert.Null(location.Chapters[1].Line);
+        Assert.DoesNotContain(location.Chapters, chapter => chapter.Reference.Title == "第2章 北城旅程" && chapter.Line == 4);
+    }
+
+    [Fact]
+    public void Exact_displaced_chapters_and_their_duplicate_candidates_keep_their_identity()
+    {
+        var catalog = ReferenceCatalogInput.ParseText("第一卷\n第1章 北城起点\n第2章 北城旅程\n第3章 北城终点\n第二卷\n第1章 南城起点\n第2章 南城旅程\n第3章 南城终点")!;
+        string[] lines = ["第1章 北城起点", "", "第3章 北城终点", "",
+            "第1章 南城起点", "", "第2章 北城旅程", "", "第2章 北城旅程", "",
+            "第2章 南城旅程", "", "第3章 南城终点"];
+        var location = ReferenceLocator.Locate(lines, catalog);
+        Assert.Equal(0, location.Missing);
+        Assert.Equal(7, location.Chapters[1].Line);
+        Assert.Equal(new[] { 7, 9 }, location.Chapters[1].Lines);
+        Assert.Equal(11, location.Chapters[4].Line);
+    }
+
     /// <summary>
     /// "第十六章 预谋" must land on the line whose number is 16, not on "第二百五十七章 预谋" several
     /// hundred chapters later. Word equality alone used to outrank an agreeing chapter number, which
@@ -236,10 +278,9 @@ public class ReferenceAlignmentRegressionTests
     ///
     /// This case also records the limit of what the locator can decide on its own: the text holds one
     /// "第三章 终章" and one "第四章 之后", and the directory's chapter 3 is titled differently. Both
-    /// readings — "chapter 3's title is miswritten" and "chapter 3 is absent" — fit the text, so the
-    /// locator takes the number-agreeing line. 13 is inside the gap (5, ∞) at that moment, so the
-    /// bound cannot reject it; what the bound does reject is a line that sits past the *next placed*
-    /// chapter, which is the failure mode this guards.
+    /// readings — "chapter 3's title is miswritten" and "chapter 3 is absent" — fit the text.
+    /// The exact chapter 4 anchors the upper bound before rescue, so the ambiguous chapter 3
+    /// outside the gap remains unlocated and needs human review.
     /// </summary>
     [Fact]
     public void A_chapter_is_only_rescued_from_inside_its_neighbours_gap()
@@ -260,14 +301,11 @@ public class ReferenceAlignmentRegressionTests
 
         var location = ReferenceLocator.Locate(lines, catalog);
 
-        // With the gap bound in place the rescue can no longer reach a line sitting past the next
-        // placed chapter — the failure that dragged whole volumes out of order. Every chapter here is
-        // placed on a line of its own: chapter 3 on the number-agreeing "第三章 终章" and chapter 4 on
-        // its own line, which sits earlier in the file. That reordering is the honest outcome of a text
-        // where two readings fit ("chapter 3's title is miswritten" and "chapter 3 is absent"); what
-        // matters is that no line is used twice and none is taken from outside the gap.
-        Assert.Equal(4, location.Found);
-        Assert.Equal(4, location.Chapters.Select(c => c.Line).Distinct().Count());
+        // The later exact chapter now anchors the gap before weaker matching starts.
+        // The differently titled chapter 3 outside that gap needs human review.
+        Assert.Equal(3, location.Found);
+        Assert.Null(location.Chapters[2].Line);
+        Assert.Equal(3, location.Chapters.Where(c => c.Line is not null).Select(c => c.Line).Distinct().Count());
         Assert.Equal(9, location.Chapters[3].Line);
     }
 

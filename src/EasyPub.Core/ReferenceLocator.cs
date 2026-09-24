@@ -155,6 +155,14 @@ public static class ReferenceLocator
             candidates.Add(new(index + 1, key, text));
         }
         var candidatesDone = System.Diagnostics.Stopwatch.GetTimestamp();
+        // Exact catalog identities own their candidate lines before weaker matches run.
+        // Otherwise an absent chapter can consume a later volume's same-number heading,
+        // leaving that volume to consume another one and shifting the whole tail of the book.
+        var catalogKeys = catalog.Nodes.Where(n => n.Kind == ReferenceNodeKind.Chapter)
+            .Select(n => ReferenceOutline.ParseKey(n.Title, volumePrefixes).Canonical)
+            .ToHashSet(StringComparer.Ordinal);
+        var exactIndex = candidates.GroupBy(candidate => candidate.Key.Canonical)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         var located = new List<LocatedChapter>();
         var used = new HashSet<int>();
         var cursor = 0;
@@ -164,7 +172,13 @@ public static class ReferenceLocator
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = ReferenceOutline.ParseKey(node.Title, volumePrefixes);
-            var scored = candidates
+            var exactCandidates = exactIndex.GetValueOrDefault(key.Canonical) ?? [];
+            // Most headings already agree with the catalog: avoid a whole-book fuzzy scan for them.
+            var pool = exactCandidates.Any(candidate => !used.Contains(candidate.Line))
+                ? (IEnumerable<Candidate>)exactCandidates : candidates;
+            var scored = pool
+                .Where(candidate => candidate.Key.Canonical == key.Canonical
+                    || !catalogKeys.Contains(candidate.Key.Canonical))
                 .Select(candidate => (Candidate: candidate, Score: ReferenceOutline.MatchScore(key, candidate.Key)))
                 .Where(pair => pair.Score > 0)
                 .ToArray();
@@ -185,10 +199,10 @@ public static class ReferenceLocator
             // line can sit before the cursor — the copy is what `Lines` needs in order to be reported as
             // a duplicate — so the fallback stays. What it may no longer do is reach past the chapter
             // that follows: the gap bound in the third pass is where that is enforced.
-            var agreeing = ranked.Where(candidate => NumberAgrees(key,candidate.Key)).ToArray();
             var exact = ranked.Where(candidate => candidate.Key.Canonical == key.Canonical).ToArray();
-            var preferred = exact.Length > 0 ? exact : agreeing.Length > 0 ? agreeing : ranked;
-            var chosen = preferred.FirstOrDefault(candidate => candidate.Line > cursor) ?? preferred.FirstOrDefault();
+            // Establish all exact anchors first. Weak candidates are considered only inside
+            // their neighbours' gap, after later volumes have secured their own chapters.
+            var chosen = exact.FirstOrDefault(candidate => candidate.Line > cursor) ?? exact.FirstOrDefault();
             if (chosen is null)
             {
                 pending.Add(located.Count);
@@ -209,7 +223,6 @@ public static class ReferenceLocator
             var (previous, next) = NeighbourGap(located, index, lines.Count);
             var candidate = rankedByChapter[index]
                 .Where(item => !used.Contains(item.Line) && item.Line > previous && item.Line < next)
-                .OrderBy(item => item.Line)
                 .FirstOrDefault();
             if (candidate is null) continue;
             used.Add(candidate.Line);
@@ -261,7 +274,7 @@ public static class ReferenceLocator
             // Search every line in the gap, not just the candidate set: a heading buried inside a long
             // chapter may have no blank neighbour at all, and that is exactly how "skipped chapters"
             // appear.
-            var (evidence, found) = SearchEveryLine(lines, lineKeys, used, key, words, shortTitle, lower + 1, upper);
+            var (evidence, found) = SearchEveryLine(lines, lineKeys, used, key, words, shortTitle, lower + 1, upper, catalogKeys);
             scannedLines += upper - lower - 1;
             if (found < 0) continue;
             switch (evidence)
@@ -368,7 +381,7 @@ public static class ReferenceLocator
     /// </summary>
     private static (LocateEvidence Evidence, int Line) SearchEveryLine(
         IReadOnlyList<string> lines, TitleKey[] lineKeys, HashSet<int> used, TitleKey key, string words, bool shortTitle,
-        int lower, int upper)
+        int lower, int upper, HashSet<string> catalogKeys)
     {
         var fallback = -1;
         var fuzzy = -1;
@@ -381,6 +394,7 @@ public static class ReferenceLocator
             var text = lines[line - 1].Trim();
             if (text.Length is 0 or > MaximumScannedLineLength) continue;
             var candidate = lineKeys[line];
+            if (candidate.Canonical != key.Canonical && catalogKeys.Contains(candidate.Canonical)) continue;
             if (candidate.Words.Length == 0) continue;
             if (NumberAgrees(key, candidate)) return (LocateEvidence.NumberAgrees, line);
             if (shortTitle) continue;

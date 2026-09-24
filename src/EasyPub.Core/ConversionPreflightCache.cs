@@ -129,6 +129,7 @@ public sealed class ConversionPreflightCache
             if (!string.IsNullOrWhiteSpace(options.CoverImagePath)) yield return options.CoverImagePath;
             if (!string.IsNullOrWhiteSpace(options.Font.FontPath)) yield return options.Font.FontPath;
             if (!string.IsNullOrWhiteSpace(options.Mobi.KindleGenPath)) yield return options.Mobi.KindleGenPath;
+            if (options.Mobi.Engine == KindleConversionEngine.Kindling) yield return KindlingWriter.ResolvePath(options.Mobi);
             foreach (var illustration in options.Illustrations)
                 if (!string.IsNullOrWhiteSpace(illustration.ImagePath)) yield return illustration.ImagePath;
         }

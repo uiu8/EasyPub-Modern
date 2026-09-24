@@ -16,6 +16,8 @@ outputs/
 # Build artifacts.
 *.zip
 *.pdb
+**/TestResults/
+**/__pycache__/
 
 # Publishing credentials — never commit these.
 .atomgit-token

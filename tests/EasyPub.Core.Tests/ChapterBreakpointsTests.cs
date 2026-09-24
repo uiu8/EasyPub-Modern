@@ -156,4 +156,41 @@ public class ChapterBreakpointsTests
         var document = Document("第一卷 起", "第一章 甲", "第二卷 承", "第一章 乙");
         Assert.Empty(ChapterBreakpoints.Between(document));
     }
+
+    [Fact]
+    public void A_switch_from_chinese_to_arabic_numbering_does_not_create_a_gap_at_the_switch()
+    {
+        // Some sources change notation inside one volume. The first Arabic heading is not evidence that
+        // every number between the two written forms is missing; the later Arabic run is still checked.
+        var document = Document("第十七章 甲", "第335章 乙", "第336章 丙", "第338章 丁");
+        var breaks = ChapterBreakpoints.Between(document);
+
+        Assert.DoesNotContain(breaks, item => item.PreviousNumber == 17);
+        var gap = Assert.Single(breaks.Where(item => item.PreviousNumber == 336));
+        Assert.Equal(ChapterBreakpointKind.NumberGap, gap.Kind);
+        Assert.Equal([337], gap.MissingNumbers);
+    }
+
+    [Fact]
+    public void A_switch_back_to_chinese_keeps_each_numbering_family_local()
+    {
+        var document = Document("第一章 甲", "第2章 乙", "第3章 丙", "第5章 丁", "第五章 戊", "第六章 己");
+        var breaks = ChapterBreakpoints.Between(document);
+
+        Assert.DoesNotContain(breaks, item => item.PreviousNumber == 1);
+        var gap = Assert.Single(breaks, item => item.PreviousNumber == 3);
+        Assert.Equal([4], gap.MissingNumbers);
+    }
+
+    [Fact]
+    public void A_number_present_in_another_notation_is_not_reported_as_missing()
+    {
+        // The Arabic heading is still evidence that chapter 257 exists. Only the comparison at the
+        // notation boundary is isolated; the presence index remains shared by the same parent/level/unit.
+        var document = Document("第257章 乙", "第二百四十二章 甲", "第二百四十三三章 丙");
+        var gap = Assert.Single(ChapterBreakpoints.Between(document));
+
+        Assert.Equal(242, gap.PreviousNumber);
+        Assert.DoesNotContain(257, gap.MissingNumbers);
+    }
 }

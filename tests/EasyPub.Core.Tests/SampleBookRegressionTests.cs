@@ -68,7 +68,9 @@ public class SampleBookRegressionTests
         Assert.Equal(43, outcome.UnmatchedWithNumber);
         Assert.Equal(0, outcome.UnmatchedNoNumber);
         Assert.Equal(0, outcome.Extra);
-        Assert.Equal(191, outcome.Plan!.Actions.Count);
+        // Exact anchors prevent the previous 62 cross-chapter retitles.
+        // Six exact catalog volume headings are no longer misclassified as body to demote.
+        Assert.Equal(123, outcome.Plan!.Actions.Count);
     }
 
     [Fact]
@@ -79,12 +81,17 @@ public class SampleBookRegressionTests
         var byKind = plan.Actions.GroupBy(a => a.Kind)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        Assert.Equal(10, byKind[ReferenceActionKind.AddChapter]);
-        Assert.Equal(6, byKind[ReferenceActionKind.DemoteExtra]);
+        Assert.Equal(8, byKind[ReferenceActionKind.AddChapter]);
+        Assert.False(byKind.ContainsKey(ReferenceActionKind.DemoteExtra));
         Assert.Equal(32, byKind[ReferenceActionKind.KeepExtra]);
-        Assert.Equal(41, byKind[ReferenceActionKind.MissingBody]);
+        Assert.Equal(43, byKind[ReferenceActionKind.MissingBody]);
         Assert.Equal(32, byKind[ReferenceActionKind.RemoveDuplicate]);
-        Assert.Equal(69, byKind[ReferenceActionKind.Retitle]);
+        Assert.Equal(7, byKind[ReferenceActionKind.Retitle]);
+        Assert.All(plan.OfKind(ReferenceActionKind.Retitle), action =>
+        {
+            var local = document.SourceLine(action.Line)!.Text.Trim();
+            Assert.Equal("第" + local, action.Title);
+        });
         Assert.Equal(1, byKind[ReferenceActionKind.VolumeNote]);
     }
 
@@ -177,7 +184,7 @@ public class SampleBookRegressionTests
     /// 用 Prepare 的返回值来断言建卷，会得到"卷丢了"的假结论 —— 探针里踩过一次。
     /// </summary>
     [Fact]
-    public async Task Volumes_come_from_the_directory_because_the_text_has_none()
+    public async Task Directory_reuses_the_existing_volume_headings()
     {
         var root = SampleRoot();
         var document = await ChapterTreeDocument.LoadAsync(Path.Combine(root, "缺陷样书.txt"));
@@ -192,6 +199,7 @@ public class SampleBookRegressionTests
 
         var volumes = rebuilt.Where(e => e.RecognitionSource is "reference-volume" or "inferred-volume").ToArray();
         Assert.Equal(6, volumes.Length);
+        Assert.All(volumes, v => Assert.Equal(v.Title, document.SourceLine(v.TitleLineNumber!.Value)!.Text.Trim()));
         Assert.False(outcome.VolumesInferred, "目录自带卷标题，不应该走推断分支");
     }
 

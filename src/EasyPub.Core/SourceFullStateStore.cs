@@ -69,6 +69,8 @@ public static class SourceFullStateStore
             var entries = dto.Entries.Select(FromDto).ToArray();
             var plan = new ChapterTreePlan(dto.SourceSha256, entries)
             {
+                ChapterPattern = dto.ChapterPattern,
+                RecognitionOptions = dto.RecognitionOptions,
                 NumericHeadingRecognition = dto.NumericHeadingRecognition,
                 NumericHeadingMinimumBodyLines = dto.NumericHeadingMinimumBodyLines,
                 NumericHeadingPattern = dto.NumericHeadingPattern,
@@ -95,6 +97,8 @@ public static class SourceFullStateStore
         snapshot.Tree.NumericHeadingMinimumBodyLines,
         snapshot.Tree.NumericHeadingPattern,
         snapshot.Tree.HeadingNumberCorrections,
+        snapshot.Tree.ChapterPattern,
+        snapshot.Tree.RecognitionOptions,
         snapshot.Tree.Entries.Select(EntryToDto).ToArray());
 
     private static EntryDto EntryToDto(ChapterTreeEntry entry) => new(
@@ -129,6 +133,8 @@ public static class SourceFullStateStore
         int? NumericHeadingMinimumBodyLines,
         string? NumericHeadingPattern,
         string? HeadingNumberCorrections,
+        string? ChapterPattern,
+        TocHierarchyOptions? RecognitionOptions,
         IReadOnlyList<EntryDto>? Entries);
 
     private sealed record EntryDto(

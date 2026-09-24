@@ -112,6 +112,13 @@ public class PanelScreenshotTests
         {
             try
             {
+                // async-void panel handlers must resume on the window's dispatcher. Without an
+                // explicit context, the catalog dialog continuation can run on a thread-pool MTA
+                // and the screenshot harness reports a false product crash while constructing WPF.
+                SynchronizationContext.SetSynchronizationContext(
+                    new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+                var app = new App();
+                app.InitializeComponent();
                 var editor = new ChapterEditorWindow(document)
                 {
                     WindowStartupLocation = WindowStartupLocation.Manual,

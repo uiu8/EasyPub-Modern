@@ -88,6 +88,8 @@ internal static class LegacyMobiWriter
         // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
         //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
+        if (options.Mobi.Engine == KindleConversionEngine.Kindling)
+            return await KindlingWriter.WriteAsync(request, cancellationToken, progress).ConfigureAwait(false);
         var kindleGenPath = KindleGenLocator.Resolve(options.Mobi.KindleGenPath);
         var workingDirectory = Path.Combine(Path.GetDirectoryName(outputPath)!, ".easypub-modern-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workingDirectory);
@@ -126,6 +128,8 @@ internal static class LegacyMobiWriter
         // 分析/预检/预览/回执四条路径**不再**这样做 —— 那里 null 会直接抛
         //（见 ConversionRequest.RequiredOptions），因为那才是"同一本书数出不同章节数"的来源。
         var options = request.Options ?? ConversionOptions.LegacyDefault;
+        if (options.Mobi.Engine == KindleConversionEngine.Kindling)
+            return await KindlingWriter.WriteAsync(request, cancellationToken, progress).ConfigureAwait(false);
         var kindleGenPath = KindleGenLocator.Resolve(options.Mobi.KindleGenPath);
         var stem = Path.GetFileNameWithoutExtension(outputPath);
         var workingStem = $"{stem}-{Guid.NewGuid():N}";

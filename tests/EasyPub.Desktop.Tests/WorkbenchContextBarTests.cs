@@ -20,6 +20,59 @@ namespace EasyPub.Desktop.Tests;
 public class WorkbenchContextBarTests
 {
     [Fact]
+    public void Catalog_origin_is_undoable_even_when_the_chapter_entries_are_unchanged()
+    {
+        var previous = WorkbenchHarness.IsolateCatalogStore();
+        try
+        {
+            var failure = WorkbenchHarness.OnStaThread(() =>
+            {
+                var document = ChapterTreeDocument.LoadAsync(Path.Combine(WorkbenchHarness.SampleRoot(), "缺陷样书.txt")).GetAwaiter().GetResult();
+                var editor = WorkbenchHarness.ShowOffscreen(new ChapterEditorWindow(document));
+                try
+                {
+                    editor.ApplyRepairEntries(document, "verified-catalog", usedReferenceCatalog: true);
+                    Assert.Contains("目录校验后", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                    typeof(ChapterEditorWindow).GetMethod("Undo", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(editor, null);
+                    Assert.Equal("本地识别", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                    typeof(ChapterEditorWindow).GetMethod("Redo", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(editor, null);
+                    Assert.Contains("目录校验后", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                }
+                finally { editor.DiscardChangesAndClose(); }
+            });
+            Assert.Null(failure);
+        }
+        finally { WorkbenchHarness.RestoreCatalogStore(previous); }
+    }
+
+    [Fact]
+    public void Local_repair_preserves_the_existing_tree_origin_instead_of_claiming_a_catalog_was_used()
+    {
+        var book = Path.Combine(WorkbenchHarness.SampleRoot(), "缺陷样书.txt");
+        var previous = WorkbenchHarness.IsolateCatalogStore();
+        try
+        {
+            var failure = WorkbenchHarness.OnStaThread(() =>
+            {
+                var document = ChapterTreeDocument.LoadAsync(book).GetAwaiter().GetResult();
+                var editor = WorkbenchHarness.ShowOffscreen(new ChapterEditorWindow(document));
+                try
+                {
+                    editor.ApplyRepairEntries(document);
+                    Assert.Equal("本地识别", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                    editor.ApplyRepairEntries(document, "catalog-fingerprint", usedReferenceCatalog: true);
+                    Assert.Contains("目录校验后", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                    editor.ApplyRepairEntries(document);
+                    Assert.Contains("目录校验后", WorkbenchHarness.Line(editor, "ContextTreeText"));
+                }
+                finally { editor.DiscardChangesAndClose(); }
+            });
+            Assert.Null(failure);
+        }
+        finally { WorkbenchHarness.RestoreCatalogStore(previous); }
+    }
+
+    [Fact]
     public void The_workbench_states_three_facts_as_three_separate_lines()
     {
         var book = Path.Combine(WorkbenchHarness.SampleRoot(), "缺陷样书.txt");
@@ -109,15 +162,19 @@ public class WorkbenchContextBarTests
             headline = WorkbenchHarness.Line(editor, "NextStepHeadline");
             detail = WorkbenchHarness.Line(editor, "NextStepDetail");
             WorkbenchHarness.Save(editor, "26-工作台-下一步做什么");
+            editor.Width = 1080;
+            editor.Height = 680;
+            editor.UpdateLayout();
+            WorkbenchHarness.Save(editor, "27-工作台-小屏布局");
         });
         WorkbenchHarness.RestoreCatalogStore(previous);
 
         Assert.Null(failure);
         // 样书实测：本地漏识别候选为 0（§7.2 第 2 步），所以那 9 处跳章只能靠目录。
-        // 32 处正文重复与 2 处重复拼接需要人逐条判断；1 处结构建议可以先在本地预览。
+        // 当前样书的分类结果是 2 处需要人工核对；数量来自同一份工作台策略。
         Assert.Contains("9 处需要参考目录", headline);
         Assert.Contains("1 处本地就能修", headline);
-        Assert.Contains("34 处需要你核对", headline);
+        Assert.Contains("2 处需要你核对", headline);
         // 没有目录时**点名**该按哪个按钮，而不是让用户自己从六个控件里猜。
         Assert.Contains("选择参考目录", detail);
     }

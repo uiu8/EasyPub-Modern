@@ -24,7 +24,7 @@ public class RepairChangeSummaryTests
         title.Contains('卷') || title.Contains('部') || title.Contains('篇');
 
     [Fact]
-    public async Task Rebuilding_a_volume_is_one_structural_change_not_a_removal_plus_an_addition()
+    public async Task Reusing_existing_volumes_does_not_report_phantom_replacements()
     {
         // A catalog that carries volumes makes the planner build volume entries; the ids it mints for
         // them are new every time, which is what used to produce the phantom pair.
@@ -45,10 +45,11 @@ public class RepairChangeSummaryTests
         foreach (var volume in volumes)
             Assert.DoesNotContain(lines, line => line.Contains("移除章节项：" + volume.Title, StringComparison.Ordinal));
 
-        // The structural change is stated once, as its own kind, and counts the volumes it rebuilt.
+        // Existing volume identities now survive. Do not invent a rebuild merely for new provenance.
         var structural = changes.Where(change => change.Kind == RepairChangeKind.RebuiltVolume).ToArray();
-        Assert.NotEmpty(structural);
-        Assert.All(structural, change => Assert.True(change.Line > 0, "结构变化必须带原文行"));
+        Assert.Empty(structural);
+        foreach (var volume in volumes)
+            Assert.Contains(outcome.Entries!, e => e.Id == volume.Id && e.TitleLineNumber == volume.TitleLineNumber);
     }
 
     [Fact]

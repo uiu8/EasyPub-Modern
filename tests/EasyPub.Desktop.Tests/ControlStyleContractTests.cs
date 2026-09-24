@@ -206,4 +206,20 @@ public class ControlStyleContractTests
 
         Assert.Contains("x:Key=\"PrimaryButton\"", appXaml, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// 章节工作台是由主窗口打开的独立弹窗。主窗口的品牌、制作流程、原文备份和转换记录
+    /// 属于主窗口导航，不能在弹窗里再复制一套，否则会让用户误以为仍处在主流程导航中。
+    /// </summary>
+    [Fact]
+    public void Chapter_workbench_popup_does_not_duplicate_main_navigation_shell()
+    {
+        var xaml = File.ReadAllText(
+            Path.Combine(WorkspaceRoot(), "src", "EasyPub.Desktop", "ChapterEditorWindow.xaml"));
+
+        Assert.DoesNotContain("制作流程", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("原文备份", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("转换记录", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("ColumnDefinition Width=\"242\"", xaml, StringComparison.Ordinal);
+    }
 }

@@ -51,7 +51,9 @@ public static class RepairSourcePatchCompiler
                 return insert.Inserts
                     .Select((intent, index) => (SourceOperation)new InsertLineAtAnchor(intent.Anchor, intent.Text)
                     {
-                        OperationId = $"ins-{index}",
+                        // Coordinates are keyed by operation across the entire repair,
+                        // not merely within one action's insertion list.
+                        OperationId = $"ins-{actionId}-{index}",
                         ActionId = actionId,
                     })
                     .ToArray();

@@ -88,9 +88,10 @@ public sealed class RepairReviewWindow : Window
     private ReviewRow? _focused;
     private bool _building;
     private RepairLandingMode _mode;
-    private readonly Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, RepairApplicationPreview>? _previewMode;
-    private readonly Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, IReadOnlyList<RepairDecision>>? _decisionsFor;
+    private readonly Func<RepairLandingMode, IReadOnlyList<RepairDecision>, RepairApplicationPreview>? _previewMode;
     private readonly HashSet<string> _duplicateOptIn = new(StringComparer.Ordinal);
+    private HashSet<string>? _treePreviewSelection;
+    private IReadOnlyList<RepairChange>? _treePreviewChanges;
     private TextBlock _landingDetail = null!;
     private TextBlock _safetyText = null!;
     private RadioButton _treeOnlyOption = null!;
@@ -105,8 +106,7 @@ public sealed class RepairReviewWindow : Window
     public RepairReviewWindow(AutoRepairOutcome outcome, IReadOnlyList<ChapterTreeEntry> before,
         Action<IReadOnlyCollection<ReferenceAction>> apply, ChapterTreeDocument? previewDocument = null,
         RepairLandingMode defaultMode = RepairLandingMode.TreeOnly,
-        Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, RepairApplicationPreview>? previewMode = null,
-        Func<RepairLandingMode, IReadOnlyCollection<ReferenceAction>, IReadOnlyList<RepairDecision>>? decisionsFor = null)
+        Func<RepairLandingMode, IReadOnlyList<RepairDecision>, RepairApplicationPreview>? previewMode = null)
     {
         _outcome = outcome;
         _before = before;
@@ -114,7 +114,6 @@ public sealed class RepairReviewWindow : Window
         _previewDocument = previewDocument;
         _mode = defaultMode;
         _previewMode = previewMode;
-        _decisionsFor = decisionsFor;
         if (outcome.Plan is not null)
             foreach (var action in outcome.Plan.Actions) _actionByKey[action.Key] = action;
         Title = "目录修复 · 核对后应用";
@@ -146,6 +145,7 @@ public sealed class RepairReviewWindow : Window
         try
         {
             RefreshRows(PreviewChanges());
+            RedrawRows();
             Refresh();
         }
         finally { _building = false; }
@@ -173,10 +173,6 @@ public sealed class RepairReviewWindow : Window
     public IReadOnlyList<RepairDecision> SelectedDecisions()
     {
         var chosen = SelectedActions();
-        // The caller supplied the same factory the applier uses, so the decisions the button hands over are
-        // the ones the preview counted.
-        if (_decisionsFor is not null) return _decisionsFor(_mode, chosen);
-
         var selected = chosen.Select(action => action.Key).ToHashSet(StringComparer.Ordinal);
         return _outcome.Plan is null
             ? []
@@ -421,6 +417,7 @@ public sealed class RepairReviewWindow : Window
     {
         foreach (var rows in _rowsByKind.Values) rows.Clear();
         _rows.Clear();
+        var displayed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var change in changes)
         {
             if (!_rowsByKind.TryGetValue(ChangeGroupKey(change), out var rows)) continue;
@@ -429,13 +426,37 @@ public sealed class RepairReviewWindow : Window
             // folded back into the body is both the entry leaving the tree and the body line it left
             // behind — and both rows must read the same decision.
             var rowKey = action?.Key ?? $"auto|{change.Kind}|{change.Line}|{change.Title}";
+            if (!displayed.Add(rowKey)) continue;
             var row = _rowByKey.GetValueOrDefault(rowKey);
             if (row is null)
             {
                 row = new ReviewRow(change, action);
                 _rowByKey[rowKey] = row;
             }
+            row.Change = change;
             rows.Add(row);
+            _rows.Add(row);
+        }
+        // Suggestions are the choice inventory, not the diff. An unchecked action must
+        // remain reachable, including suggestions that were never recommended initially.
+        foreach (var action in _actionByKey.Values)
+        {
+            RepairChangeKind? kind = action.Kind switch
+            {
+                ReferenceActionKind.AddChapter or ReferenceActionKind.AdoptHeading => RepairChangeKind.AddedChapter,
+                ReferenceActionKind.Retitle => RepairChangeKind.RetitledChapter,
+                ReferenceActionKind.DemoteExtra => RepairChangeKind.RemovedEntry,
+                ReferenceActionKind.RemoveDuplicate => RepairChangeKind.RemovedDuplicate,
+                _ => null, // Missing body and directory-only facts are not executable choices.
+            };
+            if (kind is null || !displayed.Add(action.Key)) continue;
+            if (!_rowByKey.TryGetValue(action.Key, out var row))
+            {
+                row = new ReviewRow(new RepairChange(kind.Value, action.Line, action.Title, action.Detail, action.Key)
+                    { ActionKind = action.Kind }, action);
+                _rowByKey[action.Key] = row;
+            }
+            _rowsByKind[ChangeGroupKey(row.Change)].Add(row);
             _rows.Add(row);
         }
     }
@@ -535,6 +556,7 @@ public sealed class RepairReviewWindow : Window
                 FontSize = 11.5,
                 Margin = new Thickness(0, 5, 0, 0),
                 IsChecked = _duplicateOptIn.Contains(switchAction.Key),
+                IsEnabled = row.Checkbox?.IsChecked == true,
             };
             deleteFromSource.Checked += (_, _) =>
             {
@@ -589,9 +611,10 @@ public sealed class RepairReviewWindow : Window
         var start = action.Recommended;
         box.Checked += (_, _) => { if (!_building) Refresh(); };
         box.Unchecked += (_, _) => { if (!_building) Refresh(); };
+        var wasBuilding = _building;
         _building = true;
         try { box.IsChecked = start; }
-        finally { _building = false; }
+        finally { _building = wasBuilding; }
         return box;
     }
 
@@ -665,18 +688,20 @@ public sealed class RepairReviewWindow : Window
             "行前的方框决定它是否执行。取消勾选的不会执行，数字会跟着变。"));
         stack.Children.Add(Paragraph("标注「自动」的行没有方框：它们是修复过程中必然发生的连带改动（例如把章归入卷），" +
             "无法单独取消。"));
-        var groups = _changeKinds.Where(view => view.Rows.Count > 0).ToArray();
-        if (groups.Length == 0)
+        var groups = _changeKinds.Select(view => (View: view,
+            Count: view.Rows.Count(row => row.Action is null || row.Checkbox?.IsChecked == true)))
+            .Where(group => group.Count > 0).ToArray();
+        if (SelectedActions().Count == 0 || groups.Length == 0)
         {
             stack.Children.Add(Paragraph("按当前勾选，章节树不会改变。"));
             _detail.Content = stack;
             return;
         }
-        foreach (var view in groups)
+        foreach (var group in groups)
         {
             var line = new TextBlock
             {
-                Text = $"· {view.NameText?.Text}　{view.Rows.Count} {view.Unit}",
+                Text = $"· {group.View.NameText?.Text}　{group.Count} {group.View.Unit}",
                 FontSize = 12.5,
                 Margin = new Thickness(0, 0, 0, 4),
                 TextWrapping = TextWrapping.Wrap,
@@ -727,11 +752,13 @@ public sealed class RepairReviewWindow : Window
         };
         category.SetResourceReference(TextBlock.ForegroundProperty, "SecondaryTextBrush");
         stack.Children.Add(category);
+        if (row.Action is not null && row.Checkbox?.IsChecked != true)
+            stack.Children.Add(Paragraph("未选择：本次不会执行这一项。勾选左侧方框后才会加入修复。"));
         if (row.Change.Detail is { Length: > 0 } detail) stack.Children.Add(Paragraph(detail));
         stack.Children.Add(Paragraph(BlurbOf(ChangeGroupKey(row.Change))));
         stack.Children.Add(Paragraph(row.Action is null
             ? "这一项没有可取消的选项：它由本次对齐自动完成。"
-            : $"这一项来自参考目录的一条计划：{row.Action.Detail}"));
+            : $"这一项来自{(_outcome.CatalogFound ? "参考目录" : "本地检查")}的建议：{row.Action.Detail}"));
         _detail.Content = stack;
     }
 
@@ -809,6 +836,12 @@ public sealed class RepairReviewWindow : Window
     /// </summary>
     private IReadOnlyList<RepairChange> PreviewChanges()
     {
+        // Source deletion permission and landing mode do not change the output tree.
+        // Reuse its diff while the selected actions remain identical; source validation still runs.
+        var selection = (_building && _outcome.Plan is not null
+            ? _outcome.Plan.DefaultSelection : SelectedActions()).Select(action => action.Key).ToHashSet(StringComparer.Ordinal);
+        if (_treePreviewChanges is not null && _treePreviewSelection!.SetEquals(selection))
+            return _treePreviewChanges;
         var after = _outcome.Entries ?? _before;
         if (_previewDocument is not null && _outcome.Plan is not null)
         {
@@ -825,13 +858,14 @@ public sealed class RepairReviewWindow : Window
             // matches the preview that already produced it.
             var unchanged = chosen.Length == _outcome.Plan.DefaultSelection.Count()
                 && chosen.ToHashSet().SetEquals(_outcome.Plan.DefaultSelection);
-            after = unchanged ? _outcome.Entries ?? _before
+            after = unchanged && _outcome.CatalogFound ? _outcome.Entries ?? _before
                 : chosen.Length == 0 ? _before
                 : ChapterAutoRepair.RebuildWithSelection(_previewDocument, _outcome, chosen);
         }
         // The plan is handed over so every change can name the action that caused it, instead of the
         // window guessing from line numbers.
-        return _outcome.Plan is null
+        _treePreviewSelection = selection;
+        return _treePreviewChanges = _outcome.Plan is null
             ? RepairIntegrity.Describe(after, _before)
             : RepairIntegrity.DescribeWithActions(_outcome.Plan, after, _before);
     }
@@ -858,7 +892,8 @@ public sealed class RepairReviewWindow : Window
                 // A fraction only where there is something to choose: "0/2" beside the automatic volume
                 // level reads as "none of these will happen", when in fact both of them will.
                 : tickable > 0 ? $"{view.SelectedCount}/{view.Rows.Count}" : $"{view.Rows.Count} {view.Unit}";
-            view.Glyph!.Text = view.Rows.Count == 0 ? "\u25CB" : tickable > 0 ? "\u2713" : "\u25CF";
+            view.Glyph!.Text = view.Rows.Count == 0 || (tickable > 0 && view.SelectedCount == 0)
+                ? "\u25CB" : tickable > 0 ? "\u2713" : "\u25CF";
             view.Glyph.SetResourceReference(TextBlock.ForegroundProperty,
                 view.Rows.Count == 0 ? "SecondaryTextBrush" : tickable > 0 ? "SuccessBrush" : "WarningBrush");
             view.Container!.Opacity = view.Rows.Count == 0 ? 0.45 : 1.0;
@@ -871,10 +906,10 @@ public sealed class RepairReviewWindow : Window
         for (var index = 0; index < _stats.Count; index++)
             _stats[index].Number.Text = _stats[index].Value(chosen);
 
-        var kindsInPlay = _changeKinds.Count(view => view.Rows.Count > 0);
-        _summaryTitle.Text = total == 0
-            ? "本次没有需要应用的改动"
-            : $"本次将做 {kindsInPlay} 类修改，共 {total} 项";
+        var kindsInPlay = _changeKinds.Count(view => view.Rows.Any(row => row.Action is null || row.Checkbox?.IsChecked == true));
+        _summaryTitle.Text = chosen.Count == 0
+            ? "本次未选择修改"
+            : $"本次将做 {kindsInPlay} 类修改，已选 {chosen.Count} 项";
         _summaryDetail.Text = $"参考目录 {_outcome.ReferenceChapters} 章 · 已对齐 {_outcome.AlignedCount} 章 · " +
             $"保留目录外 {_outcome.Extra} 章 · 未匹配 {_outcome.Missing} 章";
 
@@ -1010,7 +1045,6 @@ public sealed class RepairReviewWindow : Window
         {
             // The ticks are kept: the user chose which chapters to change, and that choice does not depend
             // on whether the TXT is rewritten. Only what the repair lands on changed.
-            RefreshLandingDetail();
             Refresh();
         }
     }
@@ -1027,8 +1061,7 @@ public sealed class RepairReviewWindow : Window
         // Called from Refresh, which can run before the bar exists during construction.
         if (_landingDetail is null || _safetyText is null) return;
 
-        var chosen = SelectedActions();
-        CurrentPreview = _previewMode?.Invoke(_mode, chosen);
+        CurrentPreview = _previewMode?.Invoke(_mode, SelectedDecisions());
 
         if (_mode == RepairLandingMode.TreeOnly)
         {
@@ -1049,7 +1082,7 @@ public sealed class RepairReviewWindow : Window
         _landingDetail.Text = operations == 0
             ? "同时改原文：这次所选的动作都不需要改动正文，原文不会有变化。"
             : $"同时改原文：将改动原文的 {lines} 行（{operations} 个操作）。";
-        _safetyText.Text = "应用前自动备份原文 · 应用后可以撤销 · 改动只落在本书";
+        _safetyText.Text = "应用前自动备份原文 · 写回后通过备份恢复 · 改动只落在本书";
     }
 
     private sealed class StatView(TextBlock number, Func<IReadOnlyCollection<ReferenceAction>, string> value)
@@ -1067,7 +1100,9 @@ public sealed class RepairReviewWindow : Window
     /// says which, so it leads — and when there is no action the change kind does.
     /// </summary>
     private static (ReferenceActionKind?, RepairChangeKind) ChangeGroupKey(RepairChange change) =>
-        (change.ActionKind, change.Kind);
+        change.ActionKind == ReferenceActionKind.RemoveDuplicate
+            ? (change.ActionKind, RepairChangeKind.RemovedDuplicate)
+            : (change.ActionKind, change.Kind);
 
     /// <summary>One group of the change list: a kind of change, its heading, and the rows it holds.</summary>
     private sealed class ChangeKindView(
@@ -1147,7 +1182,7 @@ public sealed class RepairReviewWindow : Window
 
     private sealed class ReviewRow(RepairChange change, ReferenceAction? action)
     {
-        public RepairChange Change { get; } = change;
+        public RepairChange Change { get; set; } = change;
         public ReferenceAction? Action { get; } = action;
         public CheckBox? Checkbox { get; set; }
     }

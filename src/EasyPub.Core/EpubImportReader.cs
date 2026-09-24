@@ -81,6 +81,23 @@ internal static class EpubCompatibilityImporter
         }
     }
 
+    /// <summary>
+    /// Returns the number of logical documents that the compatible reflow path
+    /// will turn into chapters.  This deliberately follows the same boundary
+    /// as <see cref="ImportAsync"/>: navigation and cover documents are
+    /// excluded, and a spine item without a body is skipped.
+    ///
+    /// <para>The conversion preflight uses this instead of the raw EPUB spine
+    /// count.  A raw spine also contains the cover and optional navigation
+    /// page, while compatible reflow does not write either of them as a
+    /// chapter.  Reporting the raw count here used to make the preflight card
+    /// disagree with the MOBI result for the same EPUB.</para>
+    /// </summary>
+    internal static int CountCompatibleChapters(EpubPackage package) => package.Spine
+        .Where(item => !item.IsNavigation && !item.IsCoverDocument)
+        .Count(item => package.LoadXml(item.Path).Descendants().Any(element =>
+            element.Name.LocalName.Equals("body", StringComparison.OrdinalIgnoreCase)));
+
     public static async Task<ImportedEpubBook> ImportAsync(
         string epubPath,
         CancellationToken cancellationToken)

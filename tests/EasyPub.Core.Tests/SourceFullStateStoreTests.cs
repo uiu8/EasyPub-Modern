@@ -35,7 +35,18 @@ public class SourceFullStateStoreTests : IDisposable
     [Fact]
     public async Task A_saved_tree_reads_back_identical()
     {
-        var (path, document) = await BookAsync();
+        var (path, _) = await BookAsync();
+        var document = await ChapterTreeDocument.LoadAsync(
+            path,
+            chapterPattern: "^第[一二]章.*$",
+            hierarchy: new TocHierarchyOptions
+            {
+                Enabled = true,
+                IncludeHtmlTocPage = true,
+                NumericHeadingMinimumBodyLines = 13,
+                Level1Pattern = "^卷",
+                Level2Pattern = "^章",
+            });
         var snapshotPath = Path.Combine(_workspace, "快照.tree.json");
         var snapshot = new SourceFullStateSnapshot(document.SourceSha256, document.LineCount,
             document.CreatePlan(document.Entries));
@@ -46,6 +57,8 @@ public class SourceFullStateStoreTests : IDisposable
         Assert.NotNull(read);
         Assert.Equal(document.SourceSha256, read!.SourceSha256);
         Assert.Equal(document.LineCount, read.LineCount);
+        Assert.Equal(document.ChapterPattern, read.Tree.ChapterPattern);
+        Assert.Equal(document.RecognitionOptions, read.Tree.RecognitionOptions);
         Assert.Equal(document.Entries.Count, read.Tree.Entries.Count);
         foreach (var (expected, actual) in document.Entries.Zip(read.Tree.Entries))
         {

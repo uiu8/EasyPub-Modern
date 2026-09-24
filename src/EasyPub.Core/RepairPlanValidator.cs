@@ -72,7 +72,7 @@ public static class RepairPlanValidator
     /// <summary>Convenience overload for the common case, where the document carries the rules.</summary>
     public static RepairVersionCheck Validate(RepairBaseVersion expected, ChapterTreeDocument document,
         IEnumerable<ChapterTreeEntry> entries, string? chapterPattern = null) =>
-        Validate(expected, document.SourceSha256, entries, document.RecognitionOptions, chapterPattern);
+        Validate(expected, document.SourceSha256, entries, document.RecognitionOptions, chapterPattern ?? document.ChapterPattern);
 }
 
 /// <summary>

@@ -1,8 +1,8 @@
 #define AppName "EasyPub Modern"
-#define AppVersion "1.61.2"
+#define AppVersion "1.63.1"
 #define AppPublisher "uiu8"
 #define AppExeName "EasyPub.Desktop.exe"
-#define PublishDir "..\outputs\EasyPubModern-v1.61.2-honest-footer-win-x64"
+#define PublishDir "..\outputs\EasyPubModern-v1.63.1-popup-shell-fix-kindling-win-x64"
 
 [Setup]
 AppId={{8F564AA1-31F4-4EA5-BFF7-BBD76C35B5F4}
@@ -64,5 +64,3 @@ begin
   else
     Result := ExpandConstant('{localappdata}\Programs\EasyPub Modern');
 end;
-
-

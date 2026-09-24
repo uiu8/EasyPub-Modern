@@ -61,13 +61,18 @@ public partial class MainWindow : Window
     private TocHierarchyOptions _numericDefaults = new();
     private IReadOnlyList<NamedNumericHeadingPreset> _numericPresets = [];
 
-    private TocHierarchyOptions BookHierarchy(ChapterTreePlan? plan) => (_tocHierarchy with
+    private TocHierarchyOptions BookHierarchy(ChapterTreePlan? plan) => plan?.RecognitionOptions ?? (_tocHierarchy with
     {
         RecognizeNumericHeadings = _numericDefaults.RecognizeNumericHeadings,
         NumericHeadingMinimumBodyLines = _numericDefaults.NumericHeadingMinimumBodyLines,
         NumericHeadingPattern = _numericDefaults.NumericHeadingPattern,
         HeadingNumberCorrections = _numericDefaults.HeadingNumberCorrections,
     }).ForBook(plan);
+
+    private string? BookChapterPattern(InputBookItem book) =>
+        book.ChapterTree?.RecognitionOptions is not null
+            ? book.ChapterTree.ChapterPattern
+            : EmptyToNull(ChapterRegexText.Text);
     private TextCleanupOptions _textCleanupOptions = new();
     private ConversionMode _conversionMode = ConversionMode.OriginalCompatible;
     private bool _applyingProfile;
@@ -100,6 +105,7 @@ public partial class MainWindow : Window
     private bool _syncingSelectedMetadata;
     private string? _profileAuthor;
     private PublicationMetadata _profileMetadata = new();
+    private MobiOptions _mobiOptions = new();
     private IReadOnlyDictionary<string, string> _shortcutBindings = new Dictionary<string, string>();
     private readonly PendingUpdateStore _pendingUpdates = PendingUpdateStore.CreateDefault();
     private readonly UpdateCheckCacheStore _updateCheckCache = UpdateCheckCacheStore.CreateDefault();
@@ -895,6 +901,7 @@ public partial class MainWindow : Window
     private void ApplyLegacyConfig(LegacyConfigImport import)
     {
         var options = import.Options;
+        _mobiOptions = options.Mobi;
         if (!string.IsNullOrWhiteSpace(import.OutputDirectory)) OutputDirectoryText.Text = import.OutputDirectory;
         FormatCombo.SelectedIndex = import.OutputFormat == LegacyOutputFormat.Epub ? 0 : 1;
         ChapterRegexText.Text = options.ChapterPattern ?? string.Empty;
@@ -996,6 +1003,7 @@ public partial class MainWindow : Window
 
     private void ApplyProfile(ConversionProfile profile)
     {
+        _mobiOptions = profile.Options.Mobi;
         _applyingProfile = true;
         _conversionMode = profile.Mode;
         OriginalModeRadio.IsChecked = profile.Mode == ConversionMode.OriginalCompatible;
@@ -1100,7 +1108,7 @@ public partial class MainWindow : Window
                 FamilyName = EmptyToNull(FontFamilyText.Text),
                 Subset = SubsetFontCheck.IsChecked == true,
             },
-            Mobi = new MobiOptions
+            Mobi = _mobiOptions with
             {
                 KindleGenPath = EmptyToNull(KindleGenText.Text),
                 Compression = (MobiCompression)int.Parse(((ComboBoxItem)CompressionCombo.SelectedItem).Tag.ToString()!, CultureInfo.InvariantCulture),
@@ -1923,7 +1931,7 @@ public partial class MainWindow : Window
             StatusText.Text = $"正在分析章节：{Path.GetFileName(inputPath)}";
             var encoding = Enum.Parse<TextEncodingMode>(
                 ((ComboBoxItem)EncodingCombo.SelectedItem).Tag.ToString()!);
-            var chapterPattern = EmptyToNull(ChapterRegexText.Text);
+            var chapterPattern = BookChapterPattern(book);
             var bookHierarchy = BookHierarchy(book.ChapterTree);
             ChapterTreeDocument document;
             try
@@ -1966,14 +1974,6 @@ public partial class MainWindow : Window
                 _numericDefaults = editor.GlobalNumericDefaults;
                 _numericPresets = editor.NumericPresets;
                 _textEditorPath = editor.TextEditorPath;
-                if (editor.ResultHierarchyOptions is not null)
-                    _tocHierarchy = editor.ResultHierarchyOptions with
-                    {
-                        RecognizeNumericHeadings = _tocHierarchy.RecognizeNumericHeadings,
-                        NumericHeadingMinimumBodyLines = _tocHierarchy.NumericHeadingMinimumBodyLines,
-                        NumericHeadingPattern = _tocHierarchy.NumericHeadingPattern,
-                    };
-                ChapterRegexText.Text = editor.ResultChapterPattern ?? string.Empty;
                 InvalidateChapterDocumentCache(inputPath);
                 UpdateTocHierarchySummary();
                 MarkDirtyTab(ChaptersTab);
@@ -2650,7 +2650,7 @@ public partial class MainWindow : Window
         var editor = new IllustrationManagerWindow(
             book.DisplayName,
             book.InputPath,
-            EmptyToNull(ChapterRegexText.Text),
+            BookChapterPattern(book),
             encoding,
             book.Illustrations)
         { Owner = this };
@@ -2960,7 +2960,7 @@ public partial class MainWindow : Window
             ChapterNavigatorList.IsEnabled = false;
             ChapterPreviewSearchText.IsEnabled = false;
             var inputPath = book.InputPath;
-            var chapterRegex = string.IsNullOrWhiteSpace(ChapterRegexText.Text) ? null : ChapterRegexText.Text;
+            var chapterRegex = BookChapterPattern(book);
             var hierarchy = BookHierarchy(book.ChapterTree);
             var encoding = Enum.Parse<TextEncodingMode>(((ComboBoxItem)EncodingCombo.SelectedItem).Tag!.ToString()!);
             var document = await GetChapterDocumentAsync(
@@ -3570,7 +3570,7 @@ public partial class MainWindow : Window
                 var editor = new IllustrationManagerWindow(
                     book.DisplayName,
                     book.InputPath,
-                    EmptyToNull(ChapterRegexText.Text),
+                    BookChapterPattern(book),
                     encoding,
                     book.Illustrations,
                     issue.RelatedValue)

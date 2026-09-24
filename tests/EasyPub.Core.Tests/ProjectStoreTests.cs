@@ -86,7 +86,18 @@ public sealed class ProjectStoreTests
                 MetadataRuleFolder = Path.Combine(directory, "起点"),
                 ChapterTree = new ChapterTreePlan("ABC123", [
                     new ChapterTreeEntry("chapter-1", "第一章", 1, true, 1, [new ChapterSourceRange(2, 3)])
-                    { HeadingLevel = 2 }]),
+                    { HeadingLevel = 2 }])
+                {
+                    ChapterPattern = "^自定义章节$",
+                    RecognitionOptions = new TocHierarchyOptions
+                    {
+                        Enabled = true,
+                        IncludeHtmlTocPage = true,
+                        Level1Pattern = "^卷",
+                        Level2Pattern = "^章",
+                        NumericHeadingMinimumBodyLines = 11,
+                    },
+                },
             }],
             DateTimeOffset.Now)
         {
@@ -136,6 +147,10 @@ public sealed class ProjectStoreTests
             Assert.Equal("起点", book.MetadataOverrides.Publisher);
             Assert.Equal(Path.Combine(directory, "起点"), book.MetadataRuleFolder);
             Assert.Equal("第一章", Assert.Single(book.ChapterTree!.Entries).Title);
+            Assert.Equal("^自定义章节$", book.ChapterTree.ChapterPattern);
+            Assert.True(book.ChapterTree.RecognitionOptions!.IncludeHtmlTocPage);
+            Assert.Equal(11, book.ChapterTree.RecognitionOptions.NumericHeadingMinimumBodyLines);
+            Assert.Equal("^卷", book.ChapterTree.RecognitionOptions.Level1Pattern);
             Assert.Equal(EasyPubProjectStore.Fingerprint(document), EasyPubProjectStore.Fingerprint(loaded));
             Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
 

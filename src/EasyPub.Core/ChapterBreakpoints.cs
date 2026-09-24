@@ -35,6 +35,8 @@ public sealed record ChapterBreakpoint(
 /// </summary>
 public static class ChapterBreakpoints
 {
+    private const string ChineseNumberChars = "零〇一二两兩三四五六七八九十百千万萬壹贰貳叁參肆伍陆陸柒捌玖拾佰仟";
+
     /// <summary>
     /// The most consecutive chapter numbers that can be read as "this file lost these chapters". A real
     /// release sometimes drops a handful; a run of hundreds means the numbering itself is faulty (repeated
@@ -54,17 +56,21 @@ public static class ChapterBreakpoints
         // directory lists that the tree lacks. Nothing here guesses that a heading is *written* wrong — a
         // release legitimately prints "第335章" after "第1章" across volumes and restarts, and calling that a
         // miswritten number would bury the real gaps. Recognising headings is ChapterDiagnostics' job.
-        var ordered = new List<(ChapterTreeEntry Entry, ChapterNumber Reading, int? Value, string Scope)>();
+        var ordered = new List<(ChapterTreeEntry Entry, ChapterNumber Reading, int? Value, string Scope, string BaseScope)>();
         var parents = new List<ChapterTreeEntry>();
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (entry.IsFrontMatter) { parents.Clear(); continue; }
             while (parents.Count > 0 && parents[^1].Level >= entry.Level) parents.RemoveAt(parents.Count - 1);
-            var scope = (parents.Count > 0 ? parents[^1].Id : "") + "|" + entry.Level + "|" + Unit(entry.Title);
-            parents.Add(entry);
+            // A book may switch from Chinese numerals to Arabic digits (or back) without starting a new
+            // volume. Treat each written numbering family as its own local sequence. Comparing across the
+            // switch turns a deliberate format change such as 第十七章 -> 第335章 into hundreds of fake gaps.
             var reading = Read(entry.Title, corrections);
-            ordered.Add((entry, reading, reading.Number, scope));
+            var baseScope = (parents.Count > 0 ? parents[^1].Id : "") + "|" + entry.Level + "|" + Unit(entry.Title);
+            var scope = baseScope + "|" + NumberingFamily(entry.Title, corrections);
+            parents.Add(entry);
+            ordered.Add((entry, reading, reading.Number, scope, baseScope));
         }
 
         var result = new List<ChapterBreakpoint>();
@@ -73,10 +79,17 @@ public static class ChapterBreakpoints
         // ("第十七章" then "第335章"), and comparing across two numbering systems invents hundreds of
         // "missing" chapters that belong to the other system.
         var span = new Dictionary<string, (int Low, int High)>();
-        var scopes = ordered.GroupBy(item => item.Scope).ToDictionary(
+        var scopes = ordered.GroupBy(item => item.BaseScope).ToDictionary(
             group => group.Key,
             group => group.Select(item => item.Value).OfType<int>().ToArray());
         var present = scopes.ToDictionary(pair => pair.Key, pair => pair.Value.ToHashSet());
+        // Relaxed readings are indexed once. The old inner FirstOrDefault scanned the complete tree for
+        // every candidate number, which made a long run of malformed headings unnecessarily quadratic.
+        var relaxed = ordered.GroupBy(item => item.BaseScope).ToDictionary(
+            group => group.Key,
+            group => group.Where(item => item.Reading.Relaxed is int)
+                .GroupBy(item => item.Reading.Relaxed!.Value)
+                .ToDictionary(group => group.Key, group => group.First().Entry));
         foreach (var pair in scopes.Where(pair => pair.Value.Length > 0))
             span[pair.Key] = (pair.Value.Min(), pair.Value.Max());
         // The number the previous row showed, inside the scope being walked. A row that repeats a number is
@@ -87,11 +100,16 @@ public static class ChapterBreakpoints
             cancellationToken.ThrowIfCancellationRequested();
             var previous = ordered[index - 1];
             var current = ordered[index];
-            if (!seen.TryGetValue(current.Scope, out var scopeSeen))
-                seen[current.Scope] = scopeSeen = [.. ordered.Take(index).Where(item => item.Scope == current.Scope)
-                    .Select(item => item.Value).OfType<int>()];
+            if (previous.Value is int previousNumber)
+            {
+                if (!seen.TryGetValue(previous.Scope, out var previousSeen))
+                    seen[previous.Scope] = previousSeen = [];
+                previousSeen.Add(previousNumber);
+            }
             if (previous.Scope != current.Scope) continue;
             if (previous.Value is not int before || current.Value is not int now) continue;
+            if (!seen.TryGetValue(current.Scope, out var scopeSeen))
+                seen[current.Scope] = scopeSeen = [];
             if (!scopeSeen.Add(now)) continue;
             if (now <= before + 1) continue;
             if ((long)now - before - 1 > LargestPlausibleGap)
@@ -107,15 +125,17 @@ public static class ChapterBreakpoints
             var missing = new List<int>();
             var typos = new List<(int Expected, string Title)>();
             var beyondScope = 0;
-            var (low, high) = span.TryGetValue(current.Scope, out var range) ? range : (int.MinValue, int.MaxValue);
+            var (low, high) = span.TryGetValue(current.BaseScope, out var range) ? range : (int.MinValue, int.MaxValue);
             for (var expected = before + 1; expected < now; expected++)
             {
-                if (present[current.Scope].Contains(expected)) continue;
+                // Presence is intentionally broader than the comparison scope. A heading written as
+                // 第257章 still proves that the source contains chapter 257 when its neighbours use
+                // Chinese numerals; only the adjacent-number comparison needs the notation boundary.
+                if (present[current.BaseScope].Contains(expected)) continue;
                 if (expected < low || expected > high) { beyondScope++; continue; }
-                var match = ordered.Where(item => item.Scope == current.Scope)
-                    .FirstOrDefault(item => item.Reading.Relaxed == expected);
-                if (match.Entry is null) { missing.Add(expected); continue; }
-                typos.Add((expected, match.Entry.Title));
+                if (!relaxed.TryGetValue(current.BaseScope, out var byNumber)
+                    || !byNumber.TryGetValue(expected, out var match)) { missing.Add(expected); continue; }
+                typos.Add((expected, match.Title));
             }
             if (missing.Count == 0 && typos.Count == 0 && beyondScope == 0) continue;
             if (typos.Count > 0)
@@ -199,6 +219,28 @@ public static class ChapterBreakpoints
         var match = System.Text.RegularExpressions.Regex.Match(title.Trim(), "[章回]",
             System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(200));
         return match.Success ? match.Value : "";
+    }
+
+    /// <summary>
+    /// Identifies the notation used by the number before a chapter marker. This is deliberately a
+    /// presentation-level boundary: it does not make an unrecognised heading valid and it never changes
+    /// the number returned by <see cref="Read"/>. Its only purpose is to avoid comparing unrelated local
+    /// sequences when a source changes from Chinese numerals to Arabic digits.
+    /// </summary>
+    private static string NumberingFamily(string title, IReadOnlyDictionary<char, char> corrections)
+    {
+        var digits = Extract(title, corrections);
+        if (digits.Length == 0) return "unknown";
+        var hasArabic = digits.Any(ch => (ch >= '0' && ch <= '9') || (ch >= '０' && ch <= '９'));
+        var hasChinese = digits.Any(ch => ChineseNumberChars.Contains(ch)
+            || corrections.TryGetValue(ch, out var corrected) && ChineseNumberChars.Contains(corrected));
+        return (hasArabic, hasChinese) switch
+        {
+            (true, false) => "arabic",
+            (false, true) => "chinese",
+            (true, true) => "mixed",
+            _ => "unknown",
+        };
     }
 
     /// <summary>

@@ -217,9 +217,24 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="20,8,20,40">
                         <TextBlock Text="MOBI / Kindle" FontSize="22" FontWeight="SemiBold"/>
-                        <TextBlock Text="配置 KindleGen 与 MOBI 专用参数" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
-
+                        <TextBlock Text="选择转换引擎；EPUB 输出不受影响" Style="{StaticResource HelpText}" Margin="0,5,0,18"/>
                         <Border Style="{StaticResource SettingsCard}">
+                            <StackPanel>
+                                <TextBlock Text="Kindle 转换引擎" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="KindleEngineCombo" SelectionChanged="KindleEngine_Changed">
+                                    <ComboBoxItem Content="KindleGen（默认）" Tag="KindleGen"/>
+                                    <ComboBoxItem Content="Kindling（实验性 · 兼容 MOBI）" Tag="Kindling"/>
+                                </ComboBox>
+                                <StackPanel x:Name="KindlingSettingsPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                    <TextBlock Text="Kindling 程序路径（留空使用随包引擎）" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="KindlingPathText" ToolTip="可粘贴 kindling-cli-windows.exe 的完整路径"/>
+                                    <TextBlock Text="输出 MOBI7 + KF8，保留章节编辑结果。仅“移除附加源文件”适用；下方灰色的 KindleGen 专用设置不会使用。失败时保留日志，不自动切换引擎。" Style="{StaticResource HelpText}" Margin="0,8,0,0"/>
+                                    <TextBlock Text="面向本地阅读：不执行 KDP 上架检查（允许无封面）；仍执行软件预检及引擎正文自检。" Style="{StaticResource HelpText}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="KindleGenStatusCard" Style="{StaticResource SettingsCard}">
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <StackPanel>

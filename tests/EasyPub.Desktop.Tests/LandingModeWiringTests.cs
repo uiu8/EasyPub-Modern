@@ -18,6 +18,122 @@ namespace EasyPub.Desktop.Tests;
 /// </summary>
 public class LandingModeWiringTests
 {
+    private readonly Xunit.Abstractions.ITestOutputHelper _output;
+
+    public LandingModeWiringTests(Xunit.Abstractions.ITestOutputHelper output) => _output = output;
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Cancelled_actions_remain_visible_and_can_be_selected_again(bool reference, bool editSource)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-reselect-{Guid.NewGuid():N}.txt");
+        const string original = "第一章 起点\n这是一段足够长的正文，保留正文并且只处理标题，不允许在取消操作后丢失原来的选择入口。\n第一章 起点\n第二章 继续\n后续正文\n";
+        await File.WriteAllTextAsync(path, original);
+        try
+        {
+            var document = await ChapterTreeDocument.LoadAsync(path);
+            var catalog = reference ? ReferenceCatalogInput.ParseText("第一章 起点\n第二章 新标题") : null;
+            var outcome = ChapterAutoRepair.Prepare(document, catalog);
+            OnSta(() => WithShown(Build((outcome, document.Entries, document, path),
+                editSource ? RepairLandingMode.EditSource : RepairLandingMode.TreeOnly, Applier(Workspace())), shown =>
+            {
+                var initial = shown.SelectedActions().Select(a => a.Key).ToHashSet();
+                Assert.NotEmpty(initial);
+                foreach (var box in Descendants<CheckBox>(shown).Where(b => b.Tag is string && b.IsChecked == true).ToArray())
+                    box.IsChecked = false;
+                shown.UpdateLayout();
+                Assert.Empty(shown.SelectedActions());
+                Assert.False(shown.CurrentPreview!.SourceWillChange);
+                var live = Descendants<CheckBox>(shown).Where(b => b.Tag is string).ToArray();
+                Assert.Subset(live.Select(b => (string)b.Tag).ToHashSet(), initial);
+                Assert.Contains(Descendants<TextBlock>(shown), t => t.Text.Contains("未选任何修改"));
+                Assert.Contains(Descendants<TextBlock>(shown), t => t.Text == "按当前勾选，章节树不会改变。");
+                foreach (var key in initial)
+                    Descendants<CheckBox>(shown).Single(b => Equals(b.Tag, key)).IsChecked = true;
+                Assert.Equal(initial.Order(), shown.SelectedActions().Select(a => a.Key).Order());
+                Assert.Equal(reference && editSource, shown.CurrentPreview!.SourceWillChange);
+            }));
+            Assert.Equal(original, await File.ReadAllTextAsync(path));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Cancelled_suggestion_screenshot_keeps_a_live_checkbox()
+    {
+        var subject = await SubjectAsync();
+        try
+        {
+            OnSta(() =>
+            {
+                // Run this capture alone when requested: real App resources belong to one STA.
+                if (!string.IsNullOrEmpty(WorkbenchHarness.ScreenshotDirectory) && Application.Current is null)
+                {
+                    var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                    app.InitializeComponent();
+                }
+                WithShown(Build(subject, RepairLandingMode.EditSource, Applier(Workspace())), shown =>
+                {
+                    var box = Descendants<CheckBox>(shown).Single(b => b.Tag is string && b.IsChecked == true);
+                    var key = box.Tag;
+                    box.IsChecked = false;
+                    Assert.Same(box, Descendants<CheckBox>(shown).Single(b => Equals(b.Tag, key)));
+                    if (!string.IsNullOrEmpty(WorkbenchHarness.ScreenshotDirectory))
+                    {
+                        shown.Opacity = 1;
+                        WorkbenchHarness.Save(shown, "修复确认-取消后保留建议");
+                    }
+                    box.IsChecked = true;
+                    Assert.Single(shown.SelectedActions());
+                });
+            });
+        }
+        finally { File.Delete(subject.Path); }
+    }
+
+    [Fact]
+    public async Task Six_volume_preview_cache_preserves_diff_and_reports_cost()
+    {
+        var sample = Path.Combine(Path.GetDirectoryName(WorkbenchHarness.SampleRoot())!, "六卷690章修复验收");
+        var path = Path.Combine(sample, "缺陷样书.txt");
+        var document = await ChapterTreeDocument.LoadAsync(path);
+        var catalog = ReferenceCatalogInput.ParseText(await File.ReadAllTextAsync(Path.Combine(sample, "参考目录.txt")));
+        var outcome = ChapterAutoRepair.Prepare(document, catalog);
+        OnSta(() => WithShown(Build((outcome, document.Entries, document, path), RepairLandingMode.TreeOnly, Applier(Workspace())), shown =>
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var preview = typeof(RepairReviewWindow).GetMethod("PreviewChanges", flags)!;
+            var cache = typeof(RepairReviewWindow).GetField("_treePreviewChanges", flags)!;
+            var expected = (IReadOnlyList<RepairChange>)preview.Invoke(shown, null)!;
+            Assert.NotEmpty(expected);
+            // 同一个窗口、同一组选项：强制清缓存与正常命中交替测量，排除构窗和网络时间。
+            var cold = new List<double>();
+            var warm = new List<double>();
+            long coldBytes = 0, warmBytes = 0;
+            for (var i = 0; i < 12; i++)
+            {
+                cache.SetValue(shown, null);
+                var allocated = GC.GetAllocatedBytesForCurrentThread();
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                var rebuilt = (IReadOnlyList<RepairChange>)preview.Invoke(shown, null)!;
+                cold.Add(System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                coldBytes += GC.GetAllocatedBytesForCurrentThread() - allocated;
+                Assert.Equal(expected, rebuilt);
+                allocated = GC.GetAllocatedBytesForCurrentThread();
+                start = System.Diagnostics.Stopwatch.GetTimestamp();
+                var reused = preview.Invoke(shown, null);
+                warm.Add(System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                warmBytes += GC.GetAllocatedBytesForCurrentThread() - allocated;
+                Assert.Same(rebuilt, reused);
+            }
+            cold.Sort(); warm.Sort();
+            _output.WriteLine($"690-chapter fixture; recognized={document.Entries.Count}; changes={expected.Count}; iterations=12; rebuild median={cold[6]:F3} ms, mean allocations={coldBytes / 12} bytes; cached median={warm[6]:F3} ms, mean allocations={warmBytes / 12} bytes. Tree diff only; excludes source compilation and rendering.");
+        }));
+    }
+
     private static async Task<(AutoRepairOutcome Outcome, IReadOnlyList<ChapterTreeEntry> Before, ChapterTreeDocument Document, string Path)>
         SubjectAsync()
     {
@@ -89,15 +205,78 @@ public class LandingModeWiringTests
         Action<IReadOnlyCollection<ReferenceAction>>? apply = null) =>
         new(subject.Outcome, subject.Before, apply ?? (_ => { }), subject.Document,
             defaultMode: defaultMode,
-            previewMode: (mode, actions) => applier.Preview(subject.Outcome, subject.Document, mode, actions, volumeLevels),
-            decisionsFor: (mode, actions) => ChapterRepairApplier.DecisionsFor(
-                ChapterRepairApplier.ProposalFor(subject.Outcome, subject.Document)!, mode, actions));
+            previewMode: (mode, decisions) => applier.Preview(
+                ChapterRepairApplier.ProposalFor(subject.Outcome, subject.Document)!, subject.Document,
+                decisions, mode, buildVolumeLevels: volumeLevels));
 
     private static ChapterRepairApplier Applier(string workspace) =>
         new(workspace, backupPathFor: (_, _, _) => Task.FromResult<string?>(null));
 
     private static string Workspace() =>
         Path.Combine(Path.GetTempPath(), $"easypub-landing-tx-{Guid.NewGuid():N}");
+
+    [Fact]
+    public async Task Switching_landing_mode_reuses_tree_diff_but_changing_actions_invalidates_it()
+    {
+        var subject = await SubjectAsync();
+        try
+        {
+            OnSta(() => WithShown(Build(subject, RepairLandingMode.TreeOnly, Applier(Workspace())), shown =>
+            {
+                var preview = typeof(RepairReviewWindow).GetMethod("PreviewChanges",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                var first = preview.Invoke(shown, null);
+                Descendants<RadioButton>(shown).Single(option => Equals(option.Content, "同时改原文")).IsChecked = true;
+                Assert.Same(first, preview.Invoke(shown, null));
+                Assert.True(shown.CurrentPreview!.SourceWillChange);
+                var checkbox = Descendants<CheckBox>(shown).First(box => box.Tag is string && box.IsChecked == true);
+                checkbox.IsChecked = false;
+                Assert.NotSame(first, preview.Invoke(shown, null));
+                Assert.False(shown.CurrentPreview!.SourceWillChange);
+            }));
+        }
+        finally { File.Delete(subject.Path); }
+    }
+
+    [Fact]
+    public async Task Explicit_duplicate_deletion_reaches_the_preview_and_the_source_transaction()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"easypub-duplicate-choice-{Guid.NewGuid():N}.txt");
+        const string body = "这一段正文足够长，必须完整保留，选择清理重复标题时不能把这段正文一起删除。";
+        var original = $"第一章 起点\n{body}\n第一章 起点\n第二章 继续\n正文三\n";
+        await File.WriteAllTextAsync(path, original);
+        try
+        {
+            var document = await ChapterTreeDocument.LoadAsync(path);
+            var outcome = ChapterAutoRepair.Prepare(document, catalog: null);
+            Assert.NotEmpty(outcome.Plan!.DefaultSelection);
+            var changes = RepairIntegrity.DescribeWithActions(outcome.Plan,
+                ChapterAutoRepair.RebuildWithSelection(document, outcome, outcome.Plan.DefaultSelection.ToArray()), document.Entries);
+            Assert.True(changes.Any(change => change.ActionKind == ReferenceActionKind.RemoveDuplicate),
+                System.Text.Json.JsonSerializer.Serialize(changes));
+            var applier = new ChapterRepairApplier(Workspace());
+            IReadOnlyList<RepairDecision>? decisions = null;
+            OnSta(() => WithShown(Build((outcome, document.Entries, document, path),
+                RepairLandingMode.EditSource, applier), shown =>
+            {
+                Assert.False(shown.CurrentPreview!.SourceWillChange);
+                var delete = Assert.Single(Descendants<CheckBox>(shown),
+                    box => Equals(box.Content, "并从原文删除这一份"));
+                delete.IsChecked = true;
+                decisions = shown.SelectedDecisions();
+                Assert.Contains(decisions, item => item.Selected && item.SourceEffect == SourceEffectDecision.ApplyRequired);
+                Assert.True(shown.CurrentPreview!.SourceWillChange);
+                Assert.Contains(3, shown.CurrentPreview.AffectedLines);
+            }));
+            var proposal = ChapterRepairApplier.ProposalFor(outcome, document)!;
+            var result = await applier.ApplyAsync(proposal, document, decisions!, RepairLandingMode.EditSource);
+            Assert.True(result.Changed, result.Message);
+            Assert.Equal($"第一章 起点\n{body}\n第二章 继续\n正文三\n", await File.ReadAllTextAsync(path));
+            Assert.NotNull(result.Transaction?.BackupPath);
+            Assert.Equal(original, await File.ReadAllTextAsync(result.Transaction!.BackupPath!));
+        }
+        finally { File.Delete(path); }
+    }
 
     [Fact]
     public async Task The_window_offers_both_landing_modes_with_the_configured_one_selected()

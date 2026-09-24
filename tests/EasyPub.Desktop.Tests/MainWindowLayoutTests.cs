@@ -17,6 +17,19 @@ namespace EasyPub.Desktop.Tests;
 
 public sealed class MainWindowLayoutTests
 {
+    [Fact]
+    public void Kindling_selection_survives_main_window_profile_roundtrip()
+    {
+        RunInWindow(window =>
+        {
+            var profile = ConversionProfile.Default with { Options = ConversionProfile.Default.Options with
+            { Mobi = new MobiOptions { Engine = KindleConversionEngine.Kindling, KindlingPath = @"D:\software\kindling.exe" } } };
+            typeof(MainWindow).GetMethod("ApplyProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [profile]);
+            var current = (ConversionProfile)typeof(MainWindow).GetMethod("CaptureProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+            Assert.Equal(KindleConversionEngine.Kindling, current.Options.Mobi.Engine);
+            Assert.Equal(profile.Options.Mobi.KindlingPath, current.Options.Mobi.KindlingPath);
+        });
+    }
     [Theory]
     [InlineData(1040, "Comfortable")]
     [InlineData(1280, "Compact")]
@@ -1207,6 +1220,30 @@ public sealed class MainWindowLayoutTests
 
                 foreach (var (_, _, otherPageName) in cases.Where(item => item.Page != pageName))
                     Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(window.FindName(otherPageName)).Visibility);
+
+                // Switching a workflow page must never hide or push the shared conversion bar out of view.
+                foreach (var (width, height) in new[] { (1440d, 900d), (1040d, 700d) })
+                {
+                    window.Width = width;
+                    window.Height = height;
+                    window.UpdateLayout();
+                    var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                    foreach (var controlName in new[] { "BottomOperationBar", "FormatCombo", "LayoutModeCombo", "RunPreflightButton", "ConvertButton" })
+                    {
+                        var control = Assert.IsAssignableFrom<FrameworkElement>(window.FindName(controlName));
+                        Assert.True(control.IsVisible && control.ActualHeight > 0, $"{title}: {controlName} is hidden");
+                        var bounds = control.TransformToAncestor(content).TransformBounds(new Rect(control.RenderSize));
+                        Assert.True(bounds.Top >= 0 && bounds.Bottom <= content.ActualHeight + 1
+                            && bounds.Left >= 0 && bounds.Right <= content.ActualWidth + 1,
+                            $"{title} {width}x{height}: {controlName} is clipped ({bounds})");
+                    }
+                    var capture = Environment.GetEnvironmentVariable("EASYPUB_WORKFLOW_CAPTURE_PATH");
+                    if (!string.IsNullOrWhiteSpace(capture))
+                        CaptureWindowVisual(window, Path.Combine(Path.GetDirectoryName(capture)!, $"{title}-{width}.png"));
+                }
+                window.Width = 1440;
+                window.Height = 900;
+                window.UpdateLayout();
             }
 
             Assert.Equal(Visibility.Collapsed, Assert.IsType<RadioButton>(window.FindName("ChaptersNavigationButton")).Visibility);
@@ -1985,6 +2022,9 @@ public sealed class MainWindowLayoutTests
             File.WriteAllText(inputPath, "第一章 雨夜\r\n正文");
             RunInWindow(window =>
             {
+                // Startup config is applied asynchronously after Show(). Choose the test format afterwards.
+                PumpDispatcherUntil(() => (bool)typeof(MainWindow).GetField("_optionTrackingReady",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!, TimeSpan.FromSeconds(8));
                 Assert.IsType<ComboBox>(window.FindName("FormatCombo")).SelectedIndex = 0;
                 var book = new InputBookItem(inputPath);
                 window.InputBooks.Add(book);
@@ -1993,6 +2033,8 @@ public sealed class MainWindowLayoutTests
                 PumpDispatcherUntil(() => book.AnalysisStatus == BookAnalysisStatus.Completed, TimeSpan.FromSeconds(8));
 
                 Assert.True(book.HasBeenChecked);
+                Assert.True(book.ReadinessLabel == "所选检查通过",
+                    string.Join(" | ", book.PreflightIssues.Select(issue => $"{issue.Severity}:{issue.Code}: {issue.Message}")));
                 Assert.Equal("所选检查通过", book.ReadinessLabel);
                 Assert.Equal(1, book.ChapterCandidateCount);
                 Assert.Null(book.ChapterTree);

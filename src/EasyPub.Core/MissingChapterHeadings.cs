@@ -100,7 +100,12 @@ public static class MissingChapterHeadings
                 if (!(numberTypo || prefix && unit is "张" or "" || missingPrefix)) continue;
                 var title = m.Groups["title"].Value.Trim();
                 if (title.Contains('。') || title.Contains('；') || title.Contains('“') || title.StartsWith("中提到")) continue;
-                if (options.RequireIsolatedLine
+                // A one-character number typo is stronger evidence than the surrounding blank-line
+                // shape: real releases often run the malformed heading directly after the previous
+                // body paragraph. Keep the isolation gate for missing-prefix/unit candidates, where
+                // prose can otherwise look like a heading; typo candidates still pass the length,
+                // punctuation and neighbouring-number checks above.
+                if (options.RequireIsolatedLine && !numberTypo
                     && (!string.IsNullOrWhiteSpace(document.SourceLine(line - 1)?.Text)
                         || !string.IsNullOrWhiteSpace(document.SourceLine(line + 1)?.Text))) continue;
                 // Without the blank neighbours, the shape of the line is the only thing left to judge it

@@ -162,14 +162,25 @@ public sealed record TocHierarchyOptions
     public string NumericHeadingPattern { get; init; } = NumericHeadingRule.DefaultPattern;
     public string HeadingNumberCorrections { get; init; } = HeadingTypoRules.Default;
 
-    public TocHierarchyOptions ForBook(ChapterTreePlan? plan) => this with
+    public TocHierarchyOptions ForBook(ChapterTreePlan? plan)
     {
-        RecognizeNumericHeadings = plan?.NumericHeadingRecognition ?? RecognizeNumericHeadings,
-        HeadingNumberCorrections = plan?.HeadingNumberCorrections ?? HeadingNumberCorrections,
-        NumericHeadingMinimumBodyLines = Math.Max(0, plan?.NumericHeadingMinimumBodyLines ?? NumericHeadingMinimumBodyLines),
-        NumericHeadingPattern = plan?.NumericHeadingRecognition is not null
-            ? plan.NumericHeadingPattern ?? NumericHeadingRule.DefaultPattern : NumericHeadingPattern,
-    };
+        // New plans carry the complete snapshot that produced their tree. It must win over the
+        // currently selected global profile, otherwise opening a second book after editing the first
+        // one silently reinterprets the first book with the second book's rules.
+        if (plan?.RecognitionOptions is { } saved)
+            return saved;
+
+        // Keep the legacy nullable fields working for projects written before the complete snapshot
+        // existed. Those projects intentionally inherit the caller's current hierarchy defaults.
+        return this with
+        {
+            RecognizeNumericHeadings = plan?.NumericHeadingRecognition ?? RecognizeNumericHeadings,
+            HeadingNumberCorrections = plan?.HeadingNumberCorrections ?? HeadingNumberCorrections,
+            NumericHeadingMinimumBodyLines = Math.Max(0, plan?.NumericHeadingMinimumBodyLines ?? NumericHeadingMinimumBodyLines),
+            NumericHeadingPattern = plan?.NumericHeadingRecognition is not null
+                ? plan.NumericHeadingPattern ?? NumericHeadingRule.DefaultPattern : NumericHeadingPattern,
+        };
+    }
     public string Level1Pattern { get; init; } = DefaultLevel1Pattern;
     public string Level2Pattern { get; init; } = DefaultLevel2Pattern;
     public string Level3Pattern { get; init; } = DefaultLevel3Pattern;
@@ -230,8 +241,12 @@ public sealed record BookIllustration(
     string? AltText = null,
     int? InsertAfterLine = null);
 
+public enum KindleConversionEngine { KindleGen, Kindling }
+
 public sealed record MobiOptions
 {
+    public KindleConversionEngine Engine { get; init; }
+    public string? KindlingPath { get; init; }
     public string? KindleGenPath { get; init; }
     public MobiCompression Compression { get; init; } = MobiCompression.Standard;
     public bool StripSourceArchive { get; init; } = true;

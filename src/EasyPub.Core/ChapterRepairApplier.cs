@@ -148,7 +148,7 @@ public sealed class ChapterRepairApplier
         ArgumentNullException.ThrowIfNull(document);
         if (outcome.Plan is null) return null;
         var version = RepairBaseVersionFactory.Capture(document.SourceSha256, document.Entries,
-            document.RecognitionOptions, null);
+            document.RecognitionOptions, document.ChapterPattern);
         // The basis says where the plan came from, so a receipt can tell "aligned against a downloaded
         // directory" from "derived from the book itself". They are different claims about the same repair.
         var basis = outcome.CatalogFound ? "ReferenceCatalog" : SelfRepairPlanner.BasisName;
@@ -273,22 +273,23 @@ public sealed class ChapterRepairApplier
         // for it would be a record of nothing, and "the TXT is left exactly as it is" is the whole promise of
         // the mode.
         if (mode == RepairLandingMode.TreeOnly)
-            return new RepairApplicationResult(true, mode,
-                $"章节树已更新：{compilation.TreePatch?.Mutations.Count ?? 0} 条变化，原文未改动。",
-                compilation);
+            return TreeResult(compilation, mode);
 
         if (compilation.SourcePatch is not { } patch || compilation.ExpectedResult is null)
             return new RepairApplicationResult(false, mode, "这次方案没有任何文本操作，未创建事务。", compilation);
         if (patch.IsEmpty)
-            return new RepairApplicationResult(false, mode,
-                "这次方案不会改变原文的任何字节，因此没有创建事务。", compilation);
+            return TreeResult(compilation, mode);
 
         var original = SourceTextDocument.Load(document.SourcePath);
         var rendered = SourcePatchRenderer.Render(original, patch);
         var newSha = SourceFileHasher.HashOfRendered(original, rendered.Text);
         if (string.Equals(newSha, document.SourceSha256, StringComparison.OrdinalIgnoreCase))
-            return new RepairApplicationResult(false, mode,
-                "渲染出来的原文与现在完全相同，无需事务。", compilation);
+            return TreeResult(compilation, mode);
+
+        // Validate the exact confirmed tree before committing any bytes.
+        var coordinates = SourceCoordinateMap.Build(original, patch, rendered.Text);
+        var confirmedPlan = MaterialiseConfirmedPlan(document.CreatePlan(compilation.RebuiltEntries),
+            coordinates, patch, newSha);
 
         var before = new SourceTransitionState(
             document.SourcePath,
@@ -319,8 +320,7 @@ public sealed class ChapterRepairApplier
                     .ConfigureAwait(false);
                 if (!transition.Succeeded)
                     throw new InvalidDataException("原文已替换，但版本迁移失败：" + transition.Message);
-                finalPlan = MaterialisePlan(before.Plan!, transition.State.Plan!, compilation.TreePatch,
-                    rendered.Text);
+                finalPlan = confirmedPlan;
             });
 
         var manifest = BuildManifest(proposal, decisions, document, patch, compilation, original, newSha, backupPath);
@@ -343,6 +343,14 @@ public sealed class ChapterRepairApplier
         {
             State = state,
         };
+    }
+
+    private static RepairApplicationResult TreeResult(RepairCompilation compilation, RepairLandingMode mode)
+    {
+        var changed = compilation.TreePatch is { IsEmpty: false };
+        return new RepairApplicationResult(changed, mode, changed
+            ? "章节树已更新，原文未改动；没有创建文本事务。"
+            : "章节树与原文均无变化。", compilation);
     }
 
     private static RepairCompilation Compile(RepairProposal proposal, ChapterTreeDocument document,
@@ -379,112 +387,48 @@ public sealed class ChapterRepairApplier
     ///
     /// <para>Re-running recognition would produce a tree that depends on the rules in force now, and would
     /// throw away every manual arrangement the user had made — the exact loss
-    /// <see cref="SourceVersionTransition"/> was built to avoid. So the migration runs first (it is what
-    /// reports which identities could not follow), and then the confirmed mutations are re-applied on top of
-    /// the moved tree, which is what <see cref="ChapterTreeMutation.Binding"/> and its semantic id are for.
+    /// <see cref="SourceVersionTransition"/> was built to avoid. Map the complete confirmed tree before
+    /// writing; the later transition still reports old identities that could not follow. Never replay
+    /// mutations by title or discard confirmed additions because they were absent from the old tree.
     /// </para>
     /// </summary>
-    private static ChapterTreePlan MaterialisePlan(ChapterTreePlan before, ChapterTreePlan migrated,
-        TreePatch? patch, string newText)
+    private static ChapterTreePlan MaterialiseConfirmedPlan(ChapterTreePlan confirmed,
+        SourceCoordinateMap map, SourcePatch sourcePatch, string newSha)
     {
-        if (patch is null || patch.IsEmpty) return migrated;
-
-        var patched = SourceTextDocument.Parse(newText);
-        var entries = migrated.Entries.ToList();
-        var beforeByKey = before.Entries.ToDictionary(entry => entry.StableKey, StringComparer.Ordinal);
-        var indexByKey = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var index = 0; index < entries.Count; index++) indexByKey[entries[index].StableKey] = index;
-
-        foreach (var mutation in patch.Ordered())
+        // Index inserted headings by their original anchor; never search the new book
+        // by title, because different volumes can have identical chapter titles.
+        var insertedHeadings = sourcePatch.Operations.OfType<InsertLineAtAnchor>()
+            .Where(op => op.Anchor is BeforeOriginalLine)
+            .ToLookup(op => (((BeforeOriginalLine)op.Anchor).Line, op.Text));
+        int? MapLine(int line) => line == map.OriginalLineCount + 1
+            ? map.NewLineCount + 1 : map.TryMap(line);
+        var entries = new List<ChapterTreeEntry>(confirmed.Entries.Count);
+        foreach (var entry in confirmed.Entries)
         {
-            // The semantic id is the chapter's identity from the version the plan was built against. It is
-            // what lets a mutation be re-applied after an edit moved every line below the first change.
-            var semantic = SemanticIdOf(mutation);
-            if (semantic is null || !beforeByKey.TryGetValue(semantic, out var beforeEntry)) continue;
-
-            // Find it in the moved tree. Ids are regenerated on every rebuild, so the match is by the
-            // before-version's stable key first and by title-and-level second.
-            var target = entries.FindIndex(entry => entry.StableKey == semantic
-                || (entry.Title == beforeEntry.Title && entry.Level == beforeEntry.Level));
-
-            switch (mutation)
+            int? heading = null;
+            if (entry.TitleLineNumber is { } oldHeading)
             {
-                case RemoveEntry when target >= 0:
-                    entries.RemoveAt(target);
-                    break;
-
-                case RetitleEntry retitle when target >= 0:
-                    entries[target] = entries[target] with { Title = retitle.NewTitle };
-                    break;
-
-                case ChangeEntryLevel level when target >= 0:
-                    entries[target] = entries[target] with { Level = level.NewLevel };
-                    break;
-
-                case ReassignEntryBody body when target >= 0:
-                    entries[target] = entries[target] with { ContentRanges = body.Body.ToRanges() };
-                    break;
-
-                case InsertEntry insert when target < 0:
-                {
-                    var line = InsertedLineOf(insert, patched);
-                    entries.Add(new ChapterTreeEntry(Guid.NewGuid().ToString("N"), insert.Title, insert.Level,
-                        insert.IncludeInToc, line, insert.Body.ToRanges())
-                    {
-                        HeadingLevel = insert.Level,
-                        RecognitionSource = "repair",
-                    });
-                    break;
-                }
+                var inserts = insertedHeadings[(oldHeading, entry.Title)].ToArray();
+                if (inserts.Length > 1) throw new InvalidDataException("章节标题的插入位置不唯一。");
+                heading = inserts.Length == 1 ? map.LineOfOperation(inserts[0].OperationId) : MapLine(oldHeading);
+                if (heading is null) throw new InvalidDataException("确认保留的章节标题被源补丁删除，未写入原文。");
             }
+            var ranges = new List<ChapterSourceRange>();
+            foreach (var range in entry.ContentRanges)
+                for (var line = range.StartLine; line <= range.EndLine; line++)
+                {
+                    if (MapLine(line) is not { } mapped) continue;
+                    if (ranges.Count > 0 && ranges[^1].EndLine + 1 == mapped)
+                        ranges[^1] = ranges[^1] with { EndLine = mapped };
+                    else ranges.Add(new ChapterSourceRange(mapped, mapped));
+                }
+            entries.Add(entry with { TitleLineNumber = heading, ContentRanges = ranges });
         }
-
-        var plan = new ChapterTreePlan(migrated.SourceSha256, entries)
-        {
-            NumericHeadingRecognition = migrated.NumericHeadingRecognition,
-            NumericHeadingMinimumBodyLines = migrated.NumericHeadingMinimumBodyLines,
-            NumericHeadingPattern = migrated.NumericHeadingPattern,
-            HeadingNumberCorrections = migrated.HeadingNumberCorrections,
-        };
-        try
-        {
-            ChapterTreeDocument.ValidatePlan(plan, patched.Lines.Count + 1);
-            return plan;
-        }
-        catch (InvalidDataException)
-        {
-            // A tree that does not validate is worse than the recognised one, so the migrated tree stands.
-            return migrated;
-        }
+        var plan = confirmed with { SourceSha256 = newSha, Entries = entries };
+        ChapterTreeDocument.ValidatePlan(plan, map.NewLineCount + 1);
+        return plan;
     }
 
-    /// <summary>The chapter identity a mutation names, in the version the plan was built against.</summary>
-    private static string? SemanticIdOf(ChapterTreeMutation mutation) => mutation switch
-    {
-        InsertEntry insert => insert.SemanticId,
-        RetitleEntry retitle => retitle.SemanticId,
-        RemoveEntry remove => remove.SemanticId,
-        ChangeEntryLevel level => level.SemanticId,
-        ReassignEntryBody body => body.SemanticId,
-        _ => null,
-    };
-
-    /// <summary>The physical line an inserted entry's heading occupies in the new text, or null when it has none.</summary>
-    private static int? InsertedLineOf(InsertEntry insert, SourceTextDocument patched)
-    {
-        if (insert.Binding is not InsertedLineBinding) return null;
-        for (var line = 1; line <= patched.Lines.Count; line++)
-            if (string.Equals(patched.Lines[line - 1].Text, insert.Title, StringComparison.Ordinal))
-                return line;
-        return null;
-    }
-
-    /// <summary>
-    /// The manifest, frozen before the source changes.
-    ///
-    /// <para>It carries what the tree is supposed to become, so a crash after the replacement can be finished
-    /// from the file rather than by re-planning against a book that already changed.</para>
-    /// </summary>
     private static RepairExecutionManifest BuildManifest(RepairProposal proposal,
         IReadOnlyList<RepairDecision> decisions, ChapterTreeDocument document,
         SourcePatch patch, RepairCompilation compilation, SourceTextDocument original, string newSha,

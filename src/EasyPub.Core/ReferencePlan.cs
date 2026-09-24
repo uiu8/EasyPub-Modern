@@ -109,6 +109,36 @@ public static class ReferencePlanner
         foreach (var entry in entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is not null))
             byLine.TryAdd(entry.TitleLineNumber!.Value, entry);
 
+        // A run of identical headings with only whitespace between them belongs to the last
+        // heading, which carries the body. Do not let catalog order preserve an empty first copy.
+        var emptyDuplicateLines = new HashSet<int>();
+        var adjusted = location.Chapters.ToArray();
+        for (var index = 0; index < adjusted.Length; index++)
+        {
+            var chapter = adjusted[index];
+            if (chapter.Line is not int original) continue;
+            var keep = original;
+            foreach (var next in chapter.Lines.Where(line => line > original).Order())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (assignedLines.Contains(next) || !byLine.TryGetValue(keep, out var empty)
+                    || !byLine.TryGetValue(next, out var following)
+                    || empty.RecognitionSource == "manual" || following.RecognitionSource == "manual"
+                    || HasChildren(entries, empty) || HasChildren(entries, following)
+                    || empty.ContentRanges.Any(range => Enumerable.Range(range.StartLine, range.EndLine - range.StartLine + 1)
+                        .Any(row => !string.IsNullOrWhiteSpace(lines[row - 1])))
+                    || Enumerable.Range(keep + 1, next - keep - 1).Any(row => !string.IsNullOrWhiteSpace(lines[row - 1])))
+                    break;
+                emptyDuplicateLines.Add(keep);
+                keep = next;
+            }
+            if (keep == original) continue;
+            assignedLines.Remove(original);
+            assignedLines.Add(keep);
+            adjusted[index] = chapter with { Line = keep, LocalTitle = byLine[keep].Title };
+        }
+        location = location with { Chapters = adjusted };
+
         foreach (var chapter in location.Chapters)
         {
             var volume = chapter.Volume is null ? "" : $"[{chapter.Volume}] ";
@@ -182,19 +212,26 @@ public static class ReferencePlanner
                 var others = chapter.Lines.Where(value => value != line && !assignedLines.Contains(value) && byLine.ContainsKey(value)).ToArray();
                 if (others.Length == 0) continue;
                 var safe = others.All(other => byLine[other].RecognitionSource != "manual"
-                    && !HasChildren(entries, byLine[other]) && SameBody(document, entries, line, other));
+                    && !HasChildren(entries, byLine[other])
+                    && (emptyDuplicateLines.Contains(other) || SameBody(document, entries, line, other)));
+                var onlyEmptyHeadings = others.All(emptyDuplicateLines.Contains);
                 actions.Add(new(ReferenceActionKind.RemoveDuplicate, line, chapter.Reference.Title,
                     $"{volume}「{chapter.Reference.Title}」在原文出现 {chapter.Occurrences} 次（第 {string.Join("、", chapter.Lines)} 行），" +
-                    $"参考目录只出现一次。保留第 {line} 行（与参考位置一致），仅正文一致时默认移除，其余需对比后手动选择。",
+                    (onlyEmptyHeadings
+                        ? $"保留第 {line} 行及其正文；其余是连续重复的空标题，仅移除标题和间隔空白，不移除正文。"
+                        : $"保留第 {line} 行；仅空标题或正文一致的副本默认勾选，其余需对比后手动选择。") +
+                    "默认只影响成品；从 TXT 删除仍需明确选择。",
                     byLine.TryGetValue(line, out var owner) ? owner.Id : null, chapter.Reference, safe));
             }
         }
 
         var locatedLines = location.Chapters.Where(c => c.Line is not null).Select(c => c.Line!.Value).ToHashSet();
+        var catalogVolumes = catalog.VolumeTitles.ToHashSet(StringComparer.Ordinal);
         // Headings the user added by hand are not "extras to review": they are an explicit decision,
         // so they get no action and no alignment pass is allowed to take them away.
         foreach (var entry in entries.Where(e => !e.IsFrontMatter && e.TitleLineNumber is int line
-                     && !locatedLines.Contains(line) && e.RecognitionSource != "manual"))
+                     && !locatedLines.Contains(line) && e.RecognitionSource != "manual"
+                     && !catalogVolumes.Contains(e.Title.Trim())))
         {
             var demote = ReferenceOutline.ParseKey(entry.Title).Number.Length == 0
                 || entry.Title.Trim().Length > MaximumExtraTitleLength;
@@ -361,6 +398,11 @@ public static class ReferencePlanner
     {
         var chosen = selected.ToHashSet();
         if (chosen.Count == 0 && !buildVolumeLevels) return entries;
+        // Removing confirmed copies must not flatten existing volumes or rebuild unrelated boundaries.
+        // When there are no other edits and a volume tree already exists, reconcile locally.
+        if (!buildVolumeLevels && chosen.Count > 0 && chosen.All(a => a.Kind == ReferenceActionKind.RemoveDuplicate)
+            && entries.Any(e => e.Level > 1 && !e.IsFrontMatter))
+            return ApplyPreservingEdits(document, entries, plan, chosen, useReferenceTitles, droppedLines);
         // A hand-edited tree owns its order, levels and body ranges. Reconcile locally instead
         // of reconstructing it from physical source positions.
         if (entries.Any(e => e.RecognitionSource == "manual" || (!e.IsFrontMatter && e.TitleLineNumber is null)))
@@ -452,14 +494,23 @@ public static class ReferencePlanner
         var anchors = buildVolumeLevels ? VolumeAnchors(plan) : [];
         var volumeOrder = plan.Catalog.VolumeTitles.Distinct().Select((title, index) => (title, index))
             .ToDictionary(pair => pair.title, pair => pair.index);
+        var anchoredVolumeTitles = anchors.Select(a => a.Volume).ToHashSet(StringComparer.Ordinal);
+        var existingVolumes = buildVolumeLevels
+            ? keep.Where(p => anchoredVolumeTitles.Contains(p.Value.Title))
+                .GroupBy(p => p.Value.Title).ToDictionary(g => g.Key, g => g.First().Key)
+            : new Dictionary<string, int>();
+        var reusedVolumeLines = existingVolumes.Values.ToHashSet();
         string? VolumeFor(int line) => volumeOfLine.TryGetValue(line, out var owned) ? owned : VolumeAt(anchors, line);
         string? currentVolume = null;
-        foreach (var line in ordered.OrderBy(line => VolumeFor(line) is string volume && volumeOrder.TryGetValue(volume, out var rank) ? rank : -1)
+        foreach (var line in ordered.Where(line => !reusedVolumeLines.Contains(line))
+                     .OrderBy(line => VolumeFor(line) is string volume && volumeOrder.TryGetValue(volume, out var rank) ? rank : -1)
                      .ThenBy(line => order[line]).ThenBy(line => line))
         {
             var volume = VolumeFor(line);
             if (volume is not null && volume != currentVolume)
-                result.Add(new ChapterTreeEntry(Guid.NewGuid().ToString("N"),volume,1,true,line,[]) { RecognitionSource = "reference-volume" });
+                result.Add(existingVolumes.TryGetValue(volume, out var volumeLine)
+                    ? keep[volumeLine] with { Level = 1, ContentRanges = ranges[volumeLine], RecognitionSource = "reference-volume" }
+                    : new ChapterTreeEntry(Guid.NewGuid().ToString("N"),volume,1,true,line,[]) { RecognitionSource = "reference-volume" });
             currentVolume = volume;
             result.Add(keep[line] with { Level = volume is null ? 1 : 2, ContentRanges = ranges[line],
                 // A heading the user added by hand keeps its mark: the reports use it to leave those

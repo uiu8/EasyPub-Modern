@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 namespace EasyPub.Core;
 
 /// <summary>
@@ -39,8 +43,7 @@ public sealed class ChapterTreeDocumentCache
             hierarchy.NumericHeadingPattern,
             hierarchy.HeadingNumberCorrections,
             encoding,
-            existingPlan?.SourceSha256 ?? string.Empty,
-            existingPlan?.Entries.Count ?? 0);
+            PlanFingerprint(existingPlan));
 
         Task<ChapterTreeDocument> task;
         lock (_gate)
@@ -109,6 +112,21 @@ public sealed class ChapterTreeDocumentCache
         }
     }
 
+    private static string PlanFingerprint(ChapterTreePlan? plan)
+    {
+        if (plan is null) return string.Empty;
+        // A source hash and entry count are insufficient: a hand-edited title, range, or
+        // per-book recognition snapshot can change while both values stay the same.
+        var material = new
+        {
+            plan.SourceSha256,
+            plan.ChapterPattern,
+            plan.RecognitionOptions,
+            plan.Entries,
+        };
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(material))));
+    }
+
     private sealed record ChapterDocumentCacheKey(
         string SourcePath,
         long SourceLength,
@@ -123,6 +141,5 @@ public sealed class ChapterTreeDocumentCache
         string NumericHeadingPattern,
         string HeadingNumberCorrections,
         TextEncodingMode Encoding,
-        string PlanSourceSha256,
-        int PlanEntryCount);
+        string PlanFingerprint);
 }

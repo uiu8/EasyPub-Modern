@@ -88,9 +88,7 @@ public sealed class ChapterEditingDocument
         var text = decoded.Text;
         var newLine = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
-        var chapterRegex = new Regex(
-            string.IsNullOrWhiteSpace(chapterPattern) ? DefaultChapterPattern : chapterPattern,
-            RegexOptions.Compiled);
+        var chapterRegex = ChapterRecognitionRegex.Compile(chapterPattern, DefaultChapterPattern, "普通章节标题");
         var candidates = new List<ChapterCandidate>();
 
         for (var index = 0; index < lines.Length; index++)
@@ -105,9 +103,9 @@ public sealed class ChapterEditingDocument
             // error. Only an exact repeat of the line immediately above is dropped, so a title that
             // legitimately resembles its neighbour is untouched.
             if (index > 0 && string.Equals(lines[index - 1].Trim(), title, StringComparison.Ordinal)
-                && chapterRegex.IsMatch(rawLine)) continue;
+                && ChapterRecognitionRegex.IsMatch(chapterRegex, rawLine, "普通章节标题", index + 1)) continue;
 
-            if (chapterRegex.IsMatch(rawLine))
+            if (ChapterRecognitionRegex.IsMatch(chapterRegex, rawLine, "普通章节标题", index + 1))
             {
                 // A chapter heading is not a sentence. The pattern allows a heading to drop its 「第」
                 // ("八百三十章 赌徒"), which is what makes prose that merely begins with a chapter

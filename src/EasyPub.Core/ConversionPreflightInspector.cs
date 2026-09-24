@@ -176,7 +176,10 @@ public sealed class ConversionPreflightInspector
                     try
                     {
                         var inspection = EpubInspectionService.Inspect(request.InputPath);
-                        books.Add(new ConversionPreflightBook(request.InputPath, inspection.SpineDocumentCount));
+                        var candidateCount = options.Mobi.EpubInputMode == EpubInputMode.EasyPubCompatible
+                            ? CountCompatibleEpubChapters(request.InputPath)
+                            : inspection.SpineDocumentCount;
+                        books.Add(new ConversionPreflightBook(request.InputPath, candidateCount));
                         if (inspection.HasUnsupportedEncryption)
                             issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error, "epub_drm", "EPUB 含 DRM 或不支持的加密资源。", PreflightTargetKind.InputBook));
                         if (inspection.IsFixedLayout && options.Mobi.EpubInputMode == EpubInputMode.EasyPubCompatible)
@@ -553,6 +556,14 @@ public sealed class ConversionPreflightInspector
                 }
 
                 if (string.Equals(Path.GetExtension(request.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase)
+                    && options.Mobi.Engine == KindleConversionEngine.Kindling
+                    && !File.Exists(KindlingWriter.ResolvePath(options.Mobi)))
+                {
+                    issues.Add(new ConversionPreflightIssue(request.InputPath, PreflightSeverity.Error,
+                        "kindling_missing", "找不到 Kindling，请在制作设置中指定程序路径。", PreflightTargetKind.Mobi));
+                }
+                if (string.Equals(Path.GetExtension(request.OutputPath), ".mobi", StringComparison.OrdinalIgnoreCase)
+                    && options.Mobi.Engine == KindleConversionEngine.KindleGen
                     && (string.IsNullOrWhiteSpace(options.Mobi.KindleGenPath)
                         || !File.Exists(options.Mobi.KindleGenPath)))
                 {
@@ -587,6 +598,12 @@ public sealed class ConversionPreflightInspector
         }
 
         return new ConversionPreflightReport(books, issues);
+    }
+
+    private static int CountCompatibleEpubChapters(string epubPath)
+    {
+        using var package = EpubPackage.Open(epubPath);
+        return EpubCompatibilityImporter.CountCompatibleChapters(package);
     }
 
     private static bool IsValidLanguageTag(string value) =>

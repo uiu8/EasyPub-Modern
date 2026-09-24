@@ -115,7 +115,7 @@ public static class SelfRepairPlanner
 
             // PreferredKeep：本轮唯一承认的证据是**结构事实** —— 恰好一份有自己的正文，其余是空章。
             // 两份都有正文时，没有任何本地证据说明该留哪一份，于是留空，由用户决定。
-            var withBody = ordered.Where(HasOwnBody).ToArray();
+            var withBody = ordered.Where(entry => HasOwnBody(document, entry)).ToArray();
             var keep = withBody.Length == 1 ? withBody[0] : null;
 
             var identity = AssessIdentity(document, ordered, token);
@@ -195,8 +195,9 @@ public static class SelfRepairPlanner
     }
 
     /// <summary>这一章是否带着自己的正文行。空章与"有正文的章"是结构上不同的事实。</summary>
-    private static bool HasOwnBody(ChapterTreeEntry entry) =>
-        entry.ContentRanges.Sum(range => range.EndLine - range.StartLine + 1) > 0;
+    private static bool HasOwnBody(ChapterTreeDocument document, ChapterTreeEntry entry) =>
+        entry.ContentRanges.Any(range => Enumerable.Range(range.StartLine, range.EndLine - range.StartLine + 1)
+            .Any(line => !string.IsNullOrWhiteSpace(document.SourceLine(line)?.Text)));
 
     /// <summary>
     /// 身份置信度 —— 复用 <see cref="ChapterContentDuplicates"/>，**不重新实现一遍正文比较**。
@@ -207,18 +208,17 @@ public static class SelfRepairPlanner
     private static DuplicateIdentity AssessIdentity(
         ChapterTreeDocument document, IReadOnlyList<ChapterTreeEntry> ordered, CancellationToken token)
     {
-        var best = DuplicateIdentity.Candidate;
-        for (var i = 0; i < ordered.Count; i++)
+        // The action covers the whole group: evidence for A/A must never authorize removing B
+        // from an A/A/B group. Every copy needs evidence against the actual keep anchor.
+        var identity = DuplicateIdentity.Confirmed;
+        for (var i = 1; i < ordered.Count; i++)
         {
-            for (var j = i + 1; j < ordered.Count; j++)
-            {
-                token.ThrowIfCancellationRequested();
-                if (ChapterContentDuplicates.Compare(document, ordered[i], ordered[j]) is not { } match) continue;
-                if (match.Exact) return DuplicateIdentity.Confirmed;
-                best = DuplicateIdentity.Probable;
-            }
+            token.ThrowIfCancellationRequested();
+            if (ChapterContentDuplicates.Compare(document, ordered[0], ordered[i]) is not { } match)
+                return DuplicateIdentity.Candidate;
+            if (!match.Exact) identity = DuplicateIdentity.Probable;
         }
-        return best;
+        return identity;
     }
 
     private static string DescribeDuplicate(IReadOnlyList<ChapterTreeEntry> ordered, ChapterTreeEntry anchor,

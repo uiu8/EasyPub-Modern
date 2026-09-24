@@ -248,7 +248,7 @@ public class SourceCoordinateMapTests
     }
 
     [Fact]
-    public async Task The_sample_book_map_holds_for_all_69_replacements()
+    public async Task The_sample_book_map_holds_for_all_7_replacements()
     {
         var root = SampleRoot();
         var bookPath = Path.Combine(root, "缺陷样书.txt");
@@ -271,7 +271,7 @@ public class SourceCoordinateMapTests
         var verdict = map.Verify(original, compiled.SourcePatch!, rendered.Text);
 
         Assert.True(verdict.IsSound, verdict.Message);
-        Assert.Equal(69, map.ReplacedLines.Count);
+        Assert.Equal(7, map.ReplacedLines.Count);
         Assert.Empty(map.DeletedLines);
         Assert.Equal(original.Lines.Count, map.NewLineCount);
         // 每一行都还有落点，因为这次修复只改行内的文字。

@@ -100,7 +100,7 @@ public class RepairChangeAttributionTests
     [Fact]
     public async Task Changes_the_alignment_makes_by_itself_carry_no_action()
     {
-        // Both volumes are rebuilt from a directory that carries them, and there is no action to tick:
+        // Chapters acquire catalog levels under existing volumes without a selectable edit action:
         // the level is built as part of aligning. Saying otherwise would show the user a choice that
         // does not exist.
         var document = await DocumentAsync(
@@ -113,7 +113,7 @@ public class RepairChangeAttributionTests
 
         var changes = RepairIntegrity.DescribeWithActions(outcome.Plan!, outcome.Entries!, document.Entries);
 
-        var volumes = changes.Where(change => change.Kind == RepairChangeKind.RebuiltVolume).ToArray();
+        var volumes = changes.Where(change => change.Kind == RepairChangeKind.ChangedLevel).ToArray();
         Assert.NotEmpty(volumes);
         Assert.All(volumes, change => Assert.Null(change.ActionKey));
         // And the same list is still what Describe alone says: attribution adds a key, never a change.

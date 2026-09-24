@@ -13,15 +13,15 @@ public static class NumericHeadingRule
 
     public static Regex Compile(string pattern)
     {
-        var regex = new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(200));
+        var regex = ChapterRecognitionRegex.Compile(pattern, DefaultPattern, "数字章节规则");
         if (!regex.GetGroupNames().Contains("number") || !regex.GetGroupNames().Contains("title"))
             throw new ArgumentException("表达式必须包含 (?<number>...) 章号组和 (?<title>...) 标题组。");
         return regex;
     }
 
-    public static bool Matches(Regex regex, string line)
+    public static bool Matches(Regex regex, string line, int? lineNumber = null)
     {
-        var match = regex.Match(line);
+        var match = ChapterRecognitionRegex.Match(regex, line, "数字章节规则", lineNumber);
         return match.Success && int.TryParse(match.Groups["number"].Value, out var number)
             && number is >= 1 and <= 9999 && match.Groups["title"].Value.Any(char.IsLetter);
     }

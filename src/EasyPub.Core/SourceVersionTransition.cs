@@ -49,6 +49,8 @@ public sealed record SourceTransitionState(
     /// moved on since. Empty when the state was assembled by hand rather than read.
     /// </summary>
     public string LoadedHash { get; init; } = "";
+    public string? ReloadChapterPattern { get; init; }
+    public TocHierarchyOptions? ReloadRecognitionOptions { get; init; }
 
     /// <summary>
     /// The text that was replaced, kept for the length of the migration.
@@ -89,7 +91,12 @@ public sealed record SourceTransitionState(
     /// <para>The plan stays; only the recognition document is dropped, and dropping it is a statement that
     /// this state has no parse of the current file rather than a claim that there is nothing to parse.</para>
     /// </summary>
-    public SourceTransitionState WithoutRecognitionTree() => this with { RecognitionTree = null };
+    public SourceTransitionState WithoutRecognitionTree() => this with
+    {
+        ReloadChapterPattern = RecognitionTree is not null ? RecognitionTree.ChapterPattern : ReloadChapterPattern,
+        ReloadRecognitionOptions = RecognitionTree?.RecognitionOptions ?? ReloadRecognitionOptions,
+        RecognitionTree = null,
+    };
 }
 
 /// <summary>
@@ -445,6 +452,8 @@ public sealed class AdoptSourceTextStep : SourceTransitionStep
         {
             SourcePath = context.SourcePath,
             Source = source,
+            ReloadChapterPattern = state.RecognitionTree is not null ? state.RecognitionTree.ChapterPattern : state.ReloadChapterPattern,
+            ReloadRecognitionOptions = state.RecognitionTree?.RecognitionOptions ?? state.ReloadRecognitionOptions,
             RecognitionTree = null,
             LoadedHash = SourceFileHasher.HashOfRendered(source, source.Render()),
             RenderedHash = SourceFileHasher.HashOfRendered(source, source.Render()),
@@ -544,6 +553,8 @@ public sealed class ReloadRecognitionTreeStep : SourceTransitionStep
         SourceTransitionState state, CancellationToken token)
     {
         var tree = await ChapterTreeDocument.LoadAsync(context.SourcePath, encodingMode: context.EncodingMode,
+            chapterPattern: state.RecognitionTree is not null ? state.RecognitionTree.ChapterPattern : state.ReloadChapterPattern,
+            hierarchy: state.RecognitionTree?.RecognitionOptions ?? state.ReloadRecognitionOptions,
             cancellationToken: token).ConfigureAwait(false);
         _loadedSha256 = tree.SourceSha256;
 
@@ -607,7 +618,11 @@ public sealed class RebindSavedPlanStep : SourceTransitionStep
         var kept = new List<ChapterTreeEntry>();
         var rebinds = new List<SourceEntryRebind>();
 
-        foreach (var entry in state.Plan!.Entries)
+        var parents = new HashSet<string>();
+        for (var i = 0; i + 1 < state.Plan!.Entries.Count; i++)
+            if (!state.Plan.Entries[i].IsFrontMatter && state.Plan.Entries[i + 1].Level > state.Plan.Entries[i].Level)
+                parents.Add(state.Plan.Entries[i].Id);
+        foreach (var entry in state.Plan.Entries)
         {
             var oldKey = entry.StableKey;
             var titleLine = entry.TitleLineNumber;
@@ -643,7 +658,7 @@ public sealed class RebindSavedPlanStep : SourceTransitionStep
             }
 
             var rebound = RebindRanges(entry with { TitleLineNumber = mappedLine }, map, patched);
-            if (rebound.ContentRanges.Count == 0 && !rebound.IsFrontMatter)
+            if (rebound.ContentRanges.Count == 0 && !rebound.IsFrontMatter && !parents.Contains(entry.Id))
             {
                 rebinds.Add(new SourceEntryRebind(oldKey, null, entry.Title, SourceRebindStatus.LostNoBody));
                 continue;
@@ -692,6 +707,8 @@ public sealed class RebindSavedPlanStep : SourceTransitionStep
             // **必须显式复制 provenance。** 这里是逐字段重建 plan，漏掉一个字段 = 那个字段在原文
             // 迁移之后**静默消失**。这正是「事务算法不改，但迁移必须把新状态带过去」那个窄例外。
             Provenance = state.Plan.Provenance,
+            RecognitionOptions = state.Plan.RecognitionOptions,
+            ChapterPattern = state.Plan.ChapterPattern,
         };
 
         try

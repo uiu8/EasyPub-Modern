@@ -57,6 +57,10 @@ public partial class ChapterEditorWindow : Window
     /// （"目录已就位，但树还没被它校验过"）正是靠这个状态才说得出来。</para>
     /// </summary>
     private bool _catalogChosenThisSession;
+    // 依据是本次工作台的选择：有已保存目录时可默认沿用，但用户一旦点过当前书稿/参考目录，
+    // 后续刷新状态不能悄悄替换他的选择。
+    private bool _repairBasisChosenThisSession;
+    private bool _syncingRepairBasis;
     private int _nextSuggestionIndex;
     private string _numericPattern = NumericHeadingRule.DefaultPattern;
     public TocHierarchyOptions GlobalNumericDefaults { get; set; } = new();
@@ -110,6 +114,8 @@ public partial class ChapterEditorWindow : Window
         VisibleRoots = new ChapterDisplayCollection();
         VisibleRoots.Synchronize(Roots);
         DataContext = this;
+        BookTitleText.Text = System.IO.Path.GetFileNameWithoutExtension(document.SourcePath);
+        BookTitleText.ToolTip = document.SourcePath;
         SourceText.Text = System.IO.Path.GetFileName(document.SourcePath);
         SourceText.ToolTip = document.SourcePath;
         ChapterPatternText.Text = chapterPattern ?? string.Empty;
@@ -307,34 +313,48 @@ public partial class ChapterEditorWindow : Window
         UpdateActionButtons();
     }
 
-    private void Split_Click(object sender, RoutedEventArgs e)
+    private async void Split_Click(object sender, RoutedEventArgs e)
     {
         if (!CanSplitSelectedLine() || _selectedNode is null || SourceLinesList.SelectedItem is not ChapterTreeSourceLine selectedLine
             || _selectedNode.ToEntry().TitleLineNumber == selectedLine.LineNumber) return;
-        var before = new List<ChapterSourceRange>();
-        var after = new List<ChapterSourceRange>();
-        foreach (var range in _selectedNode.ContentRanges)
+        var split = ChapterContentSplit.At(_selectedNode.ContentRanges, selectedLine.LineNumber);
+        if (split is null) return;
+        var dialog = new ChapterSplitWindow(_document, _selectedNode.Title, split, SavedReference()) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        var newTitle = dialog.ChapterTitle;
+        ManualSplitCopyResult? copy = null;
+        if (dialog.ExportCopyOption.IsChecked == true)
         {
-            if (selectedLine.LineNumber <= range.StartLine) after.Add(range);
-            else if (selectedLine.LineNumber > range.EndLine) before.Add(range);
-            else
+            try
             {
-                if (range.StartLine <= selectedLine.LineNumber - 1)
-                    before.Add(new ChapterSourceRange(range.StartLine, selectedLine.LineNumber - 1));
-                after.Add(new ChapterSourceRange(selectedLine.LineNumber, range.EndLine));
+                ValidateRules();
+                if (RecognitionRulesChanged()) throw new InvalidOperationException("识别规则尚未应用，请先确认本书规则后再另存副本。");
+                IsEnabled = false;
+                var snapshot = _document.WithEntries(Flatten().Select(node => node.ToEntry()).ToArray());
+                var entryId = _selectedNode.Id;
+                var store = SourceBackupStore.CreateDefault();
+                copy = await Task.Run(async () => await ManualSplitCopy.Prepare(snapshot, entryId,
+                    selectedLine.LineNumber, newTitle, _encodingMode).ExportAsync(store));
+                if (!copy.Succeeded)
+                {
+                    SetReviewResult("副本未全部完成，当前章节树未改变。" + copy.Transaction.Message
+                        + " 副本位置：" + copy.CopyPath);
+                    return;
+                }
             }
-        }
-        if (before.Count == 0 || after.Count == 0)
-        {
-            ShowInfo("请在本章正文中间选择拆分位置。", "无法拆分");
-            return;
+            catch (Exception error)
+            {
+                SetReviewResult("未应用切分：" + error.Message);
+                return;
+            }
+            finally { IsEnabled = true; }
         }
         Mutate(() =>
         {
-            _selectedNode.ContentRanges = before;
+            _selectedNode.ContentRanges = split.Before;
             _selectedNode.NotifyLineCount();
             var newNode = new ChapterTreeNode(new ChapterTreeEntry(
-                Guid.NewGuid().ToString("N"), "新章节", _selectedNode.Level, true, null, after) { RecognitionSource = "manual" })
+                Guid.NewGuid().ToString("N"), newTitle, _selectedNode.Level, true, null, split.After) { RecognitionSource = "manual" })
             {
                 Parent = _selectedNode.Parent,
                 IsFrontMatter = _selectedNode.IsFrontMatter,
@@ -346,6 +366,8 @@ public partial class ChapterEditorWindow : Window
         RefreshSelectedLines();
         UpdateSummary();
         UpdateActionButtons();
+        if (copy is not null) SetReviewResult("已切分当前成品树，并另存副本。打开章节项目继续：" + copy.ProjectPath
+            + "。撤销仅影响当前树，已导出的副本保留。修改前备份：" + copy.Transaction.BackupPath);
     }
 
     private void NormalizeAll_Click(object sender, RoutedEventArgs e)
@@ -381,8 +403,12 @@ public partial class ChapterEditorWindow : Window
             var bytes = await System.IO.File.ReadAllBytesAsync(_document.SourcePath);
             if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)) != _document.SourceSha256)
                 throw new InvalidOperationException("原始 TXT 已修改，当前章节位置可能失效。请先按当前规则重新识别，再保存章节树。");
-            ResultPlan = _document.CreatePlan(Flatten().Select(node => node.ToEntry()));
             ResultHierarchyOptions = ReadHierarchyOptions();
+            ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
+            ResultPlan = _document.CreatePlan(
+                Flatten().Select(node => node.ToEntry()),
+                ResultHierarchyOptions,
+                ResultChapterPattern);
             ResultPlan = ResultPlan with
             {
                 NumericHeadingRecognition = UsesGlobalNumeric(ResultHierarchyOptions) ? null : ResultHierarchyOptions.RecognizeNumericHeadings,
@@ -393,7 +419,6 @@ public partial class ChapterEditorWindow : Window
                 ConfirmedReviews = new Dictionary<string, ChapterReviewGroup>(_confirmedGroups),
                 Provenance = _provenance,
             };
-            ResultChapterPattern = NormalizePattern(ChapterPatternText.Text);
             _allowClose = true;
             DialogResult = true;
         }
@@ -651,7 +676,7 @@ public partial class ChapterEditorWindow : Window
 
     private ChapterEditorSnapshot CaptureSnapshot() => new(
         Flatten().Select(node => node.ToEntry() with { ContentRanges = node.ContentRanges.ToArray() }).ToArray(),
-        _selectedNode?.Id, _document, _recognitionState, _detectUnrecognized,
+        _selectedNode?.Id, _document, _recognitionState, _detectUnrecognized, _provenance,
         OperationSelection().Select(n => n.Id).ToArray(), Flatten().Where(n => n.IsExpanded).Select(n => n.Id).ToArray());
 
     private void RestoreSnapshot(ChapterEditorSnapshot snapshot)
@@ -663,6 +688,7 @@ public partial class ChapterEditorWindow : Window
             _document = snapshot.Document;
             _recognitionState = snapshot.RecognitionRules;
             _detectUnrecognized = snapshot.DetectUnrecognized;
+            _provenance = snapshot.Provenance;
             Roots.Clear();
             foreach (var root in BuildTree(snapshot.Entries)) Roots.Add(root);
             SubscribeToNodes(Roots);
@@ -729,6 +755,7 @@ public partial class ChapterEditorWindow : Window
     private static bool SnapshotsEqual(ChapterEditorSnapshot left, ChapterEditorSnapshot right)
     {
         if (!ReferenceEquals(left.Document, right.Document)) return false;
+        if (left.Provenance != right.Provenance) return false;
         if (left.Entries.Count != right.Entries.Count) return false;
         for (var index = 0; index < left.Entries.Count; index++)
         {
@@ -757,9 +784,8 @@ public partial class ChapterEditorWindow : Window
 
     private bool CanSplitSelectedLine() => _selectedNode is not null
         && SourceLinesList.SelectedItem is ChapterTreeSourceLine line
-        && _selectedNode.ContentRanges.Any(range => line.LineNumber >= range.StartLine && line.LineNumber <= range.EndLine)
         && line.LineNumber != _selectedNode.ToEntry().TitleLineNumber
-        && _selectedNode.ContentRanges.Any(range => range.StartLine < line.LineNumber);
+        && ChapterContentSplit.At(_selectedNode.ContentRanges, line.LineNumber) is not null;
 
     private void RefreshSelectedLines()
     {
@@ -785,7 +811,7 @@ public partial class ChapterEditorWindow : Window
         var frontMatterCount = nodes.Length - normalNodes.Length;
         var depth = normalNodes.Length == 0 ? 0 : normalNodes.Max(node => node.Level);
         var frontMatterLabel = frontMatterCount == 0 ? string.Empty : $" · 前置 {frontMatterCount} 项";
-        SummaryText.Text = $"{normalNodes.Length} 章{frontMatterLabel} · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
+        SummaryText.Text = $"TXT · {normalNodes.Length} 章{frontMatterLabel} · {nodes.Count(node => node.IncludeInToc)} 项进入目录 · 最深 {depth} 级";
         RefreshSuggestions(nodes.Select(node => node.ToEntry()).ToArray());
     }
 
@@ -796,14 +822,18 @@ public partial class ChapterEditorWindow : Window
         // The saved directory travels into the review analysis, so the panel that a reader opens after
         // a repair can say which chapters the directory lists and the tree still lacks. Without it the
         // panel only sees gaps in the numbering and reports "two problems" while forty are missing.
-        var analysis = ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, _reviewLimit,
-            reference: SavedReference());
+        // Fold before paging: a pair must not disappear just because its summary is
+        // beyond the current 200-item boundary. The analyzer already computes all groups.
+        var analysis = ChapterReviewPresentation.CollapseSequences(
+            ChapterReviewAnalyzer.Analyze(_document, entries, _detectUnrecognized, int.MaxValue,
+                reference: SavedReference()), _reviewLimit);
         _reviewGroups = analysis.Groups.ToArray();
         _reviewGroupIndex.Clear();
         foreach (var group in _reviewGroups)
             _reviewGroupIndex.TryAdd((group.Issue.Code, group.Issue.LineNumber), group);
         _totalReviewGroups = analysis.TotalGroups;
         _allReviewIssues = _reviewGroups.Where(g => !_confirmedGroups.ContainsKey(ReviewKey(g))).Select(g => g.Issue).ToArray();
+        UpdateIssueOverview();
         var structureSuggestion = _allReviewIssues.FirstOrDefault(i => i.Code == "chapter_structure_suggested");
         StructureSuggestionBanner.Visibility = structureSuggestion is null ? Visibility.Collapsed : Visibility.Visible;
         StructureSuggestionText.Text = structureSuggestion?.Message.Split('\n')[0] ?? "";
@@ -957,6 +987,7 @@ internal sealed record ChapterEditorSnapshot(
     ChapterTreeDocument Document,
     ChapterRuleState RecognitionRules,
     bool DetectUnrecognized,
+    PersistedTreeProvenance Provenance,
     string[] SelectedIds,
     string[] ExpandedIds);
 

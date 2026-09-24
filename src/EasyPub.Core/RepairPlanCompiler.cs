@@ -11,6 +11,8 @@ public sealed record RepairCompilation(
     RepairLandingMode Mode,
     IReadOnlyList<int> RemovedLines)
 {
+    /// <summary>Confirmed tree in the original source coordinates; use only when no TXT rewrite occurred.</summary>
+    public IReadOnlyList<ChapterTreeEntry> RebuiltEntries { get; init; } = [];
     /// <summary>True when a mode that promises to edit the TXT actually produced edits for it.</summary>
     public bool SourceChanged => SourcePatch is { IsEmpty: false };
 
@@ -156,7 +158,8 @@ public static class RepairPlanCompiler
         var canonical = CanonicalChapterModelFactory.Build(rebuilt, line => document.SourceLine(line)?.Text);
         var treePatch = new TreePatch(proposal.Id, BuildMutations(document, rebuilt, selected, dropped), canonical);
 
-        return new RepairCompilation(true, treePatch, sourcePatch, canonical, [], sourceProblems, input.Mode, dropped);
+        return new RepairCompilation(true, treePatch, sourcePatch, canonical, [], sourceProblems, input.Mode, dropped)
+            { RebuiltEntries = rebuilt };
     }
 
     /// <summary>

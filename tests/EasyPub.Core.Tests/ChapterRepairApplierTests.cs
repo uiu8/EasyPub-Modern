@@ -15,10 +15,114 @@ namespace EasyPub.Core.Tests;
 /// </summary>
 public class ChapterRepairApplierTests : IDisposable
 {
+    [Theory]
+    [InlineData(RepairLandingMode.TreeOnly)]
+    [InlineData(RepairLandingMode.EditSource)]
+    public async Task Deselecting_all_actions_reports_no_change_and_creates_no_transaction(RepairLandingMode mode)
+    {
+        var subject = await LoadAsync();
+        var before = await File.ReadAllBytesAsync(subject.BookPath);
+        var decisions = Decisions(subject, mode).Select(d => d with { Selected = false }).ToArray();
+        var result = await Applier().ApplyAsync(subject.Proposal, subject.Document, decisions, mode);
+        Assert.False(result.Changed);
+        Assert.Contains("均无变化", result.Message);
+        Assert.DoesNotContain("已更新", result.Message);
+        Assert.Null(result.Transaction);
+        Assert.True(result.Compilation!.TreePatch!.IsEmpty);
+        Assert.Equal(before, await File.ReadAllBytesAsync(subject.BookPath));
+    }
+
     private readonly string _workspace =
         Path.Combine(Path.GetTempPath(), "easypub-applier-tests-" + Guid.NewGuid().ToString("N"));
 
     public ChapterRepairApplierTests() => Directory.CreateDirectory(_workspace);
+
+    [Fact]
+    public async Task A_located_missing_entry_survives_a_simultaneous_heading_rewrite()
+    {
+        var path = Path.Combine(_workspace, "missed-heading.txt");
+        await File.WriteAllTextAsync(path, SmallBook);
+        var loaded = await ChapterTreeDocument.LoadAsync(path);
+        var document = loaded.WithEntries(loaded.Entries
+            .Where(e => e.Title != "第二章 中途")
+            .Select(e => e.Title == "第一章 起点" ? e with { ContentRanges = [new ChapterSourceRange(2, 4)] } : e).ToArray());
+        var catalog = ReferenceCatalogInput.ParseText("第一章 新起点\n第二章 中途\n第三章 终点");
+        var outcome = ChapterAutoRepair.Prepare(document, catalog);
+        var proposal = ChapterRepairApplier.ProposalFor(outcome, document)!;
+        var selected = proposal.Actions.Where(a => a.Kind is ReferenceActionKind.AddChapter or ReferenceActionKind.Retitle).ToArray();
+        Assert.Contains(selected, action => action.Kind == ReferenceActionKind.AddChapter);
+        Assert.Contains(selected, action => action.Kind == ReferenceActionKind.Retitle);
+        var result = await new ChapterRepairApplier(Path.Combine(_workspace, "missing-backups")).ApplyAsync(proposal, document,
+            ChapterRepairApplier.DecisionsFor(proposal, RepairLandingMode.EditSource, selected), RepairLandingMode.EditSource);
+        Assert.True(result.Changed, result.Message);
+        Assert.NotNull(result.State?.Plan);
+        Assert.Contains("第一章 新起点", await File.ReadAllTextAsync(path));
+        var chapter = Assert.Single(result.State!.Plan!.Entries, e => e.Title == "第二章 中途");
+        Assert.Equal(3, chapter.TitleLineNumber);
+        Assert.Contains(chapter.ContentRanges, range => range.StartLine <= 4 && range.EndLine >= 4);
+        Assert.Equal(new[] { "第一章 新起点", "第二章 中途", "第三章 终点" },
+            result.State.Plan.Entries.Where(e => !e.IsFrontMatter).Select(e => e.Title));
+        var source = ChapterTreeDocument.Load(path, await File.ReadAllBytesAsync(path));
+        foreach (var (title, body) in new[] { ("第一章 新起点", "正文一。"), ("第二章 中途", "正文二。"), ("第三章 终点", "正文三。") })
+        {
+            var entry = Assert.Single(result.State.Plan.Entries, e => e.Title == title);
+            var bodyText = entry.ContentRanges.SelectMany(range => Enumerable.Range(range.StartLine, range.EndLine - range.StartLine + 1))
+                .Select(line => source.SourceLine(line)?.Text);
+            Assert.Contains(body, bodyText);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, RepairLandingMode.TreeOnly)]
+    [InlineData(true, RepairLandingMode.TreeOnly)]
+    [InlineData(false, RepairLandingMode.EditSource)]
+    [InlineData(true, RepairLandingMode.EditSource)]
+    public async Task Duplicate_tree_cleanup_applies_without_source_deletion_permission(bool useReference, RepairLandingMode mode)
+    {
+        var path = Path.Combine(_workspace, "tree-cleanup.txt");
+        const string original = "第一章 起点\n这是一段足够长的正文，重复标题清理不得丢失这一段内容，也不得在没有许可时改动原始文件。\n第一章 起点\n第二章 继续\n后续正文\n";
+        await File.WriteAllTextAsync(path, original);
+        var document = await ChapterTreeDocument.LoadAsync(path);
+        var outcome = ChapterAutoRepair.Prepare(document, useReference
+            ? ReferenceCatalogInput.ParseText("第一章 起点\n第二章 继续") : null);
+        var proposal = ChapterRepairApplier.ProposalFor(outcome, document)!;
+        var selected = proposal.Actions.Where(a => a.Kind == ReferenceActionKind.RemoveDuplicate).ToArray();
+        Assert.NotEmpty(selected);
+        var decisions = ChapterRepairApplier.DecisionsFor(proposal, mode, selected);
+        var preview = Applier().Preview(proposal, document, decisions, mode);
+        Assert.True(preview.CanApply, preview.Message);
+        Assert.False(preview.SourceWillChange);
+        var result = await Applier().ApplyAsync(proposal, document, decisions, mode);
+        Assert.True(result.Changed, result.Message);
+        Assert.Null(result.Transaction);
+        Assert.NotEmpty(result.Compilation!.RemovedLines);
+        Assert.Single(result.Compilation.RebuiltEntries, entry => entry.Title == "第一章 起点");
+        Assert.True(result.Compilation.ExpectedResult!.EqualsByContent(
+            CanonicalChapterModelFactory.Build(result.Compilation.RebuiltEntries, line => document.SourceLine(line)?.Text)));
+        Assert.Equal(original, await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task Removal_receipt_contains_only_the_selected_duplicate()
+    {
+        var path = Path.Combine(_workspace, "partial-cleanup.txt");
+        await File.WriteAllTextAsync(path, "第一章 起点\n这是第一章的正文，需要保留完整内容，不应该因为移除重复标题而被错误地删除。\n第一章 起点\n第二章 继续\n这是第二章的正文，内容不同于第一章，同样必须保留完整的内容。\n第二章 继续\n第三章 终点\n最终正文\n");
+        var document = await ChapterTreeDocument.LoadAsync(path);
+        var outcome = ChapterAutoRepair.Prepare(document, null);
+        var proposal = ChapterRepairApplier.ProposalFor(outcome, document)!;
+        var duplicates = proposal.Actions.Where(a => a.Kind == ReferenceActionKind.RemoveDuplicate).ToArray();
+        Assert.Equal(2, duplicates.Length);
+        var all = await Applier().ApplyAsync(proposal, document,
+            ChapterRepairApplier.DecisionsFor(proposal, RepairLandingMode.TreeOnly, duplicates), RepairLandingMode.TreeOnly);
+        var one = await Applier().ApplyAsync(proposal, document,
+            ChapterRepairApplier.DecisionsFor(proposal, RepairLandingMode.TreeOnly, [duplicates[0]]), RepairLandingMode.TreeOnly);
+        Assert.True(one.Changed);
+        Assert.NotEmpty(one.Compilation!.RemovedLines);
+        Assert.True(one.Compilation.RemovedLines.Count < all.Compilation!.RemovedLines.Count);
+        var actuallyRemoved = RepairIntegrity.Coverage(document.Entries)
+            .Except(RepairIntegrity.Coverage(one.Compilation.RebuiltEntries)).Order();
+        Assert.Equal(actuallyRemoved, one.Compilation.RemovedLines.Order());
+    }
 
     public void Dispose()
     {
@@ -79,8 +183,8 @@ public class ChapterRepairApplierTests : IDisposable
 
         Assert.True(preview.CanApply, preview.Message);
         Assert.True(preview.SourceWillChange);
-        Assert.Equal(69, preview.SourceOperations);
-        Assert.Equal(69, preview.AffectedLines.Count);
+        Assert.Equal(7, preview.SourceOperations);
+        Assert.Equal(7, preview.AffectedLines.Count);
         // 行号必须落在真实的原文范围里。
         Assert.All(preview.AffectedLines, line => Assert.InRange(line, 1, 2502));
     }
@@ -165,7 +269,7 @@ public class ChapterRepairApplierTests : IDisposable
         Assert.Equal(onDisk, result.State!.RecognitionTree!.SourceSha256);
         Assert.Equal(onDisk, result.State.RenderedHash);
 
-        // 69 个替换之后，行数不变、被改的 69 行内容变了。
+        // 7 个替换之后，行数不变、被改的 69 行内容变了。
         var patched = SourceTextDocument.Load(subject.BookPath);
         Assert.Equal(subject.Document.LineCount, patched.Lines.Count + 1);
         Assert.NotEqual(subject.OriginalSha, onDisk);
@@ -217,10 +321,10 @@ public class ChapterRepairApplierTests : IDisposable
         Assert.Equal(RepairLandingMode.EditSource, manifest!.LandingMode);
         Assert.Equal(subject.Proposal.Id, manifest.ProposalId);
         Assert.NotNull(manifest.SourcePatch);
-        Assert.Equal(69, manifest.SourcePatch!.Operations.Count);
+        Assert.Equal(7, manifest.SourcePatch!.Operations.Count);
         Assert.Equal(subject.OriginalSha, manifest.BaseVersion.BaseSourceSha256);
-        // 决策的落地结果要如实记录：69 个替换来自 69 个 Retitle 动作。
-        Assert.Equal(69, manifest.Decisions.Count(d => d.Outcome == SourceEffectOutcome.Applied));
+        // 决策的落地结果要如实记录：7 个替换来自 7 个 Retitle 动作。
+        Assert.Equal(7, manifest.Decisions.Count(d => d.Outcome == SourceEffectOutcome.Applied));
     }
 
     [Fact]
@@ -235,9 +339,9 @@ public class ChapterRepairApplierTests : IDisposable
 
         // 树变化数一样：模式不决定动作做什么。
         Assert.Equal(treeOnly.TreeChanges, editSource.TreeChanges);
-        // 文本操作数不一样：EditSource 多出那 69 个替换。
+        // 文本操作数不一样：EditSource 多出那 7 个替换。
         Assert.Equal(0, treeOnly.SourceOperations);
-        Assert.Equal(69, editSource.SourceOperations);
+        Assert.Equal(7, editSource.SourceOperations);
     }
 
     [Fact]

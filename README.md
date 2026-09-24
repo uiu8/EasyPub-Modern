@@ -8,12 +8,12 @@
 
 保留 EasyPub v1.50 的经典转换效果，同时加入批量任务、逐书封面与元数据、章节树、正文插图、文本清理、项目恢复和成品验收。
 
-[![当前版本](https://img.shields.io/badge/当前版本-v1.61.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1)
+[![当前版本](https://img.shields.io/badge/当前版本-v1.63.1-111111?style=flat-square)](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.63.1)
 ![系统](https://img.shields.io/badge/系统-Windows%20x64-0F6CBD?style=flat-square)
 ![格式](https://img.shields.io/badge/格式-TXT%20%7C%20EPUB%20%7C%20MOBI-16A34A?style=flat-square)
 ![处理方式](https://img.shields.io/badge/处理方式-本地处理-7C3AED?style=flat-square)
 
-**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.61.1/EasyPubModern-Setup-v1.61.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.61.1/EasyPubModern-v1.61.1-true-count-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1)
+**[下载安装版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.63.1/EasyPubModern-Setup-v1.63.1-x64.exe)** · [下载便携版](https://github.com/uiu8/EasyPub-Modern/releases/download/v1.63.1/EasyPubModern-v1.63.1-popup-shell-fix-kindling-win-x64.zip) · [查看 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.63.1)
 
 </div>
 
@@ -31,14 +31,14 @@
 | 输入 | 输出 | 说明 |
 |---|---|---|
 | TXT | EPUB | 使用 EasyPub 兼容解析与排版流程 |
-| TXT | MOBI | 生成 KindleGen 联合 MOBI，并执行兼容后处理 |
+| TXT | MOBI | 可选 KindleGen 或 Kindling 引擎，并执行对应后处理 |
 | EPUB | MOBI | 可保留原 EPUB 版式，或使用 EasyPub 兼容重排 |
 
-> MOBI 转换需要 KindleGen 2.9。程序会优先使用当前版本配置的路径，也能手动重新选择。带 DRM 的 EPUB 不支持转换。
+> 发布包包含 KindleGen 2.9 与 Kindling。在转换设置的“MOBI / Kindle”页选择引擎，路径留空即可使用包内程序。默认引擎仍为 KindleGen；带 DRM 的 EPUB 不支持转换。
 
 ## 快速开始
 
-1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.61.1) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
+1. 从 [最新版 Release](https://github.com/uiu8/EasyPub-Modern/releases/tag/v1.63.1) 下载并运行安装版；无需安装时也可以选择便携版，完整解压后运行 `EasyPub.Desktop.exe`。
 2. 运行安装程序，或解压便携版后运行 `EasyPub.Desktop.exe`。
 3. 添加或拖入一个或多个 TXT / EPUB，也可以从收藏文件夹批量选书。
 4. 选择 EPUB 或 MOBI，检查封面、书籍信息和排版模式。
@@ -60,6 +60,15 @@
 | 项目与恢复 | `.easypubproj` 保存与打开、转换方案、异常退出恢复快照、收藏文件夹和来源目录元数据映射 |
 | 检查与验收 | 统一任务中心集中显示转换前问题、逐书进度、可选 EPUB/MOBI 结构验收、报告和转换历史 |
 | 兼容旧工作流 | 可导入原版 EasyPub `config.xml`，并保留原版兼容排版与 MOBI 后处理逻辑；超长小说可选择减少 KindleGen 底层正文分片 |
+
+## v1.63.1 章节工作台与 Kindling
+
+- 章节工作台保留三栏核对结构，移除弹窗中重复的主窗口左栏；其他页面保留原有布局与配色。
+- 检查依据和应用范围分别选择；生成建议、预览和应用各有明确入口，缺失正文不自动补造。
+- 包含人工切分、章节移位、修订副本和项目恢复等此前本地交付的功能。
+- Kindling 作为可选 MOBI 引擎随包提供。此次转换烟测和此前修复链验收均使用 Kindling。
+
+[完整发布说明](docs/RELEASE_v1.63.1.md) · [使用说明](docs/v1.63.1-使用说明.md)
 
 ## v1.61.1 章节数只有一个答案
 
@@ -220,7 +229,7 @@ dotnet test EasyPub.Modern.slnx -c Release
 
 ## 当前版本
 
-当前正式版本为 **v1.61.1（true-count）**。首页徽章与下载链接指向的就是它。
+当前正式版本为 **v1.63.1（popup-shell-fix-kindling）**。首页徽章与下载链接指向该版本。
 
 未修项与实测数据见 [维护交接](docs/HANDOVER.md) §8 —— 那里记录了每个已知缺陷的
 复现矩阵、根因和修复状态，包括**已经查错过的结论**（连同错在哪、为什么错）。

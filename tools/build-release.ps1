@@ -18,7 +18,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$Codename,
     [string]$Dotnet = 'D:\software\dotnet-sdk-10.0.302\dotnet.exe',
-    [string]$Iscc = 'D:\software\Inno Setup 7\ISCC.exe'
+    [string]$Iscc = 'D:\software\Inno Setup 7\ISCC.exe',
+    [string]$Kindling = 'C:\Users\13168\Desktop\kindling-cli-windows.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,10 +37,12 @@ foreach ($field in 'Version', 'AssemblyVersion', 'FileVersion') {
     }
 }
 $issText = Get-Content $iss -Raw
-if ($issText -notmatch "#define AppVersion `"$([regex]::Escape($Version))`"") {
+$appVersionPattern = '#define AppVersion "' + [regex]::Escape($Version) + '"'
+if ($issText -notmatch $appVersionPattern) {
     throw "AppVersion 不是 $Version；请先在 installer/EasyPubModern.iss 里改好。"
 }
-if ($issText -notmatch [regex]::Escape("EasyPubModern-v$Version-$Codename-win-x64")) {
+$publishDirName = "EasyPubModern-v$Version-$Codename-win-x64"
+if ($issText -notmatch ([regex]::Escape($publishDirName))) {
     throw "PublishDir 与本次产物目录名不一致；请把 iss 里的 PublishDir 改成 ..\outputs\EasyPubModern-v$Version-$Codename-win-x64。"
 }
 Write-Host "版本号校验通过：$Version ($Codename)"
@@ -56,7 +59,16 @@ Start-Sleep -Seconds 2
 # ---- 3) 改过 Core 就必须清掉它的 obj/bin -----------------------------------
 # MSBuild 会静默跳过 CoreCompile，留下旧逻辑打出来的包。
 foreach ($directory in 'obj', 'bin') {
-    Remove-Item (Join-Path $root "src\EasyPub.Core\$directory") -Recurse -Force -ErrorAction SilentlyContinue
+    $target = Join-Path $root "src\EasyPub.Core\$directory"
+    if (Test-Path -LiteralPath $target) {
+        $resolved = (Resolve-Path -LiteralPath $target).Path
+        if (-not $resolved.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Core 产物路径越界' }
+        $backup = Join-Path $root ('work\build-backups\' + (Get-Date -Format yyyyMMdd-HHmmss-fff) + '-release')
+        New-Item -ItemType Directory -Path $backup -Force | Out-Null
+        Get-ChildItem -LiteralPath $resolved -Recurse -File | Select-Object FullName,Length |
+            Export-Csv (Join-Path $backup "$directory.csv") -NoTypeInformation
+        Move-Item -LiteralPath $resolved -Destination (Join-Path $backup $directory)
+    }
 }
 
 # ---- 4) 发布 ----------------------------------------------------------------
@@ -84,8 +96,15 @@ if (-not (Test-Path (Join-Path $output 'config.xml'))) {
 }
 
 # ---- 6) 便携包 + 体积闸门 ---------------------------------------------------
+if (-not (Test-Path -LiteralPath $Kindling)) { throw '缺少 Kindling 引擎，不能发布残包。' }
+Copy-Item -LiteralPath $Kindling -Destination (Join-Path $output 'bin\kindling-cli-windows.exe')
+Copy-Item -LiteralPath (Join-Path $root 'vendor\kindling\LICENSE') -Destination (Join-Path $output 'bin\Kindling-LICENSE.txt')
+$usageGuide = Join-Path $root "docs\v$Version-使用说明.md"
+if (Test-Path -LiteralPath $usageGuide) {
+    Copy-Item -LiteralPath $usageGuide -Destination (Join-Path $output '使用说明.md') -Force
+}
 $zip = "$output.zip"
-if (Test-Path $zip) { Remove-Item $zip -Force }
+if (Test-Path $zip) { throw '发布包已存在，请使用新版本或先归档旧包。' }
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip -CompressionLevel Optimal
 $zipItem = Get-Item $zip
 $megabytes = [math]::Round($zipItem.Length / 1MB, 2)

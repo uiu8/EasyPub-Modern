@@ -70,7 +70,7 @@ public sealed record EasyPubAppSettings(
     /// every write to the file to be asked for. The window still shows both options and still says what the
     /// chosen one will change, so this only decides where the cursor starts.</para>
     /// </summary>
-    public RepairLandingMode DefaultRepairLandingMode { get; init; } = RepairLandingMode.EditSource;
+    public RepairLandingMode DefaultRepairLandingMode { get; init; } = RepairLandingMode.TreeOnly;
 
     public OutputCollisionPolicy OutputCollisionPolicy { get; init; } = OutputCollisionPolicy.AutoRename;
     public string KindlePreviewDeviceId { get; init; } = "kpw6";
@@ -150,6 +150,11 @@ public sealed class AppSettingsStore
     /// </summary>
     internal static EasyPubAppSettings UpgradeSupersededPatterns(EasyPubAppSettings settings)
     {
+        // Unknown persisted enum values must not grant permission to rewrite source text.
+        // Valid stored values remain preferences, including old EditSource defaults: old
+        // files contain no metadata that distinguishes a user choice from an auto-save.
+        if (!Enum.IsDefined(settings.DefaultRepairLandingMode))
+            settings = settings with { DefaultRepairLandingMode = RepairLandingMode.TreeOnly };
         var upgraded = settings.NumericHeadingDefaults.UpgradeSupersededPatterns(out var levelsChanged);
 
         // 章节正则不在 EasyPubAppSettings 上，而在各个 ConversionProfile 里

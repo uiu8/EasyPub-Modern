@@ -261,8 +261,9 @@ public sealed class SourceBackupWindow : Window
             var result = await new RestoreTransaction(_store.DirectoryPath, book.SourcePath)
                 .ExecuteAsync(current, entry.Path, policy, savedTree: savedTree, token: token);
             Reload();
-            _statusText.Text = result.Message
-                + (result.Succeeded ? "" : "（原文没有改动）");
+            // Failed recovery can occur after replacement. The transaction message
+            // describes the actual stage; do not append a blanket no-change claim.
+            _statusText.Text = result.Message;
             return result;
         }
         catch (Exception error)

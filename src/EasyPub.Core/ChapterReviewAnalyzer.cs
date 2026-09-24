@@ -57,6 +57,10 @@ public static class ChapterReviewAnalyzer
         // chapter_number_gap 本该照常报告）。现在抑制只在 Add(...) 里发生一次。
         var raw = ChapterDiagnostics.Inspect(document, cancellationToken, detectUnrecognized, entries, int.MaxValue)
             .ToList();
+        // A duplicate-heavy book asks for these same title lines repeatedly. Build the
+        // index once; preserve every diagnostic (including multiple codes at one line).
+        var rawByLine = raw.ToLookup(issue => issue.LineNumber);
+        var entryByLine = entries.ToLookup(entry => entry.TitleLineNumber);
         var parentIds = new Dictionary<string, string>();
         var stack = new Stack<ChapterTreeEntry>();
         foreach (var entry in entries)
@@ -67,6 +71,8 @@ public static class ChapterReviewAnalyzer
             stack.Push(entry);
         }
         var groups = new List<ChapterReviewGroup>();
+        var titleGroups = entries.Where(entry => !entry.IsFrontMatter)
+            .ToLookup(entry => (Parent: parentIds[entry.Id], entry.Level, Title: entry.Title.Trim()));
         // consumed 必须在这里声明：Add(...) 是局部函数，而它从下面第一个循环就被调用。
         var consumed = new HashSet<ConversionPreflightIssue>();
         // 抑制统一在 Add(...) 里做 —— 这里不再各自 Where 过滤"已由目录验证的 owner"。
@@ -120,7 +126,7 @@ public static class ChapterReviewAnalyzer
             groups.Add(new(issue, CategoryOf(issue.Code), [first.Id, second.Id], new[] { first.TitleLineNumber, second.TitleLineNumber }.OfType<int>().ToArray(), [issue]));
             // The content comparison supersedes duplicate-title / same-number noise at this copy,
             // but never consumes a gap or a missing-heading diagnosis.
-            foreach (var old in raw.Where(i => i.LineNumber == second.TitleLineNumber && i.Code is "chapter_duplicate" or "chapter_number_order")) consumed.Add(old);
+            foreach (var old in rawByLine[second.TitleLineNumber].Where(i => i.Code is "chapter_duplicate" or "chapter_number_order")) consumed.Add(old);
         }
         // The same prose under two different headings. A same-title comparison cannot see this pair,
         // and a release that repeats a stretch and renumbers it produces exactly that — so the finding
@@ -129,8 +135,8 @@ public static class ChapterReviewAnalyzer
         // 逐对判断在下面（"两边都验证过"才跳过），所以这里不再需要全局开关。
         foreach (var pair in ChapterContentDuplicates.FindCrossTitle(document, entries, cancellationToken: cancellationToken))
         {
-            var first = entries.FirstOrDefault(e => e.TitleLineNumber == pair.FirstLine);
-            var second = entries.FirstOrDefault(e => e.TitleLineNumber == pair.SecondLine);
+            var first = entryByLine[pair.FirstLine].FirstOrDefault();
+            var second = entryByLine[pair.SecondLine].FirstOrDefault();
             if (first is null || second is null) continue;
             var description = pair.Exact ? "正文完全相同（忽略空白）" : $"正文相似度 {pair.Similarity:P1}";
             var issue = new ConversionPreflightIssue(document.SourcePath, PreflightSeverity.Warning, "chapter_cross_title_duplicate",
@@ -191,14 +197,13 @@ public static class ChapterReviewAnalyzer
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (consumed.Contains(issue)) continue;
-            var node = entries.FirstOrDefault(n => n.TitleLineNumber == issue.LineNumber)
+            var node = entryByLine[issue.LineNumber].FirstOrDefault()
                 ?? entries.FirstOrDefault(n => issue.LineNumber is int line && n.ContentRanges.Any(r => line >= r.StartLine && line <= r.EndLine));
             if (issue.Code == "chapter_duplicate" && node is not null)
             {
-                var same = entries.Where(n => !n.IsFrontMatter && parentIds[n.Id] == parentIds[node.Id]
-                    && n.Level == node.Level && n.Title.Trim() == node.Title.Trim()).ToArray();
+                var same = titleGroups[(parentIds[node.Id], node.Level, node.Title.Trim())].ToArray();
                 var lines = same.Select(n => n.TitleLineNumber).ToHashSet();
-                Add(issue, same, raw.Where(r => r.Code == "chapter_duplicate" && lines.Contains(r.LineNumber)));
+                Add(issue, same, lines.SelectMany(line => rawByLine[line]).Where(r => r.Code == "chapter_duplicate"));
                 continue;
             }
             var associated = node is null ? Array.Empty<ChapterTreeEntry>() : new[] { node };
@@ -207,7 +212,7 @@ public static class ChapterReviewAnalyzer
                 // The diagnostic already carries the first occurrence; include it for side-by-side navigation.
                 var first = Regex.Match(issue.Message, @"首次在原文第\s*(\d+)\s*行", RegexOptions.None, TimeSpan.FromMilliseconds(200));
                 if (first.Success && int.TryParse(first.Groups[1].Value, out var line)
-                    && entries.FirstOrDefault(n => n.TitleLineNumber == line) is { } origin) associated = new[] { origin }.Concat(associated).ToArray();
+                    && entryByLine[line].FirstOrDefault() is { } origin) associated = new[] { origin }.Concat(associated).ToArray();
             }
             Add(issue, associated, [issue]);
         }
@@ -216,9 +221,10 @@ public static class ChapterReviewAnalyzer
         var orderGroups = groups.Where(g => g.Issue.Code == "chapter_number_order" && g.NodeIds.Count == 1)
             .GroupBy(g => (Parent: parentIds.GetValueOrDefault(g.NodeIds[0], ""), Level: byId[g.NodeIds[0]].Level))
             .Where(g => g.Count() > 1).Select(g => g.ToArray()).ToArray();
+        var mergedOrderGroups = orderGroups.SelectMany(batch => batch).ToHashSet();
+        groups.RemoveAll(mergedOrderGroups.Contains);
         foreach (var batch in orderGroups)
         {
-            foreach (var group in batch) groups.Remove(group);
             var first = batch.OrderBy(g => g.Issue.LineNumber).First();
             var issue = first.Issue with { Code = "chapter_numbering_variants",
                 Message = $"同一层级有 {batch.Length} 处编号顺序差异，已合并展示。可能涉及编号重启、体系混用或顺序调整；不据此认定缺章，也不自动改号。请选择原文位置逐项核对。" };

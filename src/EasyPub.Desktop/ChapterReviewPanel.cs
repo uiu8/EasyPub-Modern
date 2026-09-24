@@ -539,6 +539,7 @@ public partial class ChapterEditorWindow
 
     private void UpdateReviewCard()
     {
+        ReviewSequencePairsButton.Visibility = Visibility.Collapsed;
         if (ReviewHeading is null || _document is null) return;
         RefreshReviewGroupPreview();
         var selected = OperationSelection();
@@ -580,13 +581,15 @@ public partial class ChapterEditorWindow
         }
         if (issue?.Code == "chapter_repeated_sequence")
         {
+            ReviewSequencePairsButton.Visibility = Visibility.Visible;
+            ReviewSequencePairsButton.IsEnabled = !_sourceChanged;
             ReviewHeading.Text = "疑似重复拼接区段";
             ReviewExplanation.Text = "连续多章在另一处重复出现。先核对两段前后衔接，不要当成正常分卷。";
             ReviewDetailsText.Text = issue.Message;
             ReviewActionButton.Content = "定位另一段开头";
             ReviewActionButton.Visibility = Visibility.Visible;
             ReviewActionButton.IsEnabled = !_sourceChanged;
-            ActionScopeText.Text = "展开判断依据可逐处定位；重复正文问题中可逐对比较并选择保留。";
+            ActionScopeText.Text = "定位核对两段衔接，或直接逐对核对本区段；每次只处理一对，可撤销，原始 TXT 不变。";
             return;
         }
         if (issue?.Code == "chapter_content_duplicate")
@@ -921,4 +924,3 @@ public partial class ChapterEditorWindow
 }
 
 internal sealed record ReviewLocation(int Line, string Label);
-

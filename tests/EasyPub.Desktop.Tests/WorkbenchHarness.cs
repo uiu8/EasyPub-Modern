@@ -70,7 +70,11 @@ internal static class WorkbenchHarness
         Exception? captured = null;
         var thread = new Thread(() =>
         {
-            if (Application.Current is null) _ = new Application();
+            if (Application.Current is null)
+            {
+                var app = new App();
+                app.InitializeComponent();
+            }
             SynchronizationContext.SetSynchronizationContext(
                 new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
             try { body(); }

@@ -19,6 +19,61 @@ namespace EasyPub.Desktop.Tests;
 /// </summary>
 public class SourceBackupRestoreTests : IDisposable
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Actual_restore_confirmation_accepts_or_cancels_without_hidden_writes(bool confirm)
+    {
+        var book = await PrepareAsync();
+        var store = SourceBackupStore.CreateDefault();
+        var snapshot = store.EnsureSnapshot(await ChapterTreeDocument.LoadAsync(book));
+        await File.WriteAllTextAsync(book, RepairedText, Utf8);
+        OnBackupWindow(book, async window =>
+        {
+            window.SelectEntry(window.Entries.Single(e => e.Path == snapshot));
+            Exception? failure = null;
+            var clicked = false;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+            timer.Tick += (_, _) =>
+            {
+                var dialog = window.OwnedWindows.OfType<SourceRestoreWindow>().FirstOrDefault();
+                if (dialog is null) return;
+                timer.Stop();
+                try
+                {
+                    Buttons(dialog).Single(b => Equals(b.Content, confirm ? "开始恢复" : "取消"))
+                        .RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    clicked = true;
+                }
+                catch (Exception error) { failure = error; dialog.Close(); }
+            };
+            timer.Start();
+            try
+            {
+                Buttons(window).Single(b => Equals(b.Content, "恢复此版本…"))
+                    .RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                Assert.Null(failure);
+                Assert.True(clicked);
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                while (!window.IsEnabled && DateTime.UtcNow < deadline) await Task.Delay(20);
+                Assert.True(window.IsEnabled);
+                Assert.Equal(confirm ? OriginalText : RepairedText, await File.ReadAllTextAsync(book));
+                return true;
+            }
+            finally { timer.Stop(); }
+        });
+    }
+
+    private static IEnumerable<System.Windows.Controls.Button> Buttons(System.Windows.DependencyObject root)
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is System.Windows.Controls.Button button) yield return button;
+            foreach (var nested in Buttons(child)) yield return nested;
+        }
+    }
+
     private const string OriginalText = "第一章 起点\n正文一。\n第二章 中途\n正文二。\n";
     private const string RepairedText = "第一章 起点\n正文一改。\n第二章 中途\n正文二。\n";
 
